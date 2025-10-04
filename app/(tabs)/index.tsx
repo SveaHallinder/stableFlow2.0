@@ -780,7 +780,7 @@ const styles = StyleSheet.create({
   },
   stackLayerTop: {
     marginHorizontal: 4,
-    backgroundColor: '#f3f3f3',
+    backgroundColor: '#F4F7FB',
     shadowOpacity: 0.05,
     shadowRadius: 12,
   },
@@ -797,6 +797,17 @@ const styles = StyleSheet.create({
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],
+  },
+  postCard: {
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+    gap: 16,
+    borderRadius: 28,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 3,
   },
   messageCard: {
     backgroundColor: '#FFFFFF',
