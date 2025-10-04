@@ -78,29 +78,6 @@ export default function ProfileScreen() {
           <FilterChip label="Away" />
         </View>
 
-        <LinearGradient
-          colors={['#5681AC', '#9AC3EC']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 0, y: 1 }}
-          style={styles.weatherCard}
-        >
-          <View>
-            <View style={styles.weatherHeaderRow}>
-              <Text style={styles.weatherLocation}>Stockholm</Text>
-              <Text style={styles.weatherArrow}>➢</Text>
-            </View>
-            <Text style={styles.weatherTemperature}>10°</Text>
-          </View>
-          <View>
-            <Text style={styles.weatherCondition}>Cloudy</Text>
-            <View style={styles.weatherRangeRow}>
-              <Text style={styles.weatherRangeText}>H:12°</Text>
-              <Text style={styles.weatherRangeText}>L:6°</Text>
-            </View>
-          </View>
-          <CloudSun width={30} height={30} style={styles.weatherIcon} />
-        </LinearGradient>
-
         <View style={styles.calendarCard}>
           <View style={styles.calendarHeader}>
             <View style={styles.calendarHeaderLeft}>
@@ -261,54 +238,6 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     gap: 12,
-  },
-  weatherCard: {
-    width: 120,
-    height: 120,
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    justifyContent: 'space-between',
-    alignSelf: 'flex-start',
-    position: 'relative',
-  },
-  weatherHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  weatherLocation: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#FFFFFF',
-  },
-  weatherArrow: {
-    fontSize: 10,
-    color: '#FFFFFF',
-    transform: [{ rotate: '-45deg' }],
-  },
-  weatherTemperature: {
-    fontSize: 26,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  weatherCondition: {
-    fontSize: 12,
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  weatherRangeRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  weatherRangeText: {
-    fontSize: 12,
-    color: '#FFFFFF',
-  },
-  weatherIcon: {
-    position: 'absolute',
-    right: 12,
-    bottom: 14,
   },
   filterChip: {
     paddingVertical: 8,

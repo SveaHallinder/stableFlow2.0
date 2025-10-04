@@ -43,6 +43,16 @@ type MessageItem = {
   group?: boolean;
 };
 
+type PostItem = {
+  id: string;
+  author: string;
+  body: string;
+  day: string;
+  time: string;
+  likes: number;
+  comments: number;
+};
+
 const statusChips: StatusChip[] = [
   { label: 'Feeding ev..', tone: 'alert', icon: 'warning' },
   { label: 'Cleaning day', tone: 'info', icon: 'broom' },
@@ -89,12 +99,49 @@ const messages: MessageItem[] = [
   },
 ];
 
+const posts: PostItem[] = [
+  {
+    id: 'post-1',
+    author: 'Jane Doe',
+    body:
+      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
+    day: 'Thu',
+    time: '10:23',
+    likes: 3,
+    comments: 3,
+  },
+  {
+    id: 'post-2',
+    author: 'Samuel H',
+    body: 'Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas.',
+    day: 'Wed',
+    time: '18:45',
+    likes: 5,
+    comments: 2,
+  },
+  {
+    id: 'post-3',
+    author: 'Ingrid B',
+    body: 'Curabitur non nulla sit amet nisl tempus convallis quis ac lectus.',
+    day: 'Tue',
+    time: '14:12',
+    likes: 2,
+    comments: 1,
+  },
+];
+
 export default function OverviewScreen() {
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const visibleMessages = messagesExpanded ? messages : messages.slice(0, 1);
+  const [postsExpanded, setPostsExpanded] = React.useState(false);
+  const visiblePosts = postsExpanded ? posts : posts.slice(0, 1);
 
   const handleMessagePress = () => {
     setMessagesExpanded((prev) => !prev);
+  };
+
+  const handlePostPress = () => {
+    setPostsExpanded((prev) => !prev);
   };
 
   return (
@@ -256,35 +303,48 @@ export default function OverviewScreen() {
         </View>
 
         <View style={styles.sectionBlock}>
-          <SectionHeader title="Recent post" count={4} />
-          <StackedCard
-            offset={[8, 20]}
-            cardStyle={styles.postCard}
-            layerColors={{ base: '#E1E7F0', top: '#F4F7FB' }}
-          >
-            <View style={styles.postHeader}>
-              <View>
-                <Text style={styles.postAuthor}>Jane Doe</Text>
-                <Text style={styles.postBody}>
-                  Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.
-                </Text>
-              </View>
-              <View style={styles.postMeta}>
-                <Text style={styles.postMetaDay}>Thu</Text>
-                <Text style={styles.postMetaTime}>10:23</Text>
-              </View>
-            </View>
-            <View style={styles.postFooter}>
-              <View style={styles.postStat}>
-                <HeartIcon width={16} height={16} />
-                <Text style={styles.postStatText}>3</Text>
-              </View>
-              <View style={styles.postStat}>
-                <SpeechBubbleIcon width={16} height={16} />
-                <Text style={styles.postStatText}>3</Text>
-              </View>
-            </View>
-          </StackedCard>
+          <SectionHeader title="Recent post" count={posts.length} />
+          {visiblePosts.map((post, index) => {
+            const isPrimaryCard = index === 0;
+            const stacked = isPrimaryCard && !postsExpanded;
+
+            return (
+              <StackedCard
+                key={post.id}
+                offset={stacked ? [8, 20] : undefined}
+                stacked={stacked}
+                onPress={isPrimaryCard ? handlePostPress : undefined}
+                cardStyle={styles.postCard}
+                layerColors={{ base: '#E1E7F0', top: '#F4F7FB' }}
+              >
+                <View style={styles.postHeader}>
+                  <View style={styles.postContent}>
+                    <Text style={styles.postAuthor}>{post.author}</Text>
+                    <Text style={styles.postBody}>{post.body}</Text>
+                  </View>
+                  <View style={styles.postMeta}>
+                    <Text style={styles.postMetaDay}>{post.day}</Text>
+                    <Text style={styles.postMetaTime}>{post.time}</Text>
+                  </View>
+                </View>
+                <View style={styles.postFooter}>
+                  <View style={styles.postStat}>
+                    <HeartIcon width={16} height={16} />
+                    <Text style={styles.postStatText}>{post.likes}</Text>
+                  </View>
+                  <View style={styles.postStat}>
+                    <SpeechBubbleIcon width={16} height={16} />
+                    <Text style={styles.postStatText}>{post.comments}</Text>
+                  </View>
+                </View>
+              </StackedCard>
+            );
+          })}
+          {postsExpanded && (
+            <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
+              <Text style={styles.collapseButtonText}>Show less ↑</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -823,6 +883,7 @@ const styles = StyleSheet.create({
   postHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
     gap: 12,
   },
   postAuthor: {
@@ -836,9 +897,13 @@ const styles = StyleSheet.create({
     color: '#111827',
     lineHeight: 20,
   },
+  postContent: {
+    flex: 1,
+  },
   postMeta: {
     alignItems: 'flex-end',
     gap: 4,
+    flexShrink: 0,
   },
   postMetaDay: {
     fontSize: 12,
