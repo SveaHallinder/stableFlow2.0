@@ -1,82 +1,130 @@
-import { View, Text, Image, StyleSheet, TouchableOpacity } from 'react-native';
-import { Heart, MessageCircle } from 'lucide-react-native';
-import { theme } from './theme';
+import React from 'react';
+import {
+  Image,
+  ImageSourcePropType,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { EllipsisVertical, Heart, MessageCircle } from 'lucide-react-native';
 
-interface PostProps {
-  username: string;
-  userImage: string;
-  content: string;
-  image: string;
+export type PostData = {
+  id: string;
+  author: string;
+  avatar: ImageSourcePropType;
+  timeAgo: string;
+  content?: string;
+  image?: string;
   likes: number;
   comments: number;
-}
+};
 
-export function Post({ username, userImage, content, image, likes, comments }: PostProps) {
+export function PostCard({ data }: { data: PostData }) {
   return (
-    <View style={styles.container}>
+    <View style={styles.card}>
       <View style={styles.header}>
-        <Image source={{ uri: userImage }} style={styles.avatar} />
-        <Text style={styles.username}>{username}</Text>
-      </View>
-      
-      <Image source={{ uri: image }} style={styles.postImage} />
-      
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.actionButton}>
-          <Heart size={24} color={theme.colors.primary} />
-          <Text style={styles.actionText}>{likes}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.actionButton}>
-          <MessageCircle size={24} color={theme.colors.primary} />
-          <Text style={styles.actionText}>{comments}</Text>
+        <View style={styles.avatarWrapper}>
+          <Image source={data.avatar} style={styles.avatar} />
+        </View>
+        <View style={styles.authorBlock}>
+          <Text style={styles.author}>{data.author}</Text>
+          <Text style={styles.timestamp}>{data.timeAgo}</Text>
+        </View>
+        <TouchableOpacity style={styles.moreButton}>
+          <EllipsisVertical size={18} color="#6B7280" />
         </TouchableOpacity>
       </View>
-      
-      <Text style={styles.content}>{content}</Text>
+
+      {data.content && <Text style={styles.content}>{data.content}</Text>}
+
+      {data.image && (
+        <Image
+          source={{ uri: data.image }}
+          style={styles.postImage}
+          resizeMode="cover"
+        />
+      )}
+
+      <View style={styles.footer}>
+        <View style={styles.stat}>
+          <Heart size={16} color="#6B7280" />
+          <Text style={styles.statText}>{data.likes}</Text>
+        </View>
+        <View style={styles.stat}>
+          <MessageCircle size={16} color="#6B7280" />
+          <Text style={styles.statText}>{data.comments}</Text>
+        </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    backgroundColor: theme.colors.background,
-    marginBottom: theme.spacing.lg,
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 16,
+    gap: 16,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 3,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: theme.spacing.md,
+    gap: 12,
+  },
+  avatarWrapper: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    overflow: 'hidden',
   },
   avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: theme.borderRadius.full,
-    marginRight: theme.spacing.sm,
+    width: '100%',
+    height: '100%',
   },
-  username: {
-    ...theme.typography.body,
+  authorBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  author: {
+    fontSize: 16,
     fontWeight: '600',
+    color: '#111827',
+  },
+  timestamp: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  moreButton: {
+    padding: 8,
+  },
+  content: {
+    fontSize: 14,
+    color: '#111827',
+    lineHeight: 20,
   },
   postImage: {
     width: '100%',
-    height: 400,
+    height: 240,
+    borderRadius: 18,
   },
-  actions: {
+  footer: {
     flexDirection: 'row',
-    padding: theme.spacing.md,
+    gap: 20,
   },
-  actionButton: {
+  stat: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginRight: theme.spacing.lg,
+    gap: 6,
   },
-  actionText: {
-    ...theme.typography.body,
-    marginLeft: theme.spacing.xs,
-  },
-  content: {
-    ...theme.typography.body,
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.md,
+  statText: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
   },
 });

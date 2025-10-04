@@ -1,146 +1,222 @@
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
-import { theme } from '@/components/theme';
-import { MessageCircle } from 'lucide-react-native';
+import React from 'react';
+import {
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import SearchIcon from '@/assets/images/Search-icon.svg';
+import Logo from '@/assets/images/logo.svg';
+import UserGroups from '@/assets/images/User Groups.svg';
 
-const MESSAGES = [
+type MessagePreview = {
+  id: string;
+  title: string;
+  subtitle: string;
+  description: string;
+  timeAgo: string;
+  unreadCount?: number;
+  avatar?: any;
+  group?: boolean;
+};
+
+const messages: MessagePreview[] = [
   {
-    id: '1',
-    type: 'group',
-    name: 'Group name',
-    image: null,
-    lastMessage: 'Person 3: Lorem ipsum dolor ...',
-    unread: 2,
-    timeAgo: '30 min ago'
+    id: 'group-1',
+    title: 'Group name',
+    subtitle: 'Person 3',
+    description: 'Lorem ipsum dolor ...',
+    timeAgo: '30 min ago',
+    unreadCount: 2,
+    group: true,
   },
   {
-    id: '2',
-    type: 'user',
-    name: 'Person 1',
-    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
-    lastMessage: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago'
+    id: 'person-1',
+    title: 'Person 1',
+    subtitle: '1h ago',
+    description: 'Lorem ipsum dolor sit amet...',
+    timeAgo: '1h ago',
+    avatar: require('@/assets/images/dummy-avatar.png'),
   },
   {
-    id: '3',
-    type: 'user',
-    name: 'Person 1',
-    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
-    lastMessage: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago'
+    id: 'person-2',
+    title: 'Person 1',
+    subtitle: '1h ago',
+    description: 'Lorem ipsum dolor sit amet...',
+    timeAgo: '1h ago',
+    avatar: require('@/assets/images/dummy-avatar.png'),
   },
   {
-    id: '4',
-    type: 'user',
-    name: 'Person 1',
-    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
-    lastMessage: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago'
-  }
+    id: 'person-3',
+    title: 'Person 1',
+    subtitle: '1h ago',
+    description: 'Lorem ipsum dolor sit amet...',
+    timeAgo: '1h ago',
+    avatar: require('@/assets/images/dummy-avatar.png'),
+  },
 ];
 
 export default function MessagesScreen() {
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Image 
-          source={{ uri: 'https://raw.githubusercontent.com/SveaHallinder/StableFlow/main/assets/logo.png' }}
-          style={styles.logo}
-        />
-      </View>
-      <ScrollView style={styles.content}>
-        {MESSAGES.map((message) => (
-          <TouchableOpacity key={message.id} style={styles.messageItem}>
-            {message.type === 'group' ? (
-              <View style={styles.groupIcon}>
-                <MessageCircle size={24} color={theme.colors.primary} />
-              </View>
-            ) : (
-              <Image source={{ uri: message.image }} style={styles.avatar} />
-            )}
-            <View style={styles.messageContent}>
-              <View style={styles.messageHeader}>
-                <Text style={styles.messageName}>{message.name}</Text>
-                {message.unread && (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadText}> • {message.unread}</Text>
-                  </View>
-                )}
-                <Text style={styles.messageTime}>{message.timeAgo}</Text>
-              </View>
-              <Text style={styles.messageText} numberOfLines={1}>
-                {message.lastMessage}
-              </Text>
-            </View>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <Logo width={32} height={32} />
+          <Text style={styles.headerTitle}>Messages</Text>
+          <TouchableOpacity style={styles.iconButton}>
+            <SearchIcon width={20} height={20} />
           </TouchableOpacity>
-        ))}
+        </View>
+
+        <View style={styles.list}>
+          {messages.map((item) => (
+            <TouchableOpacity key={item.id} style={styles.item}>
+              {item.group ? (
+                <View style={styles.groupAvatar}>
+                  <UserGroups width={28} height={28} />
+                </View>
+              ) : (
+                <Image source={item.avatar} style={styles.personAvatar} />
+              )}
+
+              <View style={styles.itemContent}>
+                <View style={styles.itemHeader}>
+                  <View style={styles.itemTitleRow}>
+                    <Text style={styles.itemTitle}>{item.title}</Text>
+                    {item.group && (
+                      <View style={styles.unreadDot}>
+                        <Text style={styles.unreadCount}>{item.unreadCount}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.itemTime}>{item.timeAgo}</Text>
+                </View>
+                <Text style={styles.itemSubtitle}>
+                  {item.group ? `${item.subtitle}:` : item.subtitle}
+                </Text>
+                <Text numberOfLines={1} style={styles.itemDescription}>
+                  {item.description}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: '#FFFFFF',
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingBottom: 120,
+    gap: 24,
+    paddingTop: 6,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: theme.spacing.md,
-    paddingTop: 50,
+    justifyContent: 'space-between',
   },
-  logo: {
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '300',
+    color: '#111827',
+  },
+  iconButton: {
     width: 40,
     height: 40,
-    resizeMode: 'contain',
-  },
-  content: {
-    flex: 1,
-  },
-  messageItem: {
-    flexDirection: 'row',
-    padding: theme.spacing.md,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  groupIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F3F4F6',
+  list: {
+    gap: 12,
+  },
+  item: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 16,
+    borderColor: '#F1F1F1',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  groupAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#F5F5F5',
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 16,
   },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  personAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginRight: 16,
   },
-  messageContent: {
+  itemContent: {
     flex: 1,
-    marginLeft: theme.spacing.md,
+    gap: 6,
   },
-  messageHeader: {
+  itemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  itemTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    gap: 8,
   },
-  messageName: {
-    ...theme.typography.body,
+  itemTitle: {
+    fontSize: 16,
+    color: '#111827',
     fontWeight: '600',
   },
-  unreadBadge: {
-    marginLeft: theme.spacing.xs,
+  itemTime: {
+    fontSize: 12,
+    color: '#6B7280',
   },
-  unreadText: {
-    color: '#059669',
-    fontWeight: '500',
+  itemSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
   },
-  messageTime: {
-    ...theme.typography.caption,
-    marginLeft: 'auto',
+  itemDescription: {
+    fontSize: 12,
+    color: '#111827',
   },
-  messageText: {
-    ...theme.typography.body,
-    color: theme.colors.secondary,
+  unreadDot: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#4F46E5',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  unreadCount: {
+    fontSize: 10,
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });

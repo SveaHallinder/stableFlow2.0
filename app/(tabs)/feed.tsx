@@ -1,80 +1,107 @@
-import { View, Text, StyleSheet, ScrollView, Image } from 'react-native';
-import { theme } from '@/components/theme';
-import { Post } from '@/components/Post';
+import React from 'react';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import SearchIcon from '@/assets/images/Search-icon.svg';
+import Logo from '@/assets/images/logo.svg';
+import { PostCard, PostData } from '@/components/Post';
 
-const POSTS = [
+const posts: PostData[] = [
   {
     id: '1',
-    username: 'Ida Magnusson',
-    userImage: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
-    content: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
-    image: '',
+    author: 'Ida Magnusson',
+    avatar: require('@/assets/images/dummy-avatar.png'),
+    timeAgo: '1h ago',
+    content:
+      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
     likes: 8,
     comments: 1,
-    timeAgo: '1h ago'
   },
   {
     id: '2',
-    username: 'Ida Magnusson',
-    userImage: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
+    author: 'Ida Magnusson',
+    avatar: require('@/assets/images/dummy-avatar.png'),
+    timeAgo: '1h ago',
     content: 'Lorem ipsum dolor sit amet, consectetur.',
-    image: 'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
+    image:
+      'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
     likes: 8,
     comments: 1,
-    timeAgo: '1h ago'
   },
   {
     id: '3',
-    username: 'Ida Magnusson',
-    userImage: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?q=80&w=100&auto=format&fit=crop',
-    content: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt.',
-    image: '',
+    author: 'Ida Magnusson',
+    avatar: require('@/assets/images/dummy-avatar.png'),
+    timeAgo: '1h ago',
+    content:
+      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
     likes: 8,
     comments: 1,
-    timeAgo: '1h ago'
-  }
+  },
 ];
 
 export default function FeedScreen() {
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Image 
-          source={{ uri: 'https://raw.githubusercontent.com/SveaHallinder/StableFlow/main/assets/logo.png' }}
-          style={styles.logo}
-        />
-        <Text style={styles.title}>Feed</Text>
-      </View>
-      <ScrollView style={styles.content}>
-        {POSTS.map((post) => (
-          <Post key={post.id} {...post} />
-        ))}
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <Logo width={32} height={32} />
+          <Text style={styles.headerTitle}>Feed</Text>
+          <TouchableOpacity style={styles.iconButton}>
+            <SearchIcon width={20} height={20} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.postList}>
+          {posts.map((post) => (
+            <PostCard key={post.id} data={post} />
+          ))}
+        </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: '#FFFFFF',
+  },
+  scroll: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: 20,
+    paddingBottom: 120,
+    gap: 24,
+    paddingTop: 6,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: theme.spacing.md,
-    paddingTop: 50,
-    gap: theme.spacing.md,
+    justifyContent: 'space-between',
   },
-  logo: {
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: '300',
+    color: '#111827',
+  },
+  iconButton: {
     width: 40,
     height: 40,
-    resizeMode: 'contain',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  title: {
-    ...theme.typography.h1,
-  },
-  content: {
-    flex: 1,
+  postList: {
+    gap: 16,
   },
 });
