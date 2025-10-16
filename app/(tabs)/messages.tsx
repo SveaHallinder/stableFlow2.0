@@ -8,9 +8,12 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import SearchIcon from '@/assets/images/Search-icon.svg';
 import Logo from '@/assets/images/logo.svg';
 import UserGroups from '@/assets/images/User Groups.svg';
+import { theme } from '@/components/theme';
 
 type MessagePreview = {
   id: string;
@@ -22,6 +25,10 @@ type MessagePreview = {
   avatar?: any;
   group?: boolean;
 };
+
+const palette = theme.colors;
+const radii = theme.radii;
+const shadows = theme.shadows;
 
 const messages: MessagePreview[] = [
   {
@@ -60,63 +67,82 @@ const messages: MessagePreview[] = [
 ];
 
 export default function MessagesScreen() {
+  const router = useRouter();
+
+  const handleOpenConversation = (item: MessagePreview) => {
+    router.push({
+      pathname: '/chat/[id]',
+      params: { id: item.id, name: item.title },
+    });
+  };
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Logo width={32} height={32} />
-          <Text style={styles.headerTitle}>Messages</Text>
-          <TouchableOpacity style={styles.iconButton}>
-            <SearchIcon width={20} height={20} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.list}>
-          {messages.map((item) => (
-            <TouchableOpacity key={item.id} style={styles.item}>
-              {item.group ? (
-                <View style={styles.groupAvatar}>
-                  <UserGroups width={28} height={28} />
-                </View>
-              ) : (
-                <Image source={item.avatar} style={styles.personAvatar} />
-              )}
-
-              <View style={styles.itemContent}>
-                <View style={styles.itemHeader}>
-                  <View style={styles.itemTitleRow}>
-                    <Text style={styles.itemTitle}>{item.title}</Text>
-                    {item.group && (
-                      <View style={styles.unreadDot}>
-                        <Text style={styles.unreadCount}>{item.unreadCount}</Text>
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.itemTime}>{item.timeAgo}</Text>
-                </View>
-                <Text style={styles.itemSubtitle}>
-                  {item.group ? `${item.subtitle}:` : item.subtitle}
-                </Text>
-                <Text numberOfLines={1} style={styles.itemDescription}>
-                  {item.description}
-                </Text>
-              </View>
+    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.header}>
+            <Logo width={32} height={32} />
+            <Text style={styles.headerTitle}>Messages</Text>
+            <TouchableOpacity style={styles.iconButton}>
+              <SearchIcon width={20} height={20} />
             </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+          </View>
+
+          <View style={styles.list}>
+            {messages.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.item}
+                onPress={() => handleOpenConversation(item)}
+                activeOpacity={0.85}
+              >
+                {item.group ? (
+                  <View style={styles.groupAvatar}>
+                    <UserGroups width={28} height={28} />
+                  </View>
+                ) : (
+                  <Image source={item.avatar} style={styles.personAvatar} />
+                )}
+
+                <View style={styles.itemContent}>
+                  <View style={styles.itemHeader}>
+                    <View style={styles.itemTitleRow}>
+                      <Text style={styles.itemTitle}>{item.title}</Text>
+                      {item.group && (
+                        <View style={styles.unreadDot}>
+                          <Text style={styles.unreadCount}>{item.unreadCount}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.itemTime}>{item.timeAgo}</Text>
+                  </View>
+                  <Text style={styles.itemSubtitle}>
+                    {item.group ? `${item.subtitle}:` : item.subtitle}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.itemDescription}>
+                    {item.description}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
   scroll: {
     flex: 1,
@@ -125,7 +151,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 120,
     gap: 24,
-    paddingTop: 6,
+    paddingTop: 24,
   },
   header: {
     flexDirection: 'row',
@@ -134,45 +160,43 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '300',
-    color: '#111827',
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   iconButton: {
     width: 40,
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceGlass,
   },
   list: {
-    gap: 12,
+    gap: 20,
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderColor: '#F1F1F1',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 2,
+    backgroundColor: palette.surfaceTint,
+    borderRadius: radii.xl,
+    paddingVertical: 20,
+    paddingHorizontal: 18,
+    ...shadows.cardSoft,
   },
   groupAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#F5F5F5',
+    width: 48,
+    height: 48,
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceTint,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 16,
+    marginRight: 14,
   },
   personAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    marginRight: 16,
+    width: 48,
+    height: 48,
+    borderRadius: radii.pill,
+    marginRight: 14,
   },
   itemContent: {
     flex: 1,
@@ -190,33 +214,33 @@ const styles = StyleSheet.create({
   },
   itemTitle: {
     fontSize: 16,
-    color: '#111827',
+    color: palette.primaryText,
     fontWeight: '600',
   },
   itemTime: {
     fontSize: 12,
-    color: '#6B7280',
+    color: palette.secondaryText,
   },
   itemSubtitle: {
     fontSize: 12,
-    color: '#6B7280',
+    color: palette.mutedText,
   },
   itemDescription: {
     fontSize: 12,
-    color: '#111827',
+    color: palette.secondaryText,
   },
   unreadDot: {
     minWidth: 18,
     height: 18,
     paddingHorizontal: 4,
-    borderRadius: 9,
-    backgroundColor: '#4F46E5',
+    borderRadius: radii.pill,
+    backgroundColor: palette.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   unreadCount: {
     fontSize: 10,
-    color: '#FFFFFF',
+    color: palette.inverseText,
     fontWeight: '600',
   },
 });

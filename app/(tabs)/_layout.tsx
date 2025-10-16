@@ -2,6 +2,7 @@ import React from 'react';
 import { Tabs } from 'expo-router';
 import { View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { theme } from '@/components/theme';
 
 // SVG imports
 import DashOutlineIcon from '@/assets/images/tabbar-outl-dash.svg';
@@ -15,6 +16,9 @@ import MessageFillIcon from '@/assets/images/tabbar-fill-msg.svg';
 import ProfileOutlineIcon from '@/assets/images/tabbar-prof.svg';
 import ProfileFillIcon from '@/assets/images/tabbar-fill-prof.svg';
 
+const palette = theme.colors;
+const radii = theme.radii;
+
 export default function TabLayout() {
   return (
     <Tabs
@@ -24,8 +28,8 @@ export default function TabLayout() {
         tabBarBackground: () => (
           <BlurView intensity={12.5} style={styles.blurBackground} />
         ),
-        tabBarActiveTintColor: '#000000',
-        tabBarInactiveTintColor: '#111827',
+        tabBarActiveTintColor: palette.icon,
+        tabBarInactiveTintColor: palette.secondaryText,
         tabBarItemStyle: styles.tabBarItem,
         tabBarShowLabel: false,
       }}>
@@ -97,17 +101,21 @@ const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
     bottom: 19,
-    alignSelf: 'center',
-    width: 382,
+    marginLeft: '2.5%',
+    width: '95%',
+    alignItems: 'center',
     height: 60,
-    backgroundColor: 'rgba(249, 249, 249, 0.5)',
-    borderColor: '#F5F5F5',
-    borderRadius: 20,
-    paddingHorizontal: 25,
-    paddingVertical: 16,
+    backgroundColor: palette.surfaceGlass,
+    borderColor: 'transparent',
+    borderRadius: radii.pill,
+    paddingVertical: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    borderWidth: 0,
+    shadowColor: 'rgba(12, 16, 32, 0.12)',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
   },
   blurBackground: {
     position: 'absolute',
@@ -115,7 +123,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 20,
+    borderRadius: radii.pill,
   },
   tabBarItem: {
     paddingVertical: 8,
@@ -123,5 +131,6 @@ const styles = StyleSheet.create({
     minHeight: 25,
     justifyContent: 'center',
     alignItems: 'center',
+    flex: 1,
   },
 });

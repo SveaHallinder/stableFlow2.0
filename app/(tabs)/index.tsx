@@ -22,6 +22,13 @@ import PlusIcon from '@/assets/images/plus.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 
+const palette = theme.colors;
+const radii = theme.radii;
+const shadows = theme.shadows;
+const tints = theme.tints;
+const statusColors = theme.status;
+const weatherGradient = theme.gradients.weather;
+
 type StatusChip = {
   label: string;
   tone: 'alert' | 'info' | 'neutral';
@@ -145,7 +152,8 @@ export default function OverviewScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+      <SafeAreaView style={styles.safeArea}>
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
@@ -166,7 +174,7 @@ export default function OverviewScreen() {
 
         <View style={styles.rowGap}>
           <LinearGradient
-            colors={['#5681AC', '#9AC3EC']}
+            colors={weatherGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 0, y: 1 }}
             style={styles.weatherCard}
@@ -240,7 +248,7 @@ export default function OverviewScreen() {
           <View style={styles.quickCard}>
             <View style={styles.quickHeader}>
               <Text style={styles.quickTitle}>Quick Actions</Text>
-              <Text style={styles.cardEllipsis}>···</Text>
+              <Text style={styles.quickTitleAccent}>···</Text>
             </View>
             <View style={styles.quickActions}>
               <QuickAction label="Activity" />
@@ -315,7 +323,6 @@ export default function OverviewScreen() {
                 stacked={stacked}
                 onPress={isPrimaryCard ? handlePostPress : undefined}
                 cardStyle={styles.postCard}
-                layerColors={{ base: '#E1E7F0', top: '#F4F7FB' }}
               >
                 <View style={styles.postHeader}>
                   <View style={styles.postContent}>
@@ -347,26 +354,22 @@ export default function OverviewScreen() {
           )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 function ScheduleChip({ label, tone, icon }: StatusChip) {
-  const background =
-    tone === 'alert'
-      ? 'rgba(255, 0, 0, 0.1)'
-      : tone === 'info'
-      ? 'rgba(0, 153, 255, 0.1)'
-      : 'rgba(255, 115, 0, 0.1)';
-  const borderColor =
-    tone === 'alert'
-      ? '#FF0000'
-      : tone === 'info'
-      ? '#0099FF'
-      : '#FF7300';
+  const toneStyles = {
+    alert: { background: palette.surfaceTint, border: palette.error },
+    info: { background: palette.surfaceTint, border: palette.info },
+    neutral: { background: palette.surfaceTint, border: palette.accent },
+  } as const;
+
+  const { background, border } = toneStyles[tone];
 
   return (
-    <View style={[styles.scheduleChip, { backgroundColor: background, borderLeftColor: borderColor }]}>
+    <View style={[styles.scheduleChip, { backgroundColor: background, borderLeftColor: border }]}>
       {icon === 'warning' && <WarningIcon width={8} height={8} style={styles.chipIcon} />}
       {icon === 'broom' && <BroomIcon width={8} height={8} style={styles.chipIcon} />}
       <Text style={styles.scheduleChipText} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
@@ -380,8 +383,8 @@ function QuickAction({ label }: { label: string }) {
       <View style={styles.quickActionPill}>
         <Text style={styles.quickActionText}>{label}</Text>
       </View>
-      <View style={styles.quickActionBadge}>
-        <PlusIcon width={12} height={12} color="#87C6A2" />
+  <View style={styles.quickActionBadge}>
+        <PlusIcon width={12} height={12} color={palette.primary} />
       </View>
     </View>
   );
@@ -459,16 +462,19 @@ function StackedCard({
 }
 
 const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.background,
   },
   scroll: {
     flex: 1,
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 6,
+    paddingTop: 16,
     paddingBottom: 140,
     gap: 28,
   },
@@ -480,97 +486,106 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '300',
-    color: '#000000',
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   iconButton: {
     width: 40,
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceGlass,
   },
   alertBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 6,
+    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: palette.surfaceTint,
+    borderRadius: radii.xl,
+    borderWidth: 0,
+    ...shadows.cardSoft,
   },
   alertLabel: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FF0000',
+    fontWeight: '600',
+    color: palette.error,
   },
   alertText: {
     fontSize: 16,
-    color: '#000000',
+    color: palette.secondaryText,
   },
   rowGap: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 10,
+    gap: 12,
   },
   weatherCard: {
     width: 120,
     height: 120,
-    borderRadius: 18,
-    paddingHorizontal: 10,
-    paddingVertical: 10,
-    gap: 6,
-    shadowColor: '#3B82F6',
-    shadowOpacity: 0.2,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
+    borderRadius: radii.xl,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
+    gap: 4,
+    overflow: 'hidden',
+    ...shadows.cardSoft,
   },
   weatherHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    color: 'white',
   },
   weatherCity: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#FFFFFF',
+    color: 'white',
   },
   weatherArrow: {
     fontSize: 16,
-    color: '#FFFFFF',
+    color: 'white',
     transform: [{ rotate: '-45deg' }],
   },
   weatherTempRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 18,
+    color: 'white',
   },
   weatherTemperature: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: 'white',
   },
   weatherIcon: {
-    marginTop: 0,
+    marginTop: 2,
   },
   weatherDescription: {
     fontSize: 12,
-    color: '#FFFFFF',
+    color: 'white',
   },
   weatherRangeRow: {
     flexDirection: 'row',
-    gap: 14,
+    gap: 16,
   },
   weatherRange: {
     fontSize: 12,
-    color: '#FFFFFF',
+    color: 'white',
   },
   scheduleCard: {
     flex: 1,
     height: 120,
     padding: 12,
     borderWidth: 1.5,
-    borderColor: '#F5F5F5',
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
+    borderColor: palette.border,
+    borderRadius: radii.lg,
+    backgroundColor: palette.surfaceTint,
     flexDirection: 'row',
     gap: 12,
+    ...shadows.cardSoft,
   },
   scheduleLeftColumn: {
     width: '45%',
@@ -586,13 +601,13 @@ const styles = StyleSheet.create({
   scheduleMainDayName: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#4BAA74',
+    color: palette.accent,
     textTransform: 'uppercase',
   },
   scheduleMainDate: {
     fontSize: 20,
     fontWeight: '400',
-    color: '#000000',
+    color: palette.primaryText,
     textTransform: 'uppercase',
   },
   scheduleMainEvents: {
@@ -604,7 +619,7 @@ const styles = StyleSheet.create({
   scheduleSecondaryDayName: {
     fontSize: 10,
     fontWeight: '600',
-    color: 'rgba(0, 0, 0, 0.5)',
+    color: palette.mutedText,
     textTransform: 'uppercase',
   },
   scheduleSecondaryEvents: {
@@ -616,12 +631,12 @@ const styles = StyleSheet.create({
   scheduleDay: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#4BAA74',
+    color: palette.accent,
   },
   scheduleDate: {
     fontSize: 22,
     fontWeight: '400',
-    color: '#000000',
+    color: palette.primaryText,
   },
   scheduleTodayList: {
     flex: 1,
@@ -636,7 +651,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 1.5,
     paddingVertical: 3,
     paddingHorizontal: 6,
-    borderRadius: 3,
+    borderRadius: radii.xs / 2,
     backgroundColor: 'transparent',
   },
   chipIcon: {
@@ -646,7 +661,7 @@ const styles = StyleSheet.create({
   scheduleChipText: {
     fontSize: 10,
     fontWeight: '500',
-    color: '#000000',
+    color: palette.secondaryText,
     flexShrink: 1,
   },
   upcomingList: {
@@ -665,7 +680,7 @@ const styles = StyleSheet.create({
   upcomingLabel: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#94A3B8',
+    color: palette.secondaryText,
   },
   upcomingChips: {
     flexDirection: 'column',
@@ -676,16 +691,15 @@ const styles = StyleSheet.create({
   },
   horseCard: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     height: 100,
-    borderRadius: 12,
+    borderRadius: radii.md,
     paddingVertical: 12,
     paddingHorizontal: 12,
     gap: 8,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 8 },
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadows.cardSoft,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -697,11 +711,11 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 21,
     fontWeight: '500',
-    color: '#111827',
+    color: palette.primaryText,
   },
   cardEllipsis: {
     fontSize: 12,
-    color: 'rgba(17, 24, 39, 0.5)',
+    color: palette.mutedText,
   },
   horseRow: {
     flexDirection: 'row',
@@ -712,34 +726,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 15,
     fontWeight: '400',
-    color: '#000000',
+    color: palette.primaryText,
   },
   horseDash: {
     fontSize: 12,
     lineHeight: 15,
-    color: '#000000',
+    color: palette.primaryText,
   },
   horseNote: {
     fontSize: 12,
     lineHeight: 15,
-    color: '#000000',
+    color: palette.primaryText,
   },
   horseNoteAlert: {
-    color: '#D92D20',
+    color: palette.error,
     fontWeight: '500',
   },
   quickCard: {
     flex: 1,
-    backgroundColor: '#87C6A2',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    height: 100,
-    gap: 24,
-    shadowColor: '#0F172A',
-    shadowOpacity: 0.08,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 12 },
+    borderRadius: radii.xl,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    height: 120,
+    gap: 20,
+    ...shadows.cardSoft,
   },
   quickHeader: {
     flexDirection: 'row',
@@ -749,9 +759,13 @@ const styles = StyleSheet.create({
   },
   quickTitle: {
     fontSize: 15,
-    fontWeight: '400',
+    fontWeight: '600',
     lineHeight: 18,
-    color: '#FFFFFF',
+    color: palette.primaryText,
+  },
+  quickTitleAccent: {
+    fontSize: 16,
+    color: palette.secondaryText,
   },
   quickActions: {
     flexDirection: 'row',
@@ -768,16 +782,17 @@ const styles = StyleSheet.create({
   quickActionPill: {
     width: '100%',
     height: 25,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 999,
+    backgroundColor: palette.surfaceTint,
+    borderRadius: radii.pill,
     paddingHorizontal: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 0,
   },
   quickActionText: {
     fontSize: 12,
-    fontWeight: '400',
-    color: '#000000',
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   quickActionBadge: {
     position: 'absolute',
@@ -787,6 +802,12 @@ const styles = StyleSheet.create({
     height: 22,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surface,
+    shadowColor: 'rgba(28, 28, 30, 0.18)',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
   },
   sectionBlock: {
     gap: 16,
@@ -803,22 +824,22 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '400',
-    color: '#111827',
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   sectionDot: {
     width: 6,
     height: 6,
-    borderRadius: 3,
-    backgroundColor: '#4BAA74',
+    borderRadius: radii.pill,
+    backgroundColor: palette.accent,
   },
   sectionCount: {
     fontSize: 12,
-    color: 'rgba(0,0,0,0.5)',
+    color: palette.secondaryText,
   },
   sectionAction: {
     fontSize: 12,
-    color: '#111827',
+    color: palette.primary,
   },
   stackedWrapper: {
     position: 'relative',
@@ -830,55 +851,43 @@ const styles = StyleSheet.create({
   stackLayer: {
     ...StyleSheet.absoluteFillObject,
     marginHorizontal: 12,
-    borderRadius: 26,
-    backgroundColor: '#f5f5f5',
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.09,
-    shadowRadius: 14,
+    borderRadius: radii.xl,
+    backgroundColor: palette.surfaceTint,
+    ...shadows.cardSoft,
     zIndex: -1,
   },
   stackLayerTop: {
     marginHorizontal: 4,
-    backgroundColor: '#F4F7FB',
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
+    backgroundColor: palette.surface,
+    ...shadows.cardSoft,
   },
   primaryCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
+    backgroundColor: palette.surface,
+    borderRadius: radii.xl,
     padding: 20,
     gap: 14,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 4,
+    borderWidth: 0,
+    ...shadows.cardSoft,
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],
   },
   postCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: palette.surface,
     padding: 20,
     gap: 16,
-    borderRadius: 28,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 3,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadows.card,
   },
   messageCard: {
-    backgroundColor: '#FFFFFF',
-    padding: 18,
-    gap: 10,
-    borderRadius: 26,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.07,
-    shadowRadius: 18,
-    elevation: 3,
+    backgroundColor: palette.surfaceTint,
+    padding: 20,
+    gap: 12,
+    borderRadius: radii.xl,
+    borderWidth: 0,
+    ...shadows.cardSoft,
   },
   postHeader: {
     flexDirection: 'row',
@@ -889,12 +898,12 @@ const styles = StyleSheet.create({
   postAuthor: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#111827',
+    color: palette.primaryText,
     marginBottom: 8,
   },
   postBody: {
     fontSize: 14,
-    color: '#111827',
+    color: palette.primaryText,
     lineHeight: 20,
   },
   postContent: {
@@ -907,11 +916,11 @@ const styles = StyleSheet.create({
   },
   postMetaDay: {
     fontSize: 12,
-    color: '#111827',
+    color: palette.secondaryText,
   },
   postMetaTime: {
     fontSize: 12,
-    color: '#111827',
+    color: palette.secondaryText,
   },
   postFooter: {
     flexDirection: 'row',
@@ -924,7 +933,7 @@ const styles = StyleSheet.create({
   },
   postStatText: {
     fontSize: 12,
-    color: '#111827',
+    color: palette.secondaryText,
   },
   messageRow: {
     flexDirection: 'row',
@@ -934,16 +943,16 @@ const styles = StyleSheet.create({
   groupAvatar: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#E2E8F0',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
   messageAvatar: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#E2E8F0',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -963,49 +972,48 @@ const styles = StyleSheet.create({
   },
   messageTitle: {
     fontSize: 16,
-    color: '#0F172A',
+    color: palette.primaryText,
     fontWeight: '600',
   },
   messageTime: {
     fontSize: 12,
-    color: '#64748B',
+    color: palette.secondaryText,
     fontWeight: '500',
   },
   messageBadge: {
     minWidth: 18,
     height: 18,
-    borderRadius: 9,
+    borderRadius: radii.pill,
     paddingHorizontal: 6,
-    backgroundColor: '#6366F1',
+    backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   messageBadgeText: {
     fontSize: 10,
-    color: '#FFFFFF',
+    color: palette.inverseText,
     fontWeight: '600',
   },
   messageAuthor: {
     fontSize: 13,
-    color: '#475569',
+    color: palette.secondaryText,
     fontWeight: '500',
   },
   messagePreview: {
     fontSize: 12,
-    color: '#1F2937',
-    opacity: 0.85,
+    color: palette.mutedText,
   },
   collapseButton: {
     alignSelf: 'flex-start',
     marginTop: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#EEF2F6',
+    borderRadius: radii.pill,
+    backgroundColor: tints.info,
   },
   collapseButtonText: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#0F172A',
+    color: palette.primaryText,
   },
 });

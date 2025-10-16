@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { EllipsisVertical, Heart, MessageCircle } from 'lucide-react-native';
+import { theme } from '@/components/theme';
 
 export type PostData = {
   id: string;
@@ -19,6 +20,10 @@ export type PostData = {
   likes: number;
   comments: number;
 };
+
+const palette = theme.colors;
+const radii = theme.radii;
+const shadows = theme.shadows;
 
 export function PostCard({ data }: { data: PostData }) {
   return (
@@ -32,7 +37,7 @@ export function PostCard({ data }: { data: PostData }) {
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
         <TouchableOpacity style={styles.moreButton}>
-          <EllipsisVertical size={18} color="#6B7280" />
+          <EllipsisVertical size={18} color={palette.secondaryText} />
         </TouchableOpacity>
       </View>
 
@@ -48,11 +53,11 @@ export function PostCard({ data }: { data: PostData }) {
 
       <View style={styles.footer}>
         <View style={styles.stat}>
-          <Heart size={16} color="#6B7280" />
+          <Heart size={16} color={palette.secondaryText} />
           <Text style={styles.statText}>{data.likes}</Text>
         </View>
         <View style={styles.stat}>
-          <MessageCircle size={16} color="#6B7280" />
+          <MessageCircle size={16} color={palette.secondaryText} />
           <Text style={styles.statText}>{data.comments}</Text>
         </View>
       </View>
@@ -62,15 +67,12 @@ export function PostCard({ data }: { data: PostData }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 24,
-    padding: 16,
-    gap: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    elevation: 3,
+    backgroundColor: palette.surfaceTint,
+    borderRadius: radii.xl,
+    borderWidth: 0,
+    padding: 22,
+    gap: 18,
+    ...shadows.cardSoft,
   },
   header: {
     flexDirection: 'row',
@@ -80,7 +82,7 @@ const styles = StyleSheet.create({
   avatarWrapper: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: radii.pill,
     overflow: 'hidden',
   },
   avatar: {
@@ -94,28 +96,30 @@ const styles = StyleSheet.create({
   author: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: palette.primaryText,
   },
   timestamp: {
     fontSize: 12,
-    color: '#6B7280',
+    color: palette.secondaryText,
   },
   moreButton: {
     padding: 8,
   },
   content: {
     fontSize: 14,
-    color: '#111827',
+    color: palette.primaryText,
     lineHeight: 20,
+    opacity: 0.9,
   },
   postImage: {
     width: '100%',
     height: 240,
-    borderRadius: 18,
+    borderRadius: radii.lg,
   },
   footer: {
     flexDirection: 'row',
     gap: 20,
+    marginTop: 8,
   },
   stat: {
     flexDirection: 'row',
@@ -124,7 +128,7 @@ const styles = StyleSheet.create({
   },
   statText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: palette.secondaryText,
     fontWeight: '500',
   },
 });

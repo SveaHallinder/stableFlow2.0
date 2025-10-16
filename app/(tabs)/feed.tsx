@@ -7,9 +7,15 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import SearchIcon from '@/assets/images/Search-icon.svg';
 import Logo from '@/assets/images/logo.svg';
 import { PostCard, PostData } from '@/components/Post';
+import { theme } from '@/components/theme';
+
+const palette = theme.colors;
+const gradients = theme.gradients;
+const radii = theme.radii;
 
 const posts: PostData[] = [
   {
@@ -47,34 +53,39 @@ const posts: PostData[] = [
 
 export default function FeedScreen() {
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.header}>
-          <Logo width={32} height={32} />
-          <Text style={styles.headerTitle}>Feed</Text>
-          <TouchableOpacity style={styles.iconButton}>
-            <SearchIcon width={20} height={20} />
-          </TouchableOpacity>
-        </View>
+    <LinearGradient colors={gradients.background} style={styles.background}>
+      <SafeAreaView style={styles.safeArea}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.header}>
+            <Logo width={32} height={32} />
+            <Text style={styles.headerTitle}>Feed</Text>
+            <TouchableOpacity style={styles.iconButton}>
+              <SearchIcon width={20} height={20} />
+            </TouchableOpacity>
+          </View>
 
-        <View style={styles.postList}>
-          {posts.map((post) => (
-            <PostCard key={post.id} data={post} />
-          ))}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+          <View style={styles.postList}>
+            {posts.map((post) => (
+              <PostCard key={post.id} data={post} />
+            ))}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </LinearGradient>
   );
 }
 
 const styles = StyleSheet.create({
+  background: {
+    flex: 1,
+  },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
   scroll: {
     flex: 1,
@@ -82,8 +93,8 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
     paddingBottom: 120,
-    gap: 24,
-    paddingTop: 6,
+    gap: 32,
+    paddingTop: 24,
   },
   header: {
     flexDirection: 'row',
@@ -92,16 +103,18 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '300',
-    color: '#111827',
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   iconButton: {
     width: 40,
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: palette.surfaceGlass,
   },
   postList: {
-    gap: 16,
+    gap: 32,
   },
 });
