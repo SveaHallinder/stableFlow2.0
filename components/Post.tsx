@@ -82,7 +82,7 @@ const styles = StyleSheet.create({
   avatarWrapper: {
     width: 48,
     height: 48,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     overflow: 'hidden',
   },
   avatar: {
@@ -95,7 +95,7 @@ const styles = StyleSheet.create({
   },
   author: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   timestamp: {

@@ -107,7 +107,7 @@ const styles = StyleSheet.create({
     height: 60,
     backgroundColor: palette.surfaceGlass,
     borderColor: 'transparent',
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     paddingVertical: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -123,7 +123,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
   },
   tabBarItem: {
     paddingVertical: 8,

@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +12,8 @@ import { ChevronDown, ChevronLeft, ChevronRight, Clock3, Moon, Plus, Sun } from 
 import SearchIcon from '@/assets/images/Search-icon.svg';
 import Logo from '@/assets/images/logo.svg';
 import { theme } from '@/components/theme';
+import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
+import { color, radius, shadow, space } from '@/design/tokens';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const palette = theme.colors;
@@ -167,34 +170,33 @@ export default function CalendarScreen() {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.filterRow}>
+        <Card style={styles.filterRow}>
           {filters.map((label) => {
             const active = label === activeFilter;
             return (
               <TouchableOpacity
                 key={label}
                 onPress={() => setActiveFilter(label)}
-                style={[styles.filterChip, active ? styles.filterChipActive : styles.filterChipInactive]}
               >
-                <Text
-                  style={[styles.filterChipText, active ? styles.filterChipTextActive : undefined]}
-                >
-                  {label}
-                </Text>
+                <Pill active={active} style={styles.filterChip}>
+                  <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
+                    {label}
+                  </Text>
+                </Pill>
               </TouchableOpacity>
             );
           })}
-        </View>
+        </Card>
 
         {activeFilter === 'Regular' && (
-          <View style={styles.legendCard}>
+          <Card style={styles.legendCard}>
             {legend.map((item) => (
               <View key={item.label} style={styles.legendItem}>
                 <View style={[styles.legendDot, { backgroundColor: item.color }]} />
                 <Text style={styles.legendLabel}>{item.label}</Text>
               </View>
             ))}
-          </View>
+          </Card>
         )}
 
         <View style={styles.monthRow}>
@@ -254,7 +256,7 @@ function RegularDayCard({
   slots: RegularSlot[];
 }) {
   return (
-    <View style={styles.dayCard}>
+    <Card style={styles.dayCard}>
       <View style={styles.dayHeader}>
         <View style={[styles.dayBadge, selected ? styles.dayBadgeActive : styles.dayBadgeInactive]}>
           <Text style={[styles.dayBadgeText, selected ? styles.dayBadgeTextActive : undefined]}>
@@ -270,7 +272,7 @@ function RegularDayCard({
           <ScheduleIcon key={`${day}-${date}-${slot.label}`} label={slot.label} icon={slot.icon} color={slot.color} note={slot.note} />
         ))}
       </View>
-    </View>
+    </Card>
   );
 }
 
@@ -316,7 +318,7 @@ function RidingDayRow({
   isToday?: boolean;
 }) {
   return (
-    <View style={[styles.ridingRow, isToday ? styles.ridingRowActive : undefined]}>
+    <Card style={[styles.ridingRow, isToday && styles.ridingRowActive]}>
       <View>
         <Text style={[styles.ridingLabel, isToday ? styles.ridingLabelActive : undefined]}>{label}</Text>
         {upcoming && <Text style={styles.ridingSubtitle}>{upcoming}</Text>}
@@ -325,7 +327,7 @@ function RidingDayRow({
         <Plus size={16} color={palette.icon} strokeWidth={2} />
         <Text style={styles.ridingRegisterText}>Register ride</Text>
       </TouchableOpacity>
-    </View>
+    </Card>
   );
 }
 
@@ -334,7 +336,7 @@ function CompetitionCard({ event }: { event: CompetitionEvent }) {
   const statusColor = event.status === 'open' ? palette.success : palette.error;
 
   return (
-    <View style={styles.competitionCard}>
+    <Card style={styles.competitionCard}>
       <Text style={styles.competitionDate}>
         {event.start}
         {'\n'}
@@ -346,7 +348,7 @@ function CompetitionCard({ event }: { event: CompetitionEvent }) {
           <Text style={[styles.competitionBadgeText, { color: statusColor }]}>{statusLabel}</Text>
         </View>
       </View>
-    </View>
+    </Card>
   );
 }
 
@@ -356,7 +358,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: color.bg,
   },
   scroll: {
     flex: 1,
@@ -374,7 +376,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   iconButton: {
@@ -382,34 +384,32 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceGlass,
   },
   filterRow: {
     flexDirection: 'row',
-    gap: 8,
-    backgroundColor: palette.surface,
-    borderRadius: radii.pill,
-    padding: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
+    padding: space.xs,
+    backgroundColor: 'white',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'space-evenly',
   },
   filterChip: {
     flex: 1,
-    borderRadius: radii.pill,
-    paddingVertical: 10,
+    shadowOpacity: 0,
+    width: 'auto',
     alignItems: 'center',
     justifyContent: 'center',
+    display: 'flex',
+    paddingHorizontal: '8%',
   },
   filterChipActive: {
     backgroundColor: palette.icon,
   },
-  filterChipInactive: {
-    backgroundColor: 'transparent',
-  },
   filterChipText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: palette.secondaryText,
   },
   filterChipTextActive: {
@@ -418,15 +418,11 @@ const styles = StyleSheet.create({
   legendCard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: space.md,
     justifyContent: 'center',
-    backgroundColor: palette.surface,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderColor: palette.border,
-    ...shadows.cardSoft,
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
+    backgroundColor: 'white',
   },
   legendItem: {
     flexDirection: 'row',
@@ -436,7 +432,7 @@ const styles = StyleSheet.create({
   legendDot: {
     width: 10,
     height: 10,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
   },
   legendLabel: {
     fontSize: 12,
@@ -451,28 +447,25 @@ const styles = StyleSheet.create({
   monthButton: {
     width: 36,
     height: 36,
+    backgroundColor: 'white',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radii.pill,
-    backgroundColor: palette.surfaceTint,
+    borderRadius: radius.full,
+    ...shadows.cardSoft,
   },
   monthTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   scheduleList: {
     gap: 18,
   },
   dayCard: {
-    backgroundColor: palette.surface,
-    borderRadius: radii.xl,
-    borderWidth: 0,
-    padding: 20,
+    padding: space.lg,
     height: 220,
     gap: 30,
-    overflow: 'hidden',
-    ...shadows.card,
+    backgroundColor: 'white',
   },
   dayHeader: {
     flexDirection: 'row',
@@ -480,7 +473,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dayBadge: {
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
@@ -488,12 +481,12 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceMuted,
   },
   dayBadgeActive: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.icon,
   },
   dayBadgeText: {
     fontSize: 15,
     color: palette.primaryText,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   dayBadgeTextActive: {
     color: palette.inverseText,
@@ -517,7 +510,7 @@ const styles = StyleSheet.create({
   scheduleIconBadge: {
     width: 36,
     height: 36,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: palette.surfaceMuted,
@@ -540,11 +533,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: palette.surfaceTint,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingVertical: 10,
     paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: palette.border,
+    ...shadows.cardSoft,
   },
   registerText: {
     fontSize: 14,
@@ -558,19 +550,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: palette.surface,
-    borderRadius: radii.lg,
-    borderWidth: 0,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    gap: 12,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.lg,
+    gap: space.md,
     flexWrap: 'wrap',
-    ...shadows.cardSoft,
+    backgroundColor: color.bg,
   },
-  ridingRowActive: {
-    borderWidth: 1,
-    borderColor: palette.borderMuted,
-  },
+  ridingRowActive: {},
   ridingLabel: {
     fontSize: 16,
     fontWeight: '600',
@@ -589,12 +575,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: palette.surfaceTint,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingVertical: 10,
     paddingHorizontal: 18,
-    borderWidth: 1,
-    borderColor: palette.border,
     alignSelf: 'flex-end',
+    ...shadows.cardSoft,
   },
   ridingRegisterText: {
     fontSize: 14,
@@ -610,11 +595,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     backgroundColor: palette.surface,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: palette.border,
     ...shadows.cardSoft,
   },
   competitionCategoryText: {
@@ -627,14 +610,10 @@ const styles = StyleSheet.create({
   },
   competitionCard: {
     flexDirection: 'row',
-    gap: 16,
-    backgroundColor: palette.surface,
-    borderRadius: radii.lg,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: palette.border,
+    gap: space.md,
+    padding: space.lg,
     flexWrap: 'wrap',
-    ...shadows.card,
+    backgroundColor: color.bg,
   },
   competitionDate: {
     width: 88,
@@ -656,7 +635,7 @@ const styles = StyleSheet.create({
   },
   competitionBadge: {
     alignSelf: 'flex-start',
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingHorizontal: 12,
     paddingVertical: 4,
   },

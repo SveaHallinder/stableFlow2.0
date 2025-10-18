@@ -14,6 +14,8 @@ import SearchIcon from '@/assets/images/Search-icon.svg';
 import Logo from '@/assets/images/logo.svg';
 import UserGroups from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
+import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
+import { color, radius, shadow, space } from '@/design/tokens';
 
 type MessagePreview = {
   id: string;
@@ -142,7 +144,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: palette.background,
   },
   scroll: {
     flex: 1,
@@ -160,7 +162,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   iconButton: {
@@ -168,7 +170,7 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceGlass,
   },
   list: {
@@ -186,7 +188,7 @@ const styles = StyleSheet.create({
   groupAvatar: {
     width: 48,
     height: 48,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceTint,
     alignItems: 'center',
     justifyContent: 'center',
@@ -195,7 +197,7 @@ const styles = StyleSheet.create({
   personAvatar: {
     width: 48,
     height: 48,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     marginRight: 14,
   },
   itemContent: {
@@ -233,7 +235,7 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     paddingHorizontal: 4,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.primary,
     justifyContent: 'center',
     alignItems: 'center',

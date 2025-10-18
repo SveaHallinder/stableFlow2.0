@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Image,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -21,6 +22,8 @@ import BroomIcon from '@/assets/images/broom.svg';
 import PlusIcon from '@/assets/images/plus.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
+import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
+import { color, radius, shadow, space } from '@/design/tokens';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -194,7 +197,7 @@ export default function OverviewScreen() {
             </View>
           </LinearGradient>
 
-          <View style={styles.scheduleCard}>
+          <Card style={styles.scheduleCard}>
             {/* Left Column - Saturday MAR 8 */}
             <View style={styles.scheduleLeftColumn}>
               <View style={styles.scheduleMainDay}>
@@ -220,11 +223,11 @@ export default function OverviewScreen() {
                 </View>
               ))}
             </View>
-          </View>
+          </Card>
         </View>
 
         <View style={styles.rowGap}>
-          <View style={styles.horseCard}>
+          <Card style={styles.horseCard}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>Horse Status</Text>
               <Text style={styles.cardEllipsis}>···</Text>
@@ -243,9 +246,9 @@ export default function OverviewScreen() {
                 </Text>
               </View>
             ))}
-          </View>
+          </Card>
 
-          <View style={styles.quickCard}>
+          <Card style={styles.quickCard}>
             <View style={styles.quickHeader}>
               <Text style={styles.quickTitle}>Quick Actions</Text>
               <Text style={styles.quickTitleAccent}>···</Text>
@@ -254,7 +257,7 @@ export default function OverviewScreen() {
               <QuickAction label="Activity" />
               <QuickAction label="Post" />
             </View>
-          </View>
+          </Card>
         </View>
 
         <View style={styles.sectionBlock}>
@@ -467,7 +470,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: palette.background,
+    backgroundColor: color.bg,
   },
   scroll: {
     flex: 1,
@@ -486,7 +489,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   iconButton: {
@@ -494,7 +497,7 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceGlass,
   },
   alertBanner: {
@@ -504,10 +507,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    backgroundColor: palette.surfaceTint,
-    borderRadius: radii.xl,
-    borderWidth: 0,
-    ...shadows.cardSoft,
   },
   alertLabel: {
     fontSize: 16,
@@ -581,10 +580,7 @@ const styles = StyleSheet.create({
     height: 120,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    borderWidth: 1.5,
-    borderColor: palette.border,
-    borderRadius: radii.lg,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: 'white',
     flexDirection: 'row',
     gap: 12,
   },
@@ -693,14 +689,11 @@ const styles = StyleSheet.create({
   },
   horseCard: {
     flex: 1,
-    backgroundColor: palette.surface,
     height: 100,
-    borderRadius: radii.md,
     paddingVertical: 12,
     paddingHorizontal: 12,
     gap: 8,
-    borderWidth: 1.5,
-    borderColor: palette.border,
+    backgroundColor: 'white',
   },
   cardHeader: {
     flexDirection: 'row',
@@ -711,7 +704,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 17,
     lineHeight: 21,
-    fontWeight: '500',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   cardEllipsis: {
@@ -745,13 +738,11 @@ const styles = StyleSheet.create({
   },
   quickCard: {
     flex: 1,
-    borderRadius: radii.md,
-    paddingVertical: 20,
+    paddingVertical: 12,
     paddingHorizontal: 20,
     height: 100,
     gap: 20,
-    borderWidth: 1.5,
-    borderColor: palette.border,
+    backgroundColor: 'white',
   },
   quickHeader: {
     flexDirection: 'row',
@@ -761,7 +752,7 @@ const styles = StyleSheet.create({
   },
   quickTitle: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '400',
     lineHeight: 18,
     color: palette.primaryText,
   },
@@ -784,8 +775,8 @@ const styles = StyleSheet.create({
   quickActionPill: {
     width: '100%',
     height: 25,
-    backgroundColor: palette.surfaceTint,
-    borderRadius: radii.pill,
+    backgroundColor: palette.accent,
+    borderRadius: radius.full,
     borderWidth: 1.5,
     borderColor: palette.border,
     paddingHorizontal: 10,
@@ -795,22 +786,14 @@ const styles = StyleSheet.create({
   quickActionText: {
     fontSize: 12,
     fontWeight: '500',
-    color: palette.primaryText,
+    color: 'white',
   },
   quickActionBadge: {
     position: 'absolute',
-    top: -8,
-    right: 0,
-    width: 22,
-    height: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.pill,
-    backgroundColor: palette.surface,
-    shadowColor: 'rgba(28, 28, 30, 0.18)',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
+    top: -4,
+    right: -10,
+    width: 28,
+    height: 28,
   },
   sectionBlock: {
     gap: 16,
@@ -833,7 +816,7 @@ const styles = StyleSheet.create({
   sectionDot: {
     width: 6,
     height: 6,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.accent,
   },
   sectionCount: {
@@ -854,43 +837,37 @@ const styles = StyleSheet.create({
   stackLayer: {
     ...StyleSheet.absoluteFillObject,
     marginHorizontal: 12,
-    borderRadius: radii.xl,
-    backgroundColor: palette.surfaceTint,
-    ...shadows.cardSoft,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceMuted,
+    ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
     zIndex: -1,
   },
   stackLayerTop: {
-    marginHorizontal: 4,
-    backgroundColor: palette.surface,
-    ...shadows.cardSoft,
+    marginHorizontal: 6,
+    marginVertical: -2,
+    backgroundColor: color.card,
+    ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
   },
   primaryCard: {
-    backgroundColor: palette.surface,
-    borderRadius: radii.xl,
-    padding: 20,
-    gap: 14,
-    borderWidth: 0,
-    ...shadows.cardSoft,
+    backgroundColor: color.card,
+    borderRadius: radius.lg,
+    padding: space.lg,
+    gap: space.md,
+    shadowColor: 'black',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],
   },
   postCard: {
-    backgroundColor: palette.surface,
     padding: 20,
     gap: 16,
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: palette.border,
-    ...shadows.card,
   },
   messageCard: {
-    backgroundColor: palette.surfaceTint,
     padding: 20,
     gap: 12,
-    borderRadius: radii.xl,
-    borderWidth: 0,
-    ...shadows.cardSoft,
   },
   postHeader: {
     flexDirection: 'row',
@@ -946,7 +923,7 @@ const styles = StyleSheet.create({
   groupAvatar: {
     width: 44,
     height: 44,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
@@ -954,7 +931,7 @@ const styles = StyleSheet.create({
   messageAvatar: {
     width: 44,
     height: 44,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
@@ -986,7 +963,7 @@ const styles = StyleSheet.create({
   messageBadge: {
     minWidth: 18,
     height: 18,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     paddingHorizontal: 6,
     backgroundColor: palette.primary,
     alignItems: 'center',
@@ -1011,7 +988,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: tints.info,
   },
   collapseButtonText: {

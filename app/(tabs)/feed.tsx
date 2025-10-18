@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: palette.background,
   },
   scroll: {
     flex: 1,
@@ -103,7 +103,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   iconButton: {
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     backgroundColor: palette.surfaceGlass,
   },
   postList: {

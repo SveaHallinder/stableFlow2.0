@@ -18,6 +18,7 @@ import {
   UserRound,
 } from 'lucide-react-native';
 import { theme } from '@/components/theme';
+import { color, shadow, radius } from '@/design/tokens';
 import SearchIcon from '@/assets/images/Search-icon.svg';
 import Logo from '@/assets/images/logo.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
@@ -206,7 +207,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: palette.background,
   },
   scroll: {
     flex: 1,
@@ -224,7 +225,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   iconButton: {
@@ -232,7 +233,7 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     backgroundColor: palette.surfaceGlass,
   },
   profileCard: {
@@ -248,7 +249,7 @@ const styles = StyleSheet.create({
   avatar: {
     width: 60,
     height: 60,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
   },
   profileDetails: {
     flex: 1,
@@ -273,7 +274,7 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     backgroundColor: palette.surfaceMuted,
   },
   messageButton: {
@@ -281,8 +282,7 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.pill,
-    backgroundColor: palette.primary,
+    borderRadius: radii.full,
   },
   legendContainer: {
     flexDirection: 'column',
@@ -292,6 +292,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    width: '100%',
+    justifyContent: 'center',
   },
   legendItem: {
     flexDirection: 'row',
@@ -299,28 +301,28 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 12,
     gap: 6,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: 0,
-    borderRadius: radii.pill,
+    backgroundColor: color.card,
+    borderRadius: radius.full,
+    ...shadow.ios.small,
   },
   legendDotToday: {
     width: 10,
     height: 10,
     backgroundColor: palette.icon,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
   },
   legendDotRiding: {
     width: 10,
     height: 10,
     backgroundColor: palette.accent,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
   },
   legendDotAway: {
     width: 10,
     height: 10,
     borderWidth: 1,
     borderColor: palette.icon,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
   },
   legendText: {
     fontWeight: '500',
@@ -401,7 +403,7 @@ const styles = StyleSheet.create({
   dayCircle: {
     width: 32,
     height: 32,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -451,7 +453,7 @@ const styles = StyleSheet.create({
   sectionDot: {
     width: 6,
     height: 6,
-    borderRadius: radii.pill,
+    borderRadius: radii.full,
     backgroundColor: palette.accent,
   },
   sectionCount: {
