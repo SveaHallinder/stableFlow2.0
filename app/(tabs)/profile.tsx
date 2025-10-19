@@ -20,7 +20,7 @@ import {
 import { theme } from '@/components/theme';
 import { color, shadow, radius } from '@/design/tokens';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo.svg';
+import Logo from '@/assets/images/logo-blue.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 
 const palette = theme.colors;
@@ -80,15 +80,15 @@ export default function ProfileScreen() {
           />
           <View style={styles.profileDetails}>
             <View style={styles.detailRow}>
-              <UserRound size={16} color={palette.icon} strokeWidth={1.5} />
+              <UserRound size={14} color={palette.icon} strokeWidth={1.5} />
               <Text style={styles.detailText}>Cinder, Kanel</Text>
             </View>
             <View style={styles.detailRow}>
-              <MapPin size={16} color={palette.icon} strokeWidth={1.5} />
+              <MapPin size={14} color={palette.icon} strokeWidth={1.5} />
               <Text style={styles.detailText}>Täby, Stockholm</Text>
             </View>
             <View style={styles.detailRow}>
-              <Phone size={16} color={palette.icon} strokeWidth={1.5} />
+              <Phone size={14} color={palette.icon} strokeWidth={1.5} />
               <Text style={styles.detailText}>+46 70-000 00 00</Text>
             </View>
           </View>
@@ -213,9 +213,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    padding: 20,
-    paddingBottom: 120,
-    gap: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 80,
+    gap: 18,
     paddingTop: 24,
   },
   header: {
@@ -239,17 +239,16 @@ const styles = StyleSheet.create({
   profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: palette.surfaceTint,
-    gap: 16,
-    padding: 16,
-    borderRadius: radii.lg,
+    backgroundColor: 'transparent',
+    gap: 20,
+    paddingVertical: 24,
+    paddingHorizontal: 0,
     borderWidth: 0,
-    ...shadows.cardSoft,
   },
   avatar: {
     width: 60,
     height: 60,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
   },
   profileDetails: {
     flex: 1,
@@ -274,7 +273,7 @@ const styles = StyleSheet.create({
     height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.full,
+    borderRadius: radius.full,
     backgroundColor: palette.surfaceMuted,
   },
   messageButton: {
@@ -282,64 +281,58 @@ const styles = StyleSheet.create({
     height: 40,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: radii.full,
   },
   legendContainer: {
     flexDirection: 'column',
-    gap: 12,
   },
   legendRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 24,
     width: '100%',
     justifyContent: 'center',
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 0,
     gap: 6,
-    backgroundColor: color.card,
-    borderRadius: radius.full,
-    ...shadow.ios.small,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
   },
   legendDotToday: {
     width: 10,
     height: 10,
     backgroundColor: palette.icon,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
   },
   legendDotRiding: {
     width: 10,
     height: 10,
     backgroundColor: palette.accent,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
   },
   legendDotAway: {
     width: 10,
     height: 10,
     borderWidth: 1,
     borderColor: palette.icon,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
   },
   legendText: {
     fontWeight: '500',
     fontSize: 10,
-    lineHeight: 12,
     color: palette.primaryText,
+    letterSpacing: 0.1,
   },
   calendarCard: {
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 15,
-    paddingHorizontal: 16,
-    paddingVertical: 18,
+    gap: 12,
+    paddingHorizontal: 0,
     borderWidth: 0,
-    borderRadius: radii.md,
-    backgroundColor: palette.surface,
-    ...shadows.cardSoft,
+    backgroundColor: 'transparent',
   },
   calendarHeader: {
     flexDirection: 'row',
@@ -354,16 +347,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   calendarArrowText: {
-    fontSize: 16,
-    color: palette.mutedText,
+    fontSize: 18,
+    color: color.textMuted,
     fontWeight: '400',
+    letterSpacing: -0.3,
   },
   calendarMonth: {
-    fontWeight: '600',
-    fontSize: 16,
-    lineHeight: 20,
-    color: palette.primaryText,
+    fontWeight: '400',
+    fontSize: 18,
+    lineHeight: 22,
+    color: color.text,
     textAlign: 'center',
+    letterSpacing: -0.3,
   },
   weekRow: {
     flexDirection: 'row',
@@ -391,7 +386,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignContent: 'flex-start',
     width: '100%',
-    marginTop: 12,
   },
   dayCell: {
     width: '14.28%',
@@ -403,7 +397,7 @@ const styles = StyleSheet.create({
   dayCircle: {
     width: 32,
     height: 32,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },

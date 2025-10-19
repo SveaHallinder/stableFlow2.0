@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/components/theme';
+import { radius } from '@/design/tokens';
 
 type ConversationMessage = {
   id: string;
@@ -24,7 +25,6 @@ type ConversationMessage = {
 };
 
 const palette = theme.colors;
-const radii = theme.radii;
 
 const conversation: ConversationMessage[] = [
   {
@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: 'transparent',
+    backgroundColor: palette.background,
   },
   container: {
     flex: 1,
@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
   backButton: {
     width: 32,
     height: 32,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: palette.surfaceTint,
@@ -198,9 +198,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   headerAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: radii.pill,
+    width: 35,
+    height: 35,
+    borderRadius: radius.full,
   },
   headerTitle: {
     fontSize: 18,
@@ -239,12 +239,13 @@ const styles = StyleSheet.create({
   messageAvatar: {
     width: 28,
     height: 28,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     alignSelf: 'flex-end',
+    marginBottom: 12,
   },
   messageBubble: {
     maxWidth: '80%',
-    borderRadius: radii.lg,
+    borderRadius: radius.lg,
     borderWidth: 0,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -282,8 +283,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 18,
-    gap: 12,
   },
   composer: {
     flex: 1,
@@ -291,7 +290,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     backgroundColor: palette.surfaceTint,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     borderWidth: 0,
     paddingHorizontal: 18,
     paddingVertical: 8,
@@ -299,7 +298,7 @@ const styles = StyleSheet.create({
   composerAction: {
     width: 32,
     height: 32,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: palette.surfaceMuted,
@@ -316,7 +315,7 @@ const styles = StyleSheet.create({
   sendButton: {
     width: 42,
     height: 42,
-    borderRadius: radii.pill,
+    borderRadius: radius.full,
     backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',

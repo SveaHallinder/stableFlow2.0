@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { EllipsisVertical, Heart, MessageCircle } from 'lucide-react-native';
 import { theme } from '@/components/theme';
+import { color, space, radius } from '@/design/tokens';
 
 export type PostData = {
   id: string;
@@ -67,22 +68,21 @@ export function PostCard({ data }: { data: PostData }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: palette.surfaceTint,
-    borderRadius: radii.xl,
+    backgroundColor: 'transparent',
     borderWidth: 0,
-    padding: 22,
-    gap: 18,
-    ...shadows.cardSoft,
+    paddingVertical: space.md,
+    paddingHorizontal: 0,
+    gap: space.md,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: space.md,
   },
   avatarWrapper: {
     width: 48,
     height: 48,
-    borderRadius: radii.full,
+    borderRadius: radius.full,
     overflow: 'hidden',
   },
   avatar: {
@@ -95,40 +95,44 @@ const styles = StyleSheet.create({
   },
   author: {
     fontSize: 16,
-    fontWeight: '400',
-    color: palette.primaryText,
+    fontWeight: '600',
+    color: color.text,
+    letterSpacing: -0.2,
   },
   timestamp: {
-    fontSize: 12,
-    color: palette.secondaryText,
+    fontSize: 13,
+    color: color.textMuted,
+    fontWeight: '400',
   },
   moreButton: {
     padding: 8,
   },
   content: {
-    fontSize: 14,
-    color: palette.primaryText,
-    lineHeight: 20,
-    opacity: 0.9,
+    fontSize: 15,
+    color: color.text,
+    lineHeight: 22,
+    fontWeight: '400',
+    letterSpacing: -0.1,
   },
   postImage: {
     width: '100%',
-    height: 240,
-    borderRadius: radii.lg,
+    height: 260,
+    borderRadius: radius.lg,
   },
   footer: {
     flexDirection: 'row',
-    gap: 20,
-    marginTop: 8,
+    gap: space.lg,
+    marginTop: space.sm,
   },
   stat: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: space.xs,
   },
   statText: {
-    fontSize: 12,
-    color: palette.secondaryText,
+    fontSize: 13,
+    color: color.textMuted,
     fontWeight: '500',
+    letterSpacing: -0.1,
   },
 });

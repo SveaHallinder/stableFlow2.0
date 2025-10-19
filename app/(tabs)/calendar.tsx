@@ -10,7 +10,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronDown, ChevronLeft, ChevronRight, Clock3, Moon, Plus, Sun } from 'lucide-react-native';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo.svg';
+import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
 import { color, radius, shadow, space } from '@/design/tokens';
@@ -41,6 +41,8 @@ type RegularSlot = {
   icon: RegularSlotIcon;
   color: string;
   note?: string;
+  assignedTo?: string;
+  time?: string;
 };
 
 type RegularDay = {
@@ -58,9 +60,9 @@ const regularSchedule: RegularDay[] = [
     date: '10',
     selected: true,
     slots: [
-      { label: 'Morning', icon: 'sun', color: palette.warning, note: 'Feeding missing' },
-      { label: 'Lunch', icon: 'clock', color: palette.info, note: 'Check turnout' },
-      { label: 'Evening', icon: 'moon', color: statusColors.evening, note: 'Hay top-up' },
+      { label: 'Morning', icon: 'sun', color: palette.warning, note: 'Feeding missing', assignedTo: 'Ida', time: '07:00' },
+      { label: 'Lunch', icon: 'clock', color: palette.info, note: 'Check turnout', assignedTo: 'Karl', time: '12:00' },
+      { label: 'Evening', icon: 'moon', color: statusColors.evening, note: 'Hay top-up', assignedTo: 'Ida', time: '18:00' },
     ],
   },
   {
@@ -68,9 +70,9 @@ const regularSchedule: RegularDay[] = [
     day: 'Wed',
     date: '11',
     slots: [
-      { label: 'Morning', icon: 'sun', color: palette.warning, note: 'Paddock swap' },
-      { label: 'Lunch', icon: 'clock', color: palette.info },
-      { label: 'Evening', icon: 'moon', color: statusColors.evening, note: 'Stretch session' },
+      { label: 'Morning', icon: 'sun', color: palette.warning, note: 'Paddock swap', assignedTo: 'Karl', time: '07:00' },
+      { label: 'Lunch', icon: 'clock', color: palette.info, assignedTo: 'Ida', time: '12:00' },
+      { label: 'Evening', icon: 'moon', color: statusColors.evening, note: 'Stretch session', assignedTo: 'Karl', time: '18:00' },
     ],
   },
   {
@@ -78,9 +80,9 @@ const regularSchedule: RegularDay[] = [
     day: 'Thu',
     date: '12',
     slots: [
-      { label: 'Morning', icon: 'sun', color: palette.warning },
-      { label: 'Lunch', icon: 'clock', color: palette.info, note: 'Farrier away' },
-      { label: 'Evening', icon: 'moon', color: statusColors.evening },
+      { label: 'Morning', icon: 'sun', color: palette.warning, assignedTo: 'Ida', time: '07:00' },
+      { label: 'Lunch', icon: 'clock', color: palette.info, note: 'Farrier away', assignedTo: 'Karl', time: '12:00' },
+      { label: 'Evening', icon: 'moon', color: statusColors.evening, assignedTo: 'Ida', time: '18:00' },
     ],
   },
 ];
@@ -263,13 +265,19 @@ function RegularDayCard({
             {day} {date}
           </Text>
         </View>
-        <TouchableOpacity>
-          <Text style={styles.dayMore}>···</Text>
-        </TouchableOpacity>
       </View>
       <View style={styles.dayIcons}>
-        {slots.map((slot) => (
-          <ScheduleIcon key={`${day}-${date}-${slot.label}`} label={slot.label} icon={slot.icon} color={slot.color} note={slot.note} />
+        {slots.map((slot, index) => (
+          <ScheduleIcon 
+            key={`${day}-${date}-${slot.label}`} 
+            label={slot.label} 
+            icon={slot.icon} 
+            color={slot.color} 
+            note={slot.note}
+            assignedTo={slot.assignedTo}
+            time={slot.time}
+            isLast={index === slots.length - 1}
+          />
         ))}
       </View>
     </Card>
@@ -281,11 +289,17 @@ function ScheduleIcon({
   icon,
   color,
   note,
+  assignedTo,
+  time,
+  isLast,
 }: {
   label: string;
   icon: RegularSlotIcon;
   color: string;
   note?: string;
+  assignedTo?: string;
+  time?: string;
+  isLast?: boolean;
 }) {
   const renderIcon = () => {
     if (icon === 'sun') {
@@ -298,12 +312,25 @@ function ScheduleIcon({
   };
 
   return (
-    <View style={styles.scheduleIcon}>
-      <View style={[styles.scheduleIconBadge, { backgroundColor: `${color}1A` }]}>
-        {renderIcon()}
+    <View style={[styles.scheduleIcon, isLast && styles.scheduleIconLast]}>
+      <View style={styles.scheduleIconContent}>
+        <View style={[styles.scheduleIconBadge, { backgroundColor: `${color}1A` }]}>
+          {renderIcon()}
+        </View>
+        <View style={styles.scheduleIconText}>
+          <View style={styles.scheduleHeader}>
+            <Text style={styles.scheduleLabel}>{label}</Text>
+            {time && <Text style={styles.scheduleTime}>{time}</Text>}
+          </View>
+          {assignedTo && (
+            <View style={styles.assignedToContainer}>
+              <View style={styles.assignedToDot} />
+              <Text style={styles.scheduleAssigned}>{assignedTo}</Text>
+            </View>
+          )}
+          {note && <Text style={styles.scheduleNote}>{note}</Text>}
+        </View>
       </View>
-      <Text style={styles.scheduleLabel}>{label}</Text>
-      {note && <Text style={styles.scheduleNote}>{note}</Text>}
     </View>
   );
 }
@@ -459,12 +486,12 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   scheduleList: {
-    gap: 18,
+    gap: 10,
   },
   dayCard: {
-    padding: space.lg,
-    height: 220,
-    gap: 30,
+    paddingHorizontal: space.lg,
+    paddingVertical: 12,
+    minHeight: 'auto',
     backgroundColor: 'white',
   },
   dayHeader: {
@@ -474,8 +501,8 @@ const styles = StyleSheet.create({
   },
   dayBadge: {
     borderRadius: radius.full,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   dayBadgeInactive: {
     backgroundColor: palette.surfaceMuted,
@@ -484,7 +511,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.icon,
   },
   dayBadgeText: {
-    fontSize: 15,
+    fontSize: 14,
     color: palette.primaryText,
     fontWeight: '500',
   },
@@ -496,36 +523,74 @@ const styles = StyleSheet.create({
     color: palette.mutedText,
   },
   dayIcons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    flexWrap: 'wrap',
+    flexDirection: 'column',
+    gap: 2,
+    marginTop: 8,
   },
   scheduleIcon: {
-    flex: 1,
-    minWidth: 90,
+    width: '100%',
+    paddingVertical: space.sm,
+  },
+  scheduleIconLast: {
+    borderBottomWidth: 0,
+  },
+  scheduleIconContent: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: space.md,
+    width: '100%',
+  },
+  scheduleIconText: {
+    flex: 1,
+    gap: 2,
+  },
+  scheduleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  scheduleTime: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: color.textMuted,
+    letterSpacing: -0.1,
+  },
+  assignedToContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  assignedToDot: {
+    width: 6,
+    height: 6,
+    borderRadius: radius.full,
+    backgroundColor: color.tint,
+  },
+  scheduleAssigned: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: color.text,
+    letterSpacing: -0.1,
   },
   scheduleIconBadge: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: palette.surfaceMuted,
   },
   scheduleLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.primaryText,
-    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '400',
+    color: color.text,
+    letterSpacing: -0.2,
   },
   scheduleNote: {
     fontSize: 12,
-    color: palette.secondaryText,
-    marginTop: 2,
-    textAlign: 'center',
+    color: color.textMuted,
+    letterSpacing: -0.1,
   },
   registerButton: {
     alignSelf: 'flex-end',

@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo.svg';
+import Logo from '@/assets/images/logo-blue.svg';
 import UserGroups from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceGlass,
   },
   list: {
-    gap: 20,
+    gap: 6,
   },
   item: {
     flexDirection: 'row',

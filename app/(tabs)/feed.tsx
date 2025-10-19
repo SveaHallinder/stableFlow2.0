@@ -9,9 +9,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo.svg';
+import Logo from '@/assets/images/logo-blue.svg';
 import { PostCard, PostData } from '@/components/Post';
 import { theme } from '@/components/theme';
+import { color, radius, space } from '@/design/tokens';
 
 const palette = theme.colors;
 const gradients = theme.gradients;
@@ -91,20 +92,22 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 120,
-    gap: 32,
+    paddingHorizontal: space.lg,
+    paddingBottom: 80,
+    gap: space.xl,
     paddingTop: 24,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: space.sm,
   },
   headerTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '400',
-    color: palette.primaryText,
+    color: color.text,
+    letterSpacing: -0.3,
   },
   iconButton: {
     width: 40,
@@ -115,6 +118,6 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceGlass,
   },
   postList: {
-    gap: 32,
+    gap: space.xl,
   },
 });

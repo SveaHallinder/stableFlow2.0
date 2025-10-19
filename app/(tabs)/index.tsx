@@ -15,14 +15,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import HeartIcon from '@/assets/images/Heart.svg';
 import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo.svg';
+import Logo from '@/assets/images/logo-blue.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 import WarningIcon from '@/assets/images/⚠.svg';
 import BroomIcon from '@/assets/images/broom.svg';
-import PlusIcon from '@/assets/images/plus.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
-import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
+import { Card } from '@/components/Primitives';
 import { color, radius, shadow, space } from '@/design/tokens';
 
 const palette = theme.colors;
@@ -38,11 +37,6 @@ type StatusChip = {
   icon?: 'warning' | 'broom';
 };
 
-type HorseStatus = {
-  name: string;
-  note: string;
-  tone?: 'alert';
-};
 
 type MessageItem = {
   id: string;
@@ -86,10 +80,6 @@ const upcomingDays: Array<{ id: string; label: string; items: StatusChip[] }> = 
   },
 ];
 
-const horseStatuses: HorseStatus[] = [
-  { name: 'Majid', note: 'Lost shoe' },
-  { name: 'Cinder', note: 'Injured', tone: 'alert' },
-];
 
 const messages: MessageItem[] = [
   {
@@ -207,6 +197,7 @@ export default function OverviewScreen() {
               <View style={styles.scheduleMainEvents}>
                 <ScheduleChip label="Feeding ev.." tone="alert" icon="warning" />
                 <ScheduleChip label="Cleaning day" tone="info" icon="broom" />
+                <ScheduleChip label="Cleaning day" tone="info" icon="broom" />
               </View>
             </View>
 
@@ -226,39 +217,6 @@ export default function OverviewScreen() {
           </Card>
         </View>
 
-        <View style={styles.rowGap}>
-          <Card style={styles.horseCard}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Horse Status</Text>
-              <Text style={styles.cardEllipsis}>···</Text>
-            </View>
-            {horseStatuses.map((item) => (
-              <View style={styles.horseRow} key={item.name}>
-                <Text style={styles.horseName}>{item.name}</Text>
-                <Text style={styles.horseDash}>-</Text>
-                <Text
-                  style={[
-                    styles.horseNote,
-                    item.tone === 'alert' && styles.horseNoteAlert,
-                  ]}
-                >
-                  {item.note}
-                </Text>
-              </View>
-            ))}
-          </Card>
-
-          <Card style={styles.quickCard}>
-            <View style={styles.quickHeader}>
-              <Text style={styles.quickTitle}>Quick Actions</Text>
-              <Text style={styles.quickTitleAccent}>···</Text>
-            </View>
-            <View style={styles.quickActions}>
-              <QuickAction label="Activity" />
-              <QuickAction label="Post" />
-            </View>
-          </Card>
-        </View>
 
         <View style={styles.sectionBlock}>
           <SectionHeader title="New messages" count={8} />
@@ -380,18 +338,6 @@ function ScheduleChip({ label, tone, icon }: StatusChip) {
   );
 }
 
-function QuickAction({ label }: { label: string }) {
-  return (
-    <View style={styles.quickActionWrapper}>
-      <View style={styles.quickActionPill}>
-        <Text style={styles.quickActionText}>{label}</Text>
-      </View>
-  <View style={styles.quickActionBadge}>
-        <PlusIcon width={12} height={12} color={palette.primary} />
-      </View>
-    </View>
-  );
-}
 
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
@@ -433,7 +379,6 @@ function StackedCard({
           <View
             pointerEvents="none"
             style={[
-              styles.stackLayer,
               layerColors?.base && { backgroundColor: layerColors.base },
               { transform: [{ translateY: secondOffset }] },
             ]}
@@ -441,8 +386,6 @@ function StackedCard({
           <View
             pointerEvents="none"
             style={[
-              styles.stackLayer,
-              styles.stackLayerTop,
               layerColors?.top && { backgroundColor: layerColors.top },
               { transform: [{ translateY: firstOffset }] },
             ]}
@@ -479,7 +422,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 140,
-    gap: 28,
+    gap: 36,
   },
   header: {
     flexDirection: 'row',
@@ -502,20 +445,20 @@ const styles = StyleSheet.create({
   },
   alertBanner: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    justifyContent: 'flex-start',
     gap: 8,
     marginBottom: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 0,
   },
   alertLabel: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '600',
     color: palette.error,
   },
   alertText: {
-    fontSize: 16,
-    color: palette.secondaryText,
+    fontSize: 17,
+    color: palette.primaryText,
   },
   rowGap: {
     flexDirection: 'row',
@@ -523,10 +466,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   weatherCard: {
-    width: 120,
-    height: 120,
+    width: 125,
+    height: 125,
     borderRadius: radii.xl,
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: palette.border,
     paddingHorizontal: 12,
     paddingVertical: 12,
@@ -547,16 +490,16 @@ const styles = StyleSheet.create({
   weatherArrow: {
     fontSize: 16,
     color: 'white',
-    transform: [{ rotate: '-45deg' }],
+    transform: [{ rotate: '320deg' }],
   },
   weatherTempRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 18,
+    gap: 22,
     color: 'white',
   },
   weatherTemperature: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '600',
     color: 'white',
   },
@@ -564,66 +507,70 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   weatherDescription: {
-    fontSize: 12,
+    fontSize: 14,
     color: 'white',
+    fontWeight: '500',
   },
   weatherRangeRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 12,
   },
   weatherRange: {
-    fontSize: 12,
+    fontSize: 14,
     color: 'white',
+    fontWeight: '500',
   },
   scheduleCard: {
     flex: 1,
-    height: 120,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    height: 125,
     backgroundColor: 'white',
     flexDirection: 'row',
-    gap: 12,
+    gap: 4,
+    marginLeft: 12,
+    marginRight: 0,
   },
   scheduleLeftColumn: {
-    width: '45%',
-    gap: 15,
+    width: '50%',
+    gap: 10,
   },
   scheduleRightColumn: {
-    width: '45%',
-    gap: 8,
+    width: '50%',
+    gap: 14,
   },
   scheduleMainDay: {
-    gap: 4,
+    gap: 2,
   },
   scheduleMainDayName: {
     fontSize: 12,
     fontWeight: '600',
     color: palette.accent,
     textTransform: 'uppercase',
+    letterSpacing: 0.1,
   },
   scheduleMainDate: {
-    fontSize: 20,
+    fontSize: 21,
     fontWeight: '400',
     color: palette.primaryText,
     textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   scheduleMainEvents: {
-    gap: 4,
+    gap: 8,
   },
   scheduleSecondaryDay: {
-    gap: 4,
+    gap: 8,
   },
   scheduleSecondaryDayName: {
-    fontSize: 10,
+    fontSize: 12,
     fontWeight: '600',
     color: palette.mutedText,
     textTransform: 'uppercase',
   },
   scheduleSecondaryEvents: {
-    gap: 3,
+    gap: 6,
   },
   scheduleDateColumn: {
-    gap: 4,
+    gap: 6,
   },
   scheduleDay: {
     fontSize: 12,
@@ -657,13 +604,13 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   scheduleChipText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '500',
     color: palette.secondaryText,
     flexShrink: 1,
   },
   upcomingList: {
-    gap: 10,
+    gap: 6,
     flexDirection: 'column',
     wordWrap: 'nowrap',
     overflow: 'hidden',
@@ -687,116 +634,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
-  horseCard: {
-    flex: 1,
-    height: 100,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    gap: 8,
-    backgroundColor: 'white',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingRight: 4,
-  },
-  cardTitle: {
-    fontSize: 17,
-    lineHeight: 21,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  cardEllipsis: {
-    fontSize: 12,
-    color: palette.mutedText,
-  },
-  horseRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 5,
-  },
-  horseName: {
-    fontSize: 12,
-    lineHeight: 15,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  horseDash: {
-    fontSize: 12,
-    lineHeight: 15,
-    color: palette.primaryText,
-  },
-  horseNote: {
-    fontSize: 12,
-    lineHeight: 15,
-    color: palette.primaryText,
-  },
-  horseNoteAlert: {
-    color: palette.error,
-    fontWeight: '500',
-  },
-  quickCard: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    height: 100,
-    gap: 20,
-    backgroundColor: 'white',
-  },
-  quickHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingRight: 4,
-  },
-  quickTitle: {
-    fontSize: 15,
-    fontWeight: '400',
-    lineHeight: 18,
-    color: palette.primaryText,
-  },
-  quickTitleAccent: {
-    fontSize: 16,
-    color: palette.secondaryText,
-  },
-  quickActions: {
-    flexDirection: 'row',
-    gap: 10,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  quickActionWrapper: {
-    width: 70,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    position: 'relative',
-  },
-  quickActionPill: {
-    width: '100%',
-    height: 25,
-    backgroundColor: palette.accent,
-    borderRadius: radius.full,
-    borderWidth: 1.5,
-    borderColor: palette.border,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  quickActionText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: 'white',
-  },
-  quickActionBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -10,
-    width: 28,
-    height: 28,
-  },
   sectionBlock: {
-    gap: 16,
+    gap: 14,
+    paddingHorizontal: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -807,10 +647,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    marginBottom: 12,
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
   },
   sectionDot: {
@@ -834,40 +675,23 @@ const styles = StyleSheet.create({
   stackedWrapperFlat: {
     marginBottom: 0,
   },
-  stackLayer: {
-    ...StyleSheet.absoluteFillObject,
-    marginHorizontal: 12,
-    borderRadius: radius.lg,
-    backgroundColor: palette.surfaceMuted,
-    ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
-    zIndex: -1,
-  },
-  stackLayerTop: {
-    marginHorizontal: 6,
-    marginVertical: -2,
-    backgroundColor: color.card,
-    ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
-  },
   primaryCard: {
     backgroundColor: color.card,
     borderRadius: radius.lg,
     padding: space.lg,
-    gap: space.md,
-    shadowColor: 'black',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    gap: 0,
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],
   },
   postCard: {
-    padding: 20,
-    gap: 16,
+    gap: 12,
+    paddingHorizontal: 0,
+    paddingVertical: 8,
   },
   messageCard: {
-    padding: 20,
-    gap: 12,
+    paddingHorizontal: 0,
+    paddingVertical: 14,
   },
   postHeader: {
     flexDirection: 'row',
@@ -882,9 +706,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   postBody: {
-    fontSize: 14,
+    fontSize: 12,
     color: palette.primaryText,
-    lineHeight: 20,
+    lineHeight: 18,
   },
   postContent: {
     flex: 1,
@@ -986,14 +810,10 @@ const styles = StyleSheet.create({
   collapseButton: {
     alignSelf: 'flex-start',
     marginTop: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: tints.info,
   },
   collapseButtonText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '400',
     color: palette.primaryText,
   },
 });

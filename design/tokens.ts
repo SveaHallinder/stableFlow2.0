@@ -16,34 +16,57 @@ export const space = {
 };
 
 export const color = {
-  bg: '#FDFDFD', // canvas
-  card: 'rgba(255,255,255,0.92)',
-  text: '#0A0A0A',
-  textMuted: 'rgba(0,0,0,0.55)',
-  divider: 'rgba(0,0,0,0.05)',
-  tint: '#87C6A2', // brand accent (StableFlow green)
+  bg: '#FFFFFF', // pure clean canvas
+  card: 'transparent', // no cards, seamless
+  cardGlass: 'rgba(248,248,248,0.3)', // subtle background hints
+  text: '#000000', // pure black
+  textMuted: 'rgba(0,0,0,0.5)', 
+  divider: 'rgba(0,0,0,0.05)', // barely visible
+  tint: '#007AFF', // Apple's blue
+  tintSecondary: '#30D158', // Apple's green
+  glow: 'transparent', // no glow effects
+  glowGreen: 'transparent', // no glow effects
+  premium: 'transparent', // seamless
 };
 
 export const shadow = {
   ios: {
+    none: {
+      shadowColor: 'rgba(0,0,0,0.05)',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    micro: {
+      shadowColor: 'transparent',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
+    },
     small: {
-      shadowColor: '#000',
-      shadowOpacity: 0.05,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 2 },
+      shadowColor: 'transparent',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
     },
     medium: {
-      shadowColor: '#000',
-      shadowOpacity: 0.06,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 6 },
+      shadowColor: 'transparent',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
     },
     large: {
-      shadowColor: '#000',
-      shadowOpacity: 0.08,
-      shadowRadius: 24,
-      shadowOffset: { width: 0, height: 12 },
+      shadowColor: 'transparent',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
+    },
+    glow: {
+      shadowColor: 'transparent',
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
     },
   },
-  android: { small: 2, medium: 4, large: 8 }, // elevation
+  android: { small: 0, medium: 0, large: 0 },
 };
