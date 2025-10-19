@@ -1,5 +1,12 @@
 import React from 'react';
-import { Platform, View, TextInput, Text, TouchableOpacity } from 'react-native';
+import {
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { shadow, color, radius, space } from '../design/tokens';
 
 export const Card = ({ style, children, ...props }: any) => (
@@ -75,3 +82,63 @@ export const Divider = ({ style, vertical, ...props }: any) => (
     {...props}
   />
 );
+
+const headerStyles = StyleSheet.create({
+  container: {
+    minHeight: 68,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+  },
+  side: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  center: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: color.text,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+});
+
+export const PageHeader = ({ title, left, right, children, style }: any) => (
+  <View style={[headerStyles.container, style]}>
+    <View style={headerStyles.side}>{left}</View>
+    <View style={headerStyles.center}>
+      {children ?? (
+        <Text numberOfLines={1} style={headerStyles.title}>
+          {title}
+        </Text>
+      )}
+    </View>
+    <View style={headerStyles.side}>{right}</View>
+  </View>
+);
+
+export const HeaderIconButton = ({ style, ...props }: any) => (
+  <TouchableOpacity
+    style={[headerStyles.iconButton, style]}
+    activeOpacity={0.85}
+    {...props}
+  />
+);
+
+export { headerStyles };
