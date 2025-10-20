@@ -9,10 +9,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChevronDown, ChevronLeft, ChevronRight, Clock3, Moon, Plus, Sun } from 'lucide-react-native';
-import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { color, radius, shadow, space } from '@/design/tokens';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -159,18 +158,15 @@ export default function CalendarScreen() {
   return (
     <LinearGradient colors={gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="Calendar"
+        />
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-        <View style={styles.header}>
-          <Logo width={32} height={32} />
-          <Text style={styles.headerTitle}>Calendar</Text>
-          <TouchableOpacity style={styles.iconButton}>
-            <SearchIcon width={20} height={20} />
-          </TouchableOpacity>
-        </View>
 
         <Card style={styles.filterRow}>
           {filters.map((label) => {
@@ -392,27 +388,12 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingBottom: 120,
+    paddingBottom: 50,
     gap: 24,
     paddingTop: 10,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceGlass,
+  pageHeader: {
+    marginBottom: 0,
   },
   filterRow: {
     flexDirection: 'row',

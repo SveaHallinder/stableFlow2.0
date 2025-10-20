@@ -13,7 +13,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/components/theme';
-import { radius } from '@/design/tokens';
+import { radius, space } from '@/design/tokens';
+import { HeaderIconButton } from '@/components/Primitives';
+import { ScreenHeader } from '@/components/ScreenHeader';
 
 type ConversationMessage = {
   id: string;
@@ -56,16 +58,22 @@ export default function ChatScreen() {
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Go back"
-            onPress={() => router.back()}
-            style={styles.backButton}
-          >
-            <Text style={styles.backIcon}>‹</Text>
-          </TouchableOpacity>
-
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="" // Empty title since we use children
+          left={
+            <HeaderIconButton
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+              onPress={() => router.back()}
+              style={styles.backButton}
+            >
+              <Text style={styles.backIcon}>‹</Text>
+            </HeaderIconButton>
+          }
+          showLogo={false}
+          showSearch={false}
+        >
           <View style={styles.headerProfile}>
             <Image
               source={require('@/assets/images/dummy-avatar.png')}
@@ -75,7 +83,7 @@ export default function ChatScreen() {
               {name ?? 'Ida Magnusson'}
             </Text>
           </View>
-        </View>
+        </ScreenHeader>
 
         <ScrollView
           style={styles.scroll}
@@ -170,16 +178,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    gap: 12,
+  pageHeader: {
+    marginBottom: 0,
   },
   backButton: {
-    width: 32,
-    height: 32,
     borderRadius: radius.full,
     justifyContent: 'center',
     alignItems: 'center',
@@ -207,9 +209,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.primaryText,
     maxWidth: 220,
-  },
-  headerPlaceholder: {
-    width: 32,
   },
   scroll: {
     flex: 1,

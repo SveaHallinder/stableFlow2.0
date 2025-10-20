@@ -1,22 +1,14 @@
 import React from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo-blue.svg';
 import { PostCard, PostData } from '@/components/Post';
 import { theme } from '@/components/theme';
-import { color, radius, space } from '@/design/tokens';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { space } from '@/design/tokens';
 
 const palette = theme.colors;
 const gradients = theme.gradients;
-const radii = theme.radii;
 
 const posts: PostData[] = [
   {
@@ -56,19 +48,15 @@ export default function FeedScreen() {
   return (
     <LinearGradient colors={gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="Feed"
+        />
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.header}>
-            <Logo width={32} height={32} />
-            <Text style={styles.headerTitle}>Feed</Text>
-            <TouchableOpacity style={styles.iconButton}>
-              <SearchIcon width={20} height={20} />
-            </TouchableOpacity>
-          </View>
-
           <View style={styles.postList}>
             {posts.map((post) => (
               <PostCard key={post.id} data={post} />
@@ -93,29 +81,12 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: space.lg,
-    paddingBottom: 80,
+    paddingBottom: 50,
     gap: space.xl,
     paddingTop: 24,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: space.sm,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: '400',
-    color: color.text,
-    letterSpacing: -0.3,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radii.full,
-    backgroundColor: palette.surfaceGlass,
+  pageHeader: {
+    marginBottom: 0,
   },
   postList: {
     gap: space.xl,

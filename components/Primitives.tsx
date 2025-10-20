@@ -85,30 +85,32 @@ export const Divider = ({ style, vertical, ...props }: any) => (
 
 const headerStyles = StyleSheet.create({
   container: {
-    minHeight: 68,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.sm,
+    height: 68, // Fixed height instead of minHeight for consistency
+    paddingHorizontal: space.xs, // Much smaller padding - 6px instead of 20px
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.md,
+    justifyContent: 'space-between',
   },
   side: {
     width: 48,
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0, // Prevent shrinking
   },
   center: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 0, // No extra padding in center
   },
   title: {
     fontSize: 22,
-    fontWeight: '600',
+    fontWeight: '400',
     color: color.text,
     textAlign: 'center',
     letterSpacing: -0.3,
+    lineHeight: 26, // Consistent line height
   },
   iconButton: {
     width: 40,
@@ -116,6 +118,7 @@ const headerStyles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent', // Ensure consistent background
   },
 });
 

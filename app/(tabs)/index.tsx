@@ -15,13 +15,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import HeartIcon from '@/assets/images/Heart.svg';
 import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo-blue.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 import WarningIcon from '@/assets/images/⚠.svg';
 import BroomIcon from '@/assets/images/broom.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { Card } from '@/components/Primitives';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import { color, radius, shadow, space } from '@/design/tokens';
 
 const palette = theme.colors;
@@ -147,19 +147,15 @@ export default function OverviewScreen() {
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="Today's overview"
+        />
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <Logo width={32} height={32} />
-          <Text style={styles.headerTitle}>Todays overview</Text>
-          <TouchableOpacity style={styles.iconButton}>
-            <SearchIcon width={20} height={20} />
-          </TouchableOpacity>
-        </View>
-
         <View style={styles.alertBanner}>
           <Text style={styles.alertLabel}>OBS!</Text>
           <Text style={styles.alertText}>No parking by the container today.</Text>
@@ -331,8 +327,8 @@ function ScheduleChip({ label, tone, icon }: StatusChip) {
 
   return (
     <View style={[styles.scheduleChip, { backgroundColor: background, borderLeftColor: border }]}>
-      {icon === 'warning' && <WarningIcon width={8} height={8} style={styles.chipIcon} />}
-      {icon === 'broom' && <BroomIcon width={8} height={8} style={styles.chipIcon} />}
+      {icon === 'warning' && <WarningIcon width={8} height={8} />}
+      {icon === 'broom' && <BroomIcon width={8} height={8} />}
       <Text style={styles.scheduleChipText} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
     </View>
   );
@@ -421,27 +417,11 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 140,
+    paddingBottom: 50,
     gap: 36,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceGlass,
+  pageHeader: {
+    marginBottom: 12,
   },
   alertBanner: {
     flexDirection: 'row',
@@ -598,10 +578,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.xs / 2,
     borderColor: palette.border,
     backgroundColor: 'transparent',
-  },
-  chipIcon: {
-    margin: 0,
-    padding: 0,
   },
   scheduleChipText: {
     fontSize: 11,

@@ -10,12 +10,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo-blue.svg';
 import UserGroups from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
-import { Card, Pill, SearchBar, Divider } from '@/components/Primitives';
-import { color, radius, shadow, space } from '@/design/tokens';
+import { ScreenHeader } from '@/components/ScreenHeader';
+import { radius, shadow, space } from '@/design/tokens';
 
 type MessagePreview = {
   id: string;
@@ -81,18 +79,15 @@ export default function MessagesScreen() {
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="Messages"
+        />
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.header}>
-            <Logo width={32} height={32} />
-            <Text style={styles.headerTitle}>Messages</Text>
-            <TouchableOpacity style={styles.iconButton}>
-              <SearchIcon width={20} height={20} />
-            </TouchableOpacity>
-          </View>
 
           <View style={styles.list}>
             {messages.map((item) => (
@@ -151,27 +146,12 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingBottom: 120,
+    paddingBottom: 50,
     gap: 24,
     paddingTop: 24,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceGlass,
+  pageHeader: {
+    marginBottom: 0,
   },
   list: {
     gap: 6,

@@ -45,7 +45,7 @@ export const theme = {
   },
   gradients: {
     background: ['#F5F6FB', '#ffffff'] as const,
-    weather: ['#5681AC', '#9AC3EC'] as const,
+    weather: ['#007AFF', '#AAD2FE'] as const,
     action: ['#3EDFAF', '#2D8BFF'] as const,
   },
   spacing: space,

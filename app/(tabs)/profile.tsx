@@ -18,9 +18,8 @@ import {
   UserRound,
 } from 'lucide-react-native';
 import { theme } from '@/components/theme';
-import { color, shadow, radius } from '@/design/tokens';
-import SearchIcon from '@/assets/images/Search-icon.svg';
-import Logo from '@/assets/images/logo-blue.svg';
+import { color, shadow, radius, space } from '@/design/tokens';
+import { ScreenHeader } from '@/components/ScreenHeader';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 
 const palette = theme.colors;
@@ -60,18 +59,15 @@ export default function ProfileScreen() {
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <ScreenHeader
+          style={styles.pageHeader}
+          title="Jane Doe"
+        />
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-        <View style={styles.header}>
-           <Logo width={32} height={32} />
-          <Text style={styles.headerTitle}>Jane Doe</Text>
-          <TouchableOpacity style={styles.iconButton}>
-            <SearchIcon width={20} height={20} />
-          </TouchableOpacity>
-        </View>
 
         <View style={styles.profileCard}>
           <Image
@@ -214,27 +210,12 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 80,
+    paddingBottom: 50,
     gap: 18,
     paddingTop: 24,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  iconButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radii.full,
-    backgroundColor: palette.surfaceGlass,
+  pageHeader: {
+    marginBottom: 0,
   },
   profileCard: {
     flexDirection: 'row',
