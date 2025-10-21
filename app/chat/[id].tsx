@@ -195,9 +195,11 @@ const styles = StyleSheet.create({
   headerProfile: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: 14,
     flexShrink: 1,
     flex: 1,
+    width: '100%',
   },
   headerAvatar: {
     width: 35,
@@ -206,7 +208,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '500',
     color: palette.primaryText,
     maxWidth: 220,
   },

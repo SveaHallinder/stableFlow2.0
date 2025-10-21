@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 50,
-    gap: 18,
+    gap: 36,
     paddingTop: 12,
   },
   pageHeader: {
@@ -302,8 +302,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   legendText: {
-    fontWeight: '500',
-    fontSize: 10,
+    fontWeight: '400',
+    fontSize: 14,
     color: palette.primaryText,
     letterSpacing: 0.1,
   },
@@ -328,14 +328,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   calendarArrowText: {
-    fontSize: 18,
+    fontSize: 22,
     color: color.textMuted,
     fontWeight: '400',
     letterSpacing: -0.3,
   },
   calendarMonth: {
     fontWeight: '400',
-    fontSize: 18,
+    fontSize: 20,
     lineHeight: 22,
     color: color.text,
     textAlign: 'center',
@@ -376,16 +376,16 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   dayCircle: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
   dayLabel: {
-    fontWeight: '500',
+    fontWeight: '700',
     fontSize: 14,
-    lineHeight: 17,
+    lineHeight: 20,
     color: palette.primaryText,
   },
   ridingDay: {

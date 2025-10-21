@@ -145,7 +145,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 0,
     paddingBottom: 50,
     gap: 24,
     paddingTop: 24,
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
   },
   item: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: palette.surfaceTint,
     borderRadius: radii.xl,
     paddingVertical: 20,
@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
   itemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
   },
   itemTitleRow: {
     flexDirection: 'row',
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   itemTitle: {
     fontSize: 16,
     color: palette.primaryText,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   itemTime: {
     fontSize: 12,
