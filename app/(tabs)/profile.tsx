@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
   },
   weekDay: {
     fontWeight: '600',
-    fontSize: 10,
+    fontSize: 12,
     lineHeight: 12,
     textTransform: 'uppercase',
     color: palette.mutedText,
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayLabel: {
-    fontWeight: '700',
+    fontWeight: '500',
     fontSize: 14,
     lineHeight: 20,
     color: palette.primaryText,
