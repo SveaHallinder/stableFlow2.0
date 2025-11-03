@@ -14,62 +14,20 @@ import UserGroups from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { radius, shadow, space } from '@/design/tokens';
-
-type MessagePreview = {
-  id: string;
-  title: string;
-  subtitle: string;
-  description: string;
-  timeAgo: string;
-  unreadCount?: number;
-  avatar?: any;
-  group?: boolean;
-};
+import { useAppData } from '@/context/AppDataContext';
+import type { MessagePreview } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 const radii = theme.radii;
 const shadows = theme.shadows;
 
-const messages: MessagePreview[] = [
-  {
-    id: 'group-1',
-    title: 'Group name',
-    subtitle: 'Person 3',
-    description: 'Lorem ipsum dolor ...',
-    timeAgo: '30 min ago',
-    unreadCount: 2,
-    group: true,
-  },
-  {
-    id: 'person-1',
-    title: 'Person 1',
-    subtitle: '1h ago',
-    description: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago',
-    avatar: require('@/assets/images/dummy-avatar.png'),
-  },
-  {
-    id: 'person-2',
-    title: 'Person 1',
-    subtitle: '1h ago',
-    description: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago',
-    avatar: require('@/assets/images/dummy-avatar.png'),
-  },
-  {
-    id: 'person-3',
-    title: 'Person 1',
-    subtitle: '1h ago',
-    description: 'Lorem ipsum dolor sit amet...',
-    timeAgo: '1h ago',
-    avatar: require('@/assets/images/dummy-avatar.png'),
-  },
-];
-
 export default function MessagesScreen() {
   const router = useRouter();
+  const { state, actions } = useAppData();
+  const { messages } = state;
 
   const handleOpenConversation = (item: MessagePreview) => {
+    actions.markConversationRead(item.id);
     router.push({
       pathname: '/chat/[id]',
       params: { id: item.id, name: item.title },
@@ -102,7 +60,10 @@ export default function MessagesScreen() {
                     <UserGroups width={28} height={28} />
                   </View>
                 ) : (
-                  <Image source={item.avatar} style={styles.personAvatar} />
+                  <Image
+                    source={item.avatar ?? require('@/assets/images/dummy-avatar.png')}
+                    style={styles.personAvatar}
+                  />
                 )}
 
                 <View style={styles.itemContent}>
@@ -163,7 +124,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.xl,
     paddingVertical: 20,
     paddingHorizontal: 18,
-    ...shadows.cardSoft,
   },
   groupAvatar: {
     width: 48,

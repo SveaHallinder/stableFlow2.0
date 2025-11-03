@@ -16,57 +16,57 @@ export const space = {
 };
 
 export const color = {
-  bg: '#FFFFFF', // pure clean canvas
-  card: 'transparent', // no cards, seamless
-  cardGlass: 'rgba(248,248,248,0.3)', // subtle background hints
-  text: '#000000', // pure black
-  textMuted: 'rgba(0,0,0,0.5)', 
-  divider: 'rgba(0,0,0,0.05)', // barely visible
-  tint: '#007AFF', // Apple's blue
-  tintSecondary: '#30D158', // Apple's green
-  glow: 'transparent', // no glow effects
-  glowGreen: 'transparent', // no glow effects
-  premium: 'transparent', // seamless
+  bg: '#FFFFFF', // crisp canvas
+  card: '#FFFFFF',
+  cardGlass: 'rgba(255, 255, 255, 0.72)',
+  text: '#101622',
+  textMuted: 'rgba(16, 22, 34, 0.55)',
+  divider: 'rgba(16, 22, 34, 0.08)',
+  tint: '#0A84FF',
+  tintSecondary: '#30D158',
+  glow: 'transparent',
+  glowGreen: 'transparent',
+  premium: 'transparent',
 };
 
 export const shadow = {
   ios: {
     none: {
-      shadowColor: 'rgba(0,0,0,0.05)',
+      shadowColor: 'rgba(15, 22, 38, 0.04)',
       shadowOpacity: 0,
       shadowRadius: 0,
       shadowOffset: { width: 0, height: 0 },
     },
     micro: {
-      shadowColor: 'transparent',
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      shadowOffset: { width: 0, height: 0 },
+      shadowColor: 'rgba(15, 22, 38, 0.05)',
+      shadowOpacity: 1,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
     },
     small: {
-      shadowColor: 'transparent',
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      shadowOffset: { width: 0, height: 0 },
+      shadowColor: 'rgba(15, 22, 38, 0.08)',
+      shadowOpacity: 1,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
     },
     medium: {
-      shadowColor: 'transparent',
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      shadowOffset: { width: 0, height: 0 },
+      shadowColor: 'rgba(15, 22, 38, 0.12)',
+      shadowOpacity: 1,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
     },
     large: {
-      shadowColor: 'transparent',
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      shadowOffset: { width: 0, height: 0 },
+      shadowColor: 'rgba(15, 22, 38, 0.16)',
+      shadowOpacity: 1,
+      shadowRadius: 24,
+      shadowOffset: { width: 0, height: 14 },
     },
     glow: {
-      shadowColor: 'transparent',
-      shadowOpacity: 0,
-      shadowRadius: 0,
-      shadowOffset: { width: 0, height: 0 },
+      shadowColor: 'rgba(12, 101, 255, 0.22)',
+      shadowOpacity: 1,
+      shadowRadius: 24,
+      shadowOffset: { width: 0, height: 12 },
     },
   },
-  android: { small: 0, medium: 0, large: 0 },
+  android: { small: 1, medium: 3, large: 6 },
 };

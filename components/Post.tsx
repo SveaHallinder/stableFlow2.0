@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { EllipsisVertical, Heart, MessageCircle } from 'lucide-react-native';
+import { Feather } from '@expo/vector-icons';
 import { theme } from '@/components/theme';
 import { color, space, radius } from '@/design/tokens';
 
@@ -38,7 +38,7 @@ export function PostCard({ data }: { data: PostData }) {
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
         <TouchableOpacity style={styles.moreButton}>
-          <EllipsisVertical size={18} color={palette.secondaryText} />
+          <Feather name="more-vertical" size={18} color={palette.secondaryText} />
         </TouchableOpacity>
       </View>
 
@@ -54,11 +54,11 @@ export function PostCard({ data }: { data: PostData }) {
 
       <View style={styles.footer}>
         <View style={styles.stat}>
-          <Heart size={16} color={palette.secondaryText} />
+          <Feather name="heart" size={16} color={palette.secondaryText} />
           <Text style={styles.statText}>{data.likes}</Text>
         </View>
         <View style={styles.stat}>
-          <MessageCircle size={16} color={palette.secondaryText} />
+          <Feather name="message-circle" size={16} color={palette.secondaryText} />
           <Text style={styles.statText}>{data.comments}</Text>
         </View>
       </View>

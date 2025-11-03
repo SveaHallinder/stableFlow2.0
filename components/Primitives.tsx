@@ -1,4 +1,5 @@
 import React from 'react';
+import type { PropsWithChildren } from 'react';
 import {
   Platform,
   StyleSheet,
@@ -6,16 +7,36 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  type StyleProp,
+  type ViewStyle,
+  type ViewProps,
 } from 'react-native';
 import { shadow, color, radius, space } from '../design/tokens';
 
-export const Card = ({ style, children, ...props }: any) => (
+type CardProps = PropsWithChildren<
+  ViewProps & {
+    elevated?: boolean;
+    tone?: 'default' | 'muted';
+    style?: StyleProp<ViewStyle>;
+  }
+>;
+
+const getCardShadow = (elevated?: boolean) =>
+  Platform.OS === 'ios'
+    ? elevated
+      ? shadow.ios.small
+      : shadow.ios.none
+    : { elevation: elevated ? shadow.android.small : 0 };
+
+export const Card = ({ style, children, elevated, tone = 'default', ...props }: CardProps) => (
   <View
     style={[
       {
-        backgroundColor: color.card,
+        backgroundColor: tone === 'muted' ? color.cardGlass : color.card,
         borderRadius: radius.lg,
-        ...(Platform.OS === 'ios' ? shadow.ios.medium : { elevation: shadow.android.medium }),
+        borderWidth: 0,
+        borderColor: color.divider,
+        ...getCardShadow(elevated),
       },
       style,
     ]}
@@ -32,8 +53,7 @@ export const Pill = ({ active, style, children, ...props }: any) => (
         paddingHorizontal: space.md,
         paddingVertical: space.sm,
         borderRadius: radius.full,
-        backgroundColor: active ? 'rgba(0,0,0,0.85)' : color.card,
-        ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
+        backgroundColor: active ? color.tint : color.card,
       },
       style,
     ]}
@@ -47,11 +67,13 @@ export const SearchBar = ({ style, ...props }: any) => (
   <View
     style={[
       {
-        backgroundColor: 'rgba(255,255,255,0.92)',
+        backgroundColor: color.card,
         borderRadius: radius.xl,
         paddingVertical: space.md,
         paddingHorizontal: space.md,
-        ...(Platform.OS === 'ios' ? shadow.ios.small : { elevation: shadow.android.small }),
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: color.divider,
+        ...(Platform.OS === 'ios' ? shadow.ios.micro : { elevation: shadow.android.small }),
       },
       style,
     ]}
@@ -86,7 +108,7 @@ export const Divider = ({ style, vertical, ...props }: any) => (
 const headerStyles = StyleSheet.create({
   container: {
     height: 68, // Fixed height instead of minHeight for consistency
-    paddingHorizontal: space.xs, // Much smaller padding - 6px instead of 20px
+    paddingHorizontal: space.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -102,7 +124,7 @@ const headerStyles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 0, // No extra padding in center
+    paddingHorizontal: 0,
   },
   title: {
     fontSize: 22,
@@ -118,7 +140,33 @@ const headerStyles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent', // Ensure consistent background
+    backgroundColor: color.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.divider,
+  },
+  titleStack: {
+    alignItems: 'center',
+    gap: 2,
+  },
+  subtitle: {
+    fontSize: 13,
+    fontWeight: '400',
+    color: color.textMuted,
+    letterSpacing: -0.2,
+  },
+  actionButton: {
+    borderRadius: radius.full,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+    backgroundColor: color.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.divider,
+  },
+  actionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: color.text,
+    letterSpacing: -0.2,
   },
 });
 
@@ -142,6 +190,16 @@ export const HeaderIconButton = ({ style, ...props }: any) => (
     activeOpacity={0.85}
     {...props}
   />
+);
+
+export const HeaderActionButton = ({ label, children, style, textStyle, ...props }: any) => (
+  <TouchableOpacity
+    style={[headerStyles.actionButton, style]}
+    activeOpacity={0.85}
+    {...props}
+  >
+    {children ?? <Text style={[headerStyles.actionLabel, textStyle]}>{label}</Text>}
+  </TouchableOpacity>
 );
 
 export { headerStyles };

@@ -4,7 +4,7 @@
     "slug": "StableFlow",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo-blue.svg",
+    "icon": "./assets/images/logo.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -14,7 +14,7 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/logo-blue.svg"
+      "favicon": "./assets/images/logo.png"
     },
     "plugins": [
       "expo-router",

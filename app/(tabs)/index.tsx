@@ -1,20 +1,24 @@
 import React from 'react';
 import {
   Image,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
+  type StyleProp,
+  type ViewStyle,
 } from 'react-native';
-import type { StyleProp, ViewStyle } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Feather } from '@expo/vector-icons';
 import HeartIcon from '@/assets/images/Heart.svg';
 import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
-import SearchIcon from '@/assets/images/Search-icon.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 import WarningIcon from '@/assets/images/⚠.svg';
 import BroomIcon from '@/assets/images/broom.svg';
@@ -22,13 +26,22 @@ import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { Card } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { color, radius, shadow, space } from '@/design/tokens';
+import { color, radius, space } from '@/design/tokens';
+import { useAppData } from '@/context/AppDataContext';
+import { useToast } from '@/components/ToastProvider';
+import type { Assignment, AssignmentSlot, CreateAssignmentInput } from '@/context/AppDataContext';
+import {
+  groupAssignmentsByDay,
+  formatPrimaryDay,
+  formatPrimaryDate,
+  formatSecondaryLabel,
+  generateDateOptions,
+  type DateOption,
+} from '@/lib/schedule';
+import { NewAssignmentModal } from '@/components/NewAssignmentModal';
 
 const palette = theme.colors;
 const radii = theme.radii;
-const shadows = theme.shadows;
-const tints = theme.tints;
-const statusColors = theme.status;
 const weatherGradient = theme.gradients.weather;
 
 type StatusChip = {
@@ -37,282 +50,815 @@ type StatusChip = {
   icon?: 'warning' | 'broom';
 };
 
+type QuickActionTint = 'primary' | 'accent' | 'warning';
+type QuickActionIcon = 'clock' | 'users' | 'alert-triangle';
+type QuickActionId = 'my-passes' | 'handover' | 'report-issue';
 
-type MessageItem = {
-  id: string;
-  title: string;
-  author: string;
-  timeAgo: string;
-  preview: string;
-  group?: boolean;
+type QuickAction = {
+  id: QuickActionId;
+  label: string;
+  caption: string;
+  icon: QuickActionIcon;
+  tint: QuickActionTint;
+  disabled?: boolean;
+  highlight?: boolean;
 };
 
-type PostItem = {
-  id: string;
-  author: string;
-  body: string;
-  day: string;
-  time: string;
-  likes: number;
-  comments: number;
+const quickActionStyles: Record<
+  QuickActionTint,
+  { gradient: [string, string]; icon: string; accentBorder: string; shadow: string }
+> = {
+  primary: {
+    gradient: ['#ECF2FF', '#F8FAFF'],
+    icon: '#2D6CF6',
+    accentBorder: 'rgba(45, 108, 246, 0.18)',
+    shadow: 'rgba(45, 108, 246, 0.12)',
+  },
+  accent: {
+    gradient: ['#EAF9F4', '#F6FBF9'],
+    icon: '#1BA97A',
+    accentBorder: 'rgba(27, 169, 122, 0.18)',
+    shadow: 'rgba(27, 169, 122, 0.12)',
+  },
+  warning: {
+    gradient: ['#FFF6EB', '#FFF9F1'],
+    icon: '#E29833',
+    accentBorder: 'rgba(226, 152, 51, 0.18)',
+    shadow: 'rgba(226, 152, 51, 0.12)',
+  },
 };
-
-const statusChips: StatusChip[] = [
-  { label: 'Feeding ev..', tone: 'alert', icon: 'warning' },
-  { label: 'Cleaning day', tone: 'info', icon: 'broom' },
-];
-
-const upcomingDays: Array<{ id: string; label: string; items: StatusChip[] }> = [
-  {
-    id: 'sun-9',
-    label: 'SUN, 9 MAR',
-    items: [
-      { label: 'Cleaning day', tone: 'info', icon: 'broom' },
-      { label: 'Meeting comp...', tone: 'neutral' },
-    ],
-  },
-  {
-    id: 'tue-11',
-    label: 'TUE, 11 MAR',
-    items: [
-      { label: 'Feeding mor..', tone: 'alert', icon: 'warning' },
-    ],
-  },
-];
-
-
-const messages: MessageItem[] = [
-  {
-    id: 'msg-1',
-    title: 'Group Name',
-    author: 'Jane Doe',
-    timeAgo: '30 min ago',
-    preview: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit?',
-    group: true,
-  },
-  {
-    id: 'msg-2',
-    title: 'Ingrid B',
-    author: 'Ingrid B',
-    timeAgo: '1h ago',
-    preview: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit?',
-  },
-];
-
-const posts: PostItem[] = [
-  {
-    id: 'post-1',
-    author: 'Jane Doe',
-    body:
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
-    day: 'Thu',
-    time: '10:23',
-    likes: 3,
-    comments: 3,
-  },
-  {
-    id: 'post-2',
-    author: 'Samuel H',
-    body: 'Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas.',
-    day: 'Wed',
-    time: '18:45',
-    likes: 5,
-    comments: 2,
-  },
-  {
-    id: 'post-3',
-    author: 'Ingrid B',
-    body: 'Curabitur non nulla sit amet nisl tempus convallis quis ac lectus.',
-    day: 'Tue',
-    time: '14:12',
-    likes: 2,
-    comments: 1,
-  },
-];
 
 export default function OverviewScreen() {
+  const { state, derived, actions } = useAppData();
+  const { assignments, alerts, messages: messageItems, posts: postItems, currentUserId, users } =
+    state;
+  const currentUser = users[currentUserId];
+  const toast = useToast();
+
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
-  const visibleMessages = messagesExpanded ? messages : messages.slice(0, 1);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
-  const visiblePosts = postsExpanded ? posts : posts.slice(0, 1);
+  const [newPassModal, setNewPassModal] = React.useState<{
+    visible: boolean;
+    date?: string;
+    slot?: AssignmentSlot;
+    note?: string;
+    assignToCurrentUser?: boolean;
+  }>({ visible: false });
+  const [activeQuickAction, setActiveQuickAction] = React.useState<QuickActionId | null>(null);
+  const [issueDescription, setIssueDescription] = React.useState('');
 
-  const handleMessagePress = () => {
+  React.useEffect(() => {
+    if (activeQuickAction === 'report-issue') {
+      setIssueDescription('');
+    }
+  }, [activeQuickAction]);
+
+  const openNewPassModal = React.useCallback(
+    (defaults?: {
+      date?: string;
+      slot?: AssignmentSlot;
+      note?: string;
+      assignToCurrentUser?: boolean;
+    }) => {
+      setNewPassModal({
+        visible: true,
+        date: defaults?.date,
+        slot: defaults?.slot,
+        note: defaults?.note,
+        assignToCurrentUser: defaults?.assignToCurrentUser,
+      });
+    },
+    [],
+  );
+
+  const alertBanner = alerts[0];
+  const groupedDays = React.useMemo(() => groupAssignmentsByDay(assignments), [assignments]);
+  const primaryDayGroup = groupedDays[0];
+  const secondaryDayGroups = groupedDays.slice(1, 2);
+
+  const primaryDayLabel = primaryDayGroup ? formatPrimaryDay(primaryDayGroup.date) : '';
+  const primaryDateLabel = primaryDayGroup ? formatPrimaryDate(primaryDayGroup.date) : '';
+
+  const primaryChips = React.useMemo<StatusChip[]>(() => {
+    if (!primaryDayGroup) {
+      return [];
+    }
+    return sortAssignments(primaryDayGroup.assignments).map(createStatusChip);
+  }, [primaryDayGroup]);
+
+  const upcomingDays = React.useMemo(
+    () =>
+      secondaryDayGroups.map((day) => ({
+        id: day.isoDate,
+        label: formatSecondaryLabel(day.date),
+        items: sortAssignments(day.assignments).map(createStatusChip),
+      })),
+    [secondaryDayGroups],
+  );
+
+  const myAssignedUpcoming = React.useMemo(
+    () =>
+      derived.upcomingAssignmentsForUser.filter(
+        (assignment) => assignment.assigneeId === currentUserId,
+      ),
+    [derived.upcomingAssignmentsForUser, currentUserId],
+  );
+
+  const myNextAssignment = myAssignedUpcoming[0];
+  const claimableAssignment = derived.claimableAssignment;
+
+  const quickActions = React.useMemo<QuickAction[]>(() => {
+    return [
+      {
+        id: 'my-passes',
+        label: 'Mina pass',
+        caption: myNextAssignment
+          ? `${myNextAssignment.label} · ${myNextAssignment.time}`
+          : 'Inga pass på dig just nu',
+        icon: 'clock',
+        tint: 'primary',
+        highlight: myAssignedUpcoming.length > 0,
+      },
+      {
+        id: 'handover',
+        label: 'Fördela uppgifter',
+        caption: claimableAssignment
+          ? `${claimableAssignment.label} · ${claimableAssignment.time}`
+          : 'Skapa nytt öppet pass',
+        icon: 'users',
+        tint: 'accent',
+        disabled: !claimableAssignment,
+        highlight: !!claimableAssignment,
+      },
+      {
+        id: 'report-issue',
+        label: 'Rapportera hinder',
+        caption: 'Larma om trasiga boxar eller skador',
+        icon: 'alert-triangle',
+        tint: 'warning',
+      },
+    ];
+  }, [myNextAssignment, myAssignedUpcoming.length, claimableAssignment]);
+  const isIssueValid = issueDescription.trim().length >= 3;
+
+  const summaryStats = React.useMemo(
+    () => [
+      {
+        id: 'completed',
+        label: 'Utförda pass',
+        value: `${derived.summary.completed} / ${derived.summary.total}`,
+        meta: derived.summary.nextUpdateLabel,
+      },
+      {
+        id: 'open',
+        label: 'Lediga pass',
+        value: `${derived.summary.open}`,
+        meta: derived.summary.openSlotLabels.length
+          ? formatSlotListDisplay(derived.summary.openSlotLabels)
+          : 'Inga lediga pass',
+      },
+      {
+        id: 'alerts',
+        label: 'Aviseringar',
+        value: `${derived.summary.alerts}`,
+        meta: alertBanner ? truncateText(alertBanner.message, 36) : 'Allt lugnt',
+      },
+    ],
+    [derived.summary, alertBanner],
+  );
+
+  const visibleMessages = messagesExpanded ? messageItems : messageItems.slice(0, 1);
+  const visiblePosts = postsExpanded ? postItems : postItems.slice(0, 1);
+
+  const handleMessagePress = React.useCallback(() => {
     setMessagesExpanded((prev) => !prev);
-  };
+  }, []);
 
-  const handlePostPress = () => {
+  const handlePostPress = React.useCallback(() => {
     setPostsExpanded((prev) => !prev);
-  };
+  }, []);
+
+  const handleQuickActionPress = React.useCallback(
+    (action: QuickAction) => {
+      if (action.disabled) {
+        return;
+      }
+      setActiveQuickAction(action.id);
+    },
+    [],
+  );
+
+  const overviewDateOptions = React.useMemo<DateOption[]>(
+    () =>
+      generateDateOptions(groupedDays, {
+        includeDates: newPassModal.date ? [newPassModal.date] : undefined,
+      }),
+    [groupedDays, newPassModal.date],
+  );
+
+  const handleCreateAssignment = React.useCallback(
+    (input: CreateAssignmentInput) => {
+      const result = actions.createAssignment(input);
+      if (result.success && result.data) {
+        const message = input.assignToCurrentUser
+          ? `${result.data.label} ${result.data.time} lades till på dig.`
+          : `${result.data.label} ${result.data.time} finns nu som ledigt pass.`;
+        toast.showToast(message, 'success');
+      } else if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
+  const handlePrimaryAction = React.useCallback(() => {
+    setActiveQuickAction('my-passes');
+  }, []);
+
+  const closeQuickActionSheet = React.useCallback(() => {
+    setActiveQuickAction(null);
+  }, []);
+
+  const handleConfirmClaim = React.useCallback(() => {
+    const result = actions.claimNextOpenAssignment();
+
+    if (!result.success) {
+      toast.showToast(`${result.reason} Skapar nytt pass i stället.`, 'info');
+      openNewPassModal({
+        date: derived.claimableAssignment?.date ?? primaryDayGroup?.isoDate,
+        slot: derived.claimableAssignment?.slot ?? 'Lunch',
+        note: 'Behöver bemanning',
+        assignToCurrentUser: false,
+      });
+      setActiveQuickAction(null);
+      return;
+    }
+
+    if (result.data) {
+      toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+    } else {
+      toast.showToast('Passet är ditt.', 'success');
+    }
+    setActiveQuickAction(null);
+  }, [actions, toast, derived.claimableAssignment, openNewPassModal, primaryDayGroup]);
+
+  const handlePlanNewPass = React.useCallback(() => {
+    openNewPassModal({
+      date: derived.claimableAssignment?.date ?? primaryDayGroup?.isoDate,
+      slot: derived.claimableAssignment?.slot ?? 'Morning',
+      note: 'Behöver bemanning',
+      assignToCurrentUser: false,
+    });
+    setActiveQuickAction(null);
+  }, [derived.claimableAssignment, openNewPassModal, primaryDayGroup]);
+
+  const handleSubmitIssue = React.useCallback(() => {
+    const details = issueDescription.trim();
+    if (!details) {
+      toast.showToast('Beskriv vad som behöver rapporteras.', 'error');
+      return;
+    }
+    const result = actions.reportIssue(details);
+    if (result.success) {
+      toast.showToast('Aviseringen skickades till överblicken.', 'success');
+      setActiveQuickAction(null);
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, issueDescription, toast]);
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={styles.pageHeader}
-          title="Today's overview"
+          title="Dagens överblick"
+          primaryActionLabel="Visa mina pass"
+          onPressPrimaryAction={handlePrimaryAction}
+          primaryActionDisabled={false}
         />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.alertBanner}>
-          <Text style={styles.alertLabel}>OBS!</Text>
-          <Text style={styles.alertText}>No parking by the container today.</Text>
-        </View>
-
-        <View style={styles.rowGap}>
-          <LinearGradient
-            colors={weatherGradient}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 0, y: 1 }}
-            style={styles.weatherCard}
-          >
-            <View style={styles.weatherHeader}>
-              <Text style={styles.weatherCity}>Stockholm</Text>
-              <Text style={styles.weatherArrow}>➢</Text>
-            </View>
-            <View style={styles.weatherTempRow}>
-              <Text style={styles.weatherTemperature}>10°</Text>
-              <CloudSun width={32} height={32} style={styles.weatherIcon} />
-            </View>
-            <Text style={styles.weatherDescription}>Cloudy</Text>
-            <View style={styles.weatherRangeRow}>
-              <Text style={styles.weatherRange}>H:12°</Text>
-              <Text style={styles.weatherRange}>L:6°</Text>
-            </View>
-          </LinearGradient>
-
-          <Card style={styles.scheduleCard}>
-            {/* Left Column - Saturday MAR 8 */}
-            <View style={styles.scheduleLeftColumn}>
-              <View style={styles.scheduleMainDay}>
-                <Text style={styles.scheduleMainDayName}>SATURDAY</Text>
-                <Text style={styles.scheduleMainDate}>MAR 8</Text>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {alertBanner && (
+            <Card tone="muted" style={styles.alertCard}>
+              <View style={styles.alertRow}>
+                <Text style={styles.alertLabel}>OBS!</Text>
+                <Text style={styles.alertText}>{alertBanner.message}</Text>
               </View>
-              <View style={styles.scheduleMainEvents}>
-                <ScheduleChip label="Feeding ev.." tone="alert" icon="warning" />
-                <ScheduleChip label="Cleaning day" tone="info" icon="broom" />
-                <ScheduleChip label="Cleaning day" tone="info" icon="broom" />
+            </Card>
+          )}
+
+          <View style={styles.quickActionGrid}>
+            {quickActions.map((action) => (
+              <QuickActionCard
+                key={action.id}
+                action={action}
+                onPress={handleQuickActionPress}
+              />
+            ))}
+          </View>
+
+          <View style={styles.summarySection}>
+            <View style={styles.summaryHeader}>
+              <View>
+                <Text style={styles.summaryTitle}>Dagens läge</Text>
+                <Text style={styles.summarySubtitle}>Snabb överblick över passen</Text>
+              </View>
+              <View style={styles.summaryBadge}>
+                <Feather name="clock" size={14} color={palette.primary} />
+                <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
               </View>
             </View>
-
-            {/* Right Column - Other Days */}
-            <View style={styles.scheduleRightColumn}>
-              {upcomingDays.map((day) => (
-                <View key={day.id} style={styles.scheduleSecondaryDay}>
-                  <Text style={styles.scheduleSecondaryDayName}>{day.label}</Text>
-                  <View style={styles.scheduleSecondaryEvents}>
-                    {day.items.map((chip) => (
-                      <ScheduleChip key={`${day.id}-${chip.label}`} {...chip} />
-                    ))}
-                  </View>
+            <View style={styles.summaryTiles}>
+              {summaryStats.map((item) => (
+                <View key={item.id} style={styles.summaryTile}>
+                  <Text style={styles.summaryValue}>{item.value}</Text>
+                  <Text style={styles.summaryLabel}>{item.label}</Text>
+                  {item.meta ? <Text style={styles.summaryMeta}>{item.meta}</Text> : null}
                 </View>
               ))}
             </View>
-          </Card>
-        </View>
-
-
-        <View style={styles.sectionBlock}>
-          <SectionHeader title="New messages" count={8} />
-          {visibleMessages.map((message, index) => {
-            const isPrimaryCard = index === 0;
-            const stacked = isPrimaryCard && !messagesExpanded;
-
-            return (
-              <StackedCard
-                key={message.id}
-                offset={stacked ? [6, 16] : undefined}
-                stacked={stacked}
-                onPress={isPrimaryCard ? handleMessagePress : undefined}
-                cardStyle={styles.messageCard}
-              >
-                <View style={styles.messageRow}>
-                  {message.group ? (
-                    <View style={styles.groupAvatar}>
-                      <UserGroupsIcon width={28} height={28} />
+            {derived.recentActivities.length > 0 ? (
+              <View style={styles.activityColumn}>
+                <Text style={styles.activityTitle}>Senaste aktivitet</Text>
+                <View style={styles.activityRow}>
+                  {derived.recentActivities.slice(0, 3).map((activity) => (
+                    <View key={activity.id} style={styles.activityChip}>
+                      <Text style={styles.activityChipText}>{activity.label}</Text>
                     </View>
-                  ) : (
-                    <Image
-                      source={require('@/assets/images/dummy-avatar.png')}
-                      style={styles.messageAvatar}
-                    />
-                  )}
-                  <View style={styles.messageContent}>
-                    <View style={styles.messageHeader}>
-                      <View style={styles.messageTitleBlock}>
-                        <Text style={styles.messageTitle}>{message.title}</Text>
-                        {message.group && (
-                          <View style={styles.messageBadge}>
-                            <Text style={styles.messageBadgeText}>2</Text>
-                          </View>
-                        )}
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </View>
+
+          <WeatherPanel />
+
+          {primaryDayGroup && (
+            <Card elevated tone="muted" style={styles.scheduleCard}>
+              <View style={styles.scheduleHeaderRow}>
+                <Text style={styles.scheduleTitle}>Kommande pass</Text>
+                <Text style={styles.scheduleSubtitle}>Vecka 10</Text>
+              </View>
+              <View style={styles.scheduleBody}>
+                <View style={styles.scheduleLeftColumn}>
+                  <View style={styles.scheduleMainDay}>
+                    <Text style={styles.scheduleMainDayName}>{primaryDayLabel}</Text>
+                    <Text style={styles.scheduleMainDate}>{primaryDateLabel}</Text>
+                  </View>
+                  <View style={styles.scheduleMainEvents}>
+                    {primaryChips.map((chip) => (
+                      <ScheduleChip
+                        key={`${primaryDayGroup.isoDate}-${chip.label}`}
+                        {...chip}
+                      />
+                    ))}
+                  </View>
+                </View>
+
+                <View style={styles.scheduleRightColumn}>
+                  {upcomingDays.map((day) => (
+                    <View key={day.id} style={styles.scheduleSecondaryDay}>
+                      <Text style={styles.scheduleSecondaryDayName}>{day.label}</Text>
+                      <View style={styles.scheduleSecondaryEvents}>
+                        {day.items.map((chip) => (
+                          <ScheduleChip key={`${day.id}-${chip.label}`} {...chip} />
+                        ))}
                       </View>
-                      <Text style={styles.messageTime}>{message.timeAgo}</Text>
                     </View>
-                    <Text style={styles.messageAuthor}>{message.author}</Text>
-                    <Text numberOfLines={1} style={styles.messagePreview}>
-                      {message.preview}
-                    </Text>
-                  </View>
+                  ))}
                 </View>
-              </StackedCard>
-            );
-          })}
-          {messagesExpanded && (
-            <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
-              <Text style={styles.collapseButtonText}>Show less ↑</Text>
-            </TouchableOpacity>
+              </View>
+            </Card>
           )}
-        </View>
 
-        <View style={styles.sectionBlock}>
-          <SectionHeader title="Recent post" count={posts.length} />
-          {visiblePosts.map((post, index) => {
-            const isPrimaryCard = index === 0;
-            const stacked = isPrimaryCard && !postsExpanded;
+          <View style={styles.sectionBlock}>
+            <SectionHeader title="Nya meddelanden" count={messageItems.length} />
+            {visibleMessages.map((message, index) => {
+              const isPrimaryCard = index === 0;
+              const stacked = isPrimaryCard && !messagesExpanded;
 
-            return (
-              <StackedCard
-                key={post.id}
-                offset={stacked ? [8, 20] : undefined}
-                stacked={stacked}
-                onPress={isPrimaryCard ? handlePostPress : undefined}
-                cardStyle={styles.postCard}
-              >
-                <View style={styles.postHeader}>
-                  <View style={styles.postContent}>
-                    <Text style={styles.postAuthor}>{post.author}</Text>
-                    <Text style={styles.postBody}>{post.body}</Text>
+              return (
+                <StackedCard
+                  key={message.id}
+                  offset={stacked ? [6, 16] : undefined}
+                  stacked={stacked}
+                  onPress={isPrimaryCard ? handleMessagePress : undefined}
+                  cardStyle={styles.messageCard}
+                >
+                  <View style={styles.messageRow}>
+                    {message.group ? (
+                      <View style={styles.groupAvatar}>
+                        <UserGroupsIcon width={28} height={28} />
+                      </View>
+                    ) : (
+                      <Image
+                        source={message.avatar ?? require('@/assets/images/dummy-avatar.png')}
+                        style={styles.messageAvatar}
+                      />
+                    )}
+                    <View style={styles.messageContent}>
+                      <View style={styles.messageHeader}>
+                        <View style={styles.messageTitleBlock}>
+                          <Text style={styles.messageTitle}>{message.title}</Text>
+                          {message.unreadCount ? (
+                            <View style={styles.messageBadge}>
+                              <Text style={styles.messageBadgeText}>{message.unreadCount}</Text>
+                            </View>
+                          ) : null}
+                        </View>
+                        <Text style={styles.messageTime}>{message.timeAgo}</Text>
+                      </View>
+                      <Text style={styles.messageAuthor}>{message.subtitle}</Text>
+                      <Text numberOfLines={1} style={styles.messagePreview}>
+                        {message.description}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={styles.postMeta}>
-                    <Text style={styles.postMetaDay}>{post.day}</Text>
-                    <Text style={styles.postMetaTime}>{post.time}</Text>
+                </StackedCard>
+              );
+            })}
+            {messagesExpanded && (
+              <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
+                <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.sectionBlock}>
+            <SectionHeader title="Senaste inlägg" count={postItems.length} />
+            {visiblePosts.map((post, index) => {
+              const isPrimaryCard = index === 0;
+              const stacked = isPrimaryCard && !postsExpanded;
+
+              return (
+                <StackedCard
+                  key={post.id}
+                  offset={stacked ? [8, 20] : undefined}
+                  stacked={stacked}
+                  onPress={isPrimaryCard ? handlePostPress : undefined}
+                  cardStyle={styles.postCard}
+                >
+                  <View style={styles.postHeader}>
+                    <View style={styles.postContent}>
+                      <Text style={styles.postAuthor}>{post.author}</Text>
+                      {post.content ? <Text style={styles.postBody}>{post.content}</Text> : null}
+                    </View>
+                    <View style={styles.postMeta}>
+                      <Text style={styles.postMetaDay}>Nu</Text>
+                      <Text style={styles.postMetaTime}>{post.timeAgo}</Text>
+                    </View>
                   </View>
-                </View>
-                <View style={styles.postFooter}>
-                  <View style={styles.postStat}>
-                    <HeartIcon width={16} height={16} />
-                    <Text style={styles.postStatText}>{post.likes}</Text>
+                  <View style={styles.postFooter}>
+                    <View style={styles.postStat}>
+                      <HeartIcon width={16} height={16} />
+                      <Text style={styles.postStatText}>{post.likes}</Text>
+                    </View>
+                    <View style={styles.postStat}>
+                      <SpeechBubbleIcon width={16} height={16} />
+                      <Text style={styles.postStatText}>{post.comments}</Text>
+                    </View>
                   </View>
-                  <View style={styles.postStat}>
-                    <SpeechBubbleIcon width={16} height={16} />
-                    <Text style={styles.postStatText}>{post.comments}</Text>
-                  </View>
-                </View>
-              </StackedCard>
-            );
-          })}
-          {postsExpanded && (
-            <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
-              <Text style={styles.collapseButtonText}>Show less ↑</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+                </StackedCard>
+              );
+            })}
+            {postsExpanded && (
+              <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
+                <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
+              </TouchableOpacity>
+            )}
+          </View>
       </ScrollView>
-      </SafeAreaView>
+    </SafeAreaView>
+      <QuickActionSheet
+        visible={activeQuickAction === 'my-passes'}
+        title="Mina pass"
+        description={
+          myAssignedUpcoming.length > 0
+            ? 'Här är passen du redan tagit på dig. Behöver du assistans kan du dela ut pass via snabbåtgärden Fördela uppgifter.'
+            : 'Du har inga pass på dig just nu. Plocka ett ledigt pass eller skapa ett nytt om något saknas.'
+        }
+        onClose={closeQuickActionSheet}
+        secondaryLabel={claimableAssignment ? 'Fördela uppgift' : undefined}
+        onSecondary={
+          claimableAssignment
+            ? () => {
+                setActiveQuickAction('handover');
+              }
+            : undefined
+        }
+      >
+        {myAssignedUpcoming.length > 0 ? (
+          <View style={styles.myPassList}>
+            {myAssignedUpcoming.map((assignment) => {
+              const note = formatOwnerNote(assignment);
+              return (
+                <View key={assignment.id} style={styles.myPassCard}>
+                  <View style={styles.myPassHeader}>
+                    <Feather
+                      name={
+                        assignment.slot === 'Evening'
+                          ? 'moon'
+                          : assignment.slot === 'Lunch'
+                          ? 'sunrise'
+                          : 'sun'
+                      }
+                      size={16}
+                      color={palette.primary}
+                    />
+                    <Text style={styles.myPassTitle}>{assignment.label}</Text>
+                  </View>
+                  <Text style={styles.myPassMeta}>
+                    {formatActionDate(assignment.date)} · {assignment.time}
+                  </Text>
+                  {note ? <Text style={styles.myPassNote}>{note}</Text> : null}
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <Text style={styles.actionEmptyText}>
+            Du kan alltid ta ett ledigt pass via snabbåtgärden ”Fördela uppgifter”.
+          </Text>
+        )}
+      </QuickActionSheet>
+      <QuickActionSheet
+        visible={activeQuickAction === 'handover'}
+        title="Fördela uppgifter"
+        description="Ta över nästa lediga pass eller skapa ett nytt pass som behöver bemanning."
+        onClose={closeQuickActionSheet}
+        primaryLabel="Ta över pass"
+        primaryDisabled={!claimableAssignment}
+        onPrimary={claimableAssignment ? handleConfirmClaim : undefined}
+        secondaryLabel="Skapa nytt pass"
+        onSecondary={handlePlanNewPass}
+      >
+        {claimableAssignment ? (
+          <View style={styles.actionDetail}>
+            <Text style={styles.actionDetailTitle}>{claimableAssignment.label}</Text>
+            <Text style={styles.actionDetailMeta}>
+              {formatActionDate(claimableAssignment.date)} · {claimableAssignment.time}
+            </Text>
+            <Text style={styles.actionDetailHint}>
+              Passet markeras på dig när du bekräftar.
+            </Text>
+          </View>
+        ) : (
+          <Text style={styles.actionEmptyText}>
+            Alla pass är bemannade – skapa ett nytt pass om något saknas.
+          </Text>
+        )}
+      </QuickActionSheet>
+      <QuickActionSheet
+        visible={activeQuickAction === 'report-issue'}
+        title="Rapportera hinder"
+        description="Berätta vad som behöver fixas så delas det med stallet direkt."
+        onClose={closeQuickActionSheet}
+        primaryLabel="Skicka"
+        primaryDisabled={!isIssueValid}
+        onPrimary={isIssueValid ? handleSubmitIssue : undefined}
+      >
+        <TextInput
+          value={issueDescription}
+          onChangeText={setIssueDescription}
+          placeholder="Ex. Trasig boxdörr vid gång B eller halt underlag i paddocken."
+          placeholderTextColor={palette.secondaryText}
+          style={styles.reportInput}
+          multiline
+          numberOfLines={4}
+        />
+        <Text style={styles.reportHint}>Din rapport sparas som en avisering i listan ovan.</Text>
+      </QuickActionSheet>
+      <NewAssignmentModal
+        visible={newPassModal.visible}
+        onClose={() => setNewPassModal({ visible: false })}
+        onSubmit={(input) => {
+          const fallbackDate =
+            newPassModal.date ??
+            overviewDateOptions[0]?.value ??
+            new Date().toISOString().split('T')[0];
+          const payload: CreateAssignmentInput = {
+            date: input.date ?? fallbackDate,
+            slot: input.slot ?? newPassModal.slot ?? 'Morning',
+            note: input.noteProvided
+              ? input.note && input.note.length > 0
+                ? input.note
+                : undefined
+              : newPassModal.note,
+            assignToCurrentUser:
+              input.assignToCurrentUser ?? newPassModal.assignToCurrentUser ?? false,
+          };
+          handleCreateAssignment(payload);
+          setNewPassModal({ visible: false });
+        }}
+        dateOptions={overviewDateOptions}
+        initialDate={newPassModal.date}
+        initialSlot={newPassModal.slot}
+        initialNote={newPassModal.note}
+        initialAssignToMe={newPassModal.assignToCurrentUser}
+      />
     </LinearGradient>
+  );
+}
+
+function WeatherPanel() {
+  return (
+    <LinearGradient
+      colors={['#3A73FF', '#5F96FF']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={styles.weatherPanel}
+    >
+      <View style={styles.weatherTopRow}>
+        <View style={styles.weatherLocationBlock}>
+          <Text style={styles.weatherMetaLabel}>Plats</Text>
+          <Text style={styles.weatherLocation}>Stockholm</Text>
+        </View>
+        <View style={styles.weatherMetaRight}>
+          <Text style={styles.weatherMetaLabel}>Uppdaterad</Text>
+          <Text style={styles.weatherMetaValue}>08:05</Text>
+        </View>
+      </View>
+
+      <View style={styles.weatherContentRow}>
+        <View style={styles.weatherTempBlock}>
+          <Text style={styles.weatherTemperatureLarge}>10°</Text>
+          <Text style={styles.weatherSummary}>Molnigt med solglimtar</Text>
+        </View>
+        <CloudSun width={48} height={48} style={styles.weatherIconLarge} />
+      </View>
+
+      <View style={styles.weatherMetrics}>
+        <View style={styles.weatherMetricItem}>
+          <Text style={styles.weatherMetricLabel}>Högsta</Text>
+          <Text style={styles.weatherMetricValue}>12°</Text>
+        </View>
+        <View style={styles.weatherMetricDivider} />
+        <View style={styles.weatherMetricItem}>
+          <Text style={styles.weatherMetricLabel}>Lägsta</Text>
+          <Text style={styles.weatherMetricValue}>6°</Text>
+        </View>
+        <View style={styles.weatherMetricDivider} />
+        <View style={styles.weatherMetricItem}>
+          <Text style={styles.weatherMetricLabel}>Vind</Text>
+          <Text style={styles.weatherMetricValue}>4 m/s</Text>
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
+
+function QuickActionCard({
+  action,
+  onPress,
+}: {
+  action: QuickAction;
+  onPress?: (action: QuickAction) => void;
+}) {
+  const themeStyles = quickActionStyles[action.tint];
+  const badgeColor = themeStyles.icon;
+
+  return (
+    <Pressable
+      disabled={action.disabled}
+      onPress={() => onPress?.(action)}
+      style={({ pressed }) => [
+        styles.quickActionCard,
+        pressed && !action.disabled && styles.quickActionCardPressed,
+        action.disabled && styles.quickActionCardDisabled,
+      ]}
+    >
+      <LinearGradient
+        colors={themeStyles.gradient}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          styles.quickActionInner,
+          {
+            borderColor: themeStyles.accentBorder,
+            shadowColor: themeStyles.shadow,
+            shadowOpacity: 0.2,
+            shadowRadius: 14,
+            shadowOffset: { width: 0, height: 8 },
+            elevation: 2,
+          },
+          action.disabled && styles.quickActionInnerDisabled,
+        ]}
+      >
+        {action.highlight && !action.disabled ? (
+          <View style={[styles.quickActionBadge, { backgroundColor: badgeColor }]} />
+        ) : null}
+        <View style={[styles.quickActionIcon, { backgroundColor: `${themeStyles.icon}10` }]}>
+          <Feather
+            name={action.icon}
+            size={20}
+            color={action.disabled ? `${themeStyles.icon}60` : themeStyles.icon}
+          />
+        </View>
+        <View style={styles.quickActionText}>
+          <Text numberOfLines={1} style={styles.quickActionLabel}>
+            {action.label}
+          </Text>
+          <Text numberOfLines={2} style={styles.quickActionCaption}>
+            {action.caption}
+          </Text>
+        </View>
+      </LinearGradient>
+    </Pressable>
+  );
+}
+
+type QuickActionSheetProps = {
+  visible: boolean;
+  title: string;
+  description?: string;
+  onClose: () => void;
+  children?: React.ReactNode;
+  primaryLabel?: string;
+  primaryDisabled?: boolean;
+  onPrimary?: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+};
+
+function QuickActionSheet({
+  visible,
+  title,
+  description,
+  onClose,
+  children,
+  primaryLabel,
+  primaryDisabled,
+  onPrimary,
+  secondaryLabel,
+  onSecondary,
+}: QuickActionSheetProps) {
+  const hasActions = Boolean(primaryLabel || secondaryLabel);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <KeyboardAvoidingView
+        style={styles.sheetOverlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose} />
+        <View style={styles.sheetContainer}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>{title}</Text>
+            {description ? <Text style={styles.sheetDescription}>{description}</Text> : null}
+          </View>
+          <View style={styles.sheetContent}>{children}</View>
+          {hasActions ? (
+            <View style={styles.sheetActions}>
+              {secondaryLabel ? (
+                <TouchableOpacity
+                  style={styles.sheetSecondaryButton}
+                  onPress={() => {
+                    onSecondary?.();
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.sheetSecondaryLabel}>{secondaryLabel}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {primaryLabel ? (
+                <TouchableOpacity
+                  style={[
+                    styles.sheetPrimaryButton,
+                    primaryDisabled && styles.sheetPrimaryButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (!primaryDisabled) {
+                      onPrimary?.();
+                    }
+                  }}
+                  disabled={primaryDisabled}
+                  activeOpacity={0.85}
+                >
+                  <Text
+                    style={[
+                      styles.sheetPrimaryLabel,
+                      primaryDisabled && styles.sheetPrimaryLabelDisabled,
+                    ]}
+                  >
+                    {primaryLabel}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -329,11 +875,12 @@ function ScheduleChip({ label, tone, icon }: StatusChip) {
     <View style={[styles.scheduleChip, { backgroundColor: background, borderLeftColor: border }]}>
       {icon === 'warning' && <WarningIcon width={8} height={8} />}
       {icon === 'broom' && <BroomIcon width={8} height={8} />}
-      <Text style={styles.scheduleChipText} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
+      <Text style={styles.scheduleChipText} numberOfLines={1} ellipsizeMode="tail">
+        {label}
+      </Text>
     </View>
   );
 }
-
 
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
@@ -343,7 +890,7 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
         <View style={styles.sectionDot} />
         <Text style={styles.sectionCount}>{count}</Text>
       </View>
-      <Text style={styles.sectionAction}>View more ↓</Text>
+      <Text style={styles.sectionAction}>Visa mer ↓</Text>
     </View>
   );
 }
@@ -403,6 +950,87 @@ function StackedCard({
   );
 }
 
+function createStatusChip(assignment: Assignment): StatusChip {
+  const tone: StatusChip['tone'] =
+    assignment.status === 'open' ? 'alert' : assignment.status === 'assigned' ? 'info' : 'neutral';
+
+  const label =
+    assignment.note ??
+    `${assignment.label} · ${assignment.time}`;
+
+  const icon =
+    assignment.status === 'open'
+      ? 'warning'
+      : assignment.note?.toLowerCase().includes('mock') ||
+        assignment.note?.toLowerCase().includes('städ')
+        ? 'broom'
+        : undefined;
+
+  return {
+    label,
+    tone,
+    icon,
+  };
+}
+
+function sortAssignments(assignments: Assignment[]) {
+  return [...assignments].sort(
+    (a, b) =>
+      new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
+  );
+}
+
+function formatSlotListDisplay(values: string[]) {
+  return values.map(capitalize).join(', ');
+}
+
+function formatOwnerNote(assignment: Assignment) {
+  const raw = assignment.note?.trim();
+  if (!raw) {
+    return undefined;
+  }
+
+  if (assignment.status !== 'assigned') {
+    return capitalize(raw);
+  }
+
+  let cleaned = raw.replace(/\s+/g, ' ').trim();
+  if (/saknas/i.test(cleaned)) {
+    cleaned = cleaned.replace(/saknas/gi, '').trim();
+  }
+  if (/^behöver\s+/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^behöver\s+/i, '').trim();
+  }
+
+  return cleaned ? capitalize(cleaned) : undefined;
+}
+
+function capitalize(value: string) {
+  if (!value) {
+    return value;
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function truncateText(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function formatActionDate(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString('sv-SE', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
 const styles = StyleSheet.create({
   background: {
     flex: 1,
@@ -418,104 +1046,459 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 50,
-    gap: 36,
+    gap: 12,
   },
   pageHeader: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
-  alertBanner: {
+  alertCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderWidth: 0,
+    backgroundColor: '#FFECEC',
+  },
+  alertRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
-    gap: 8,
-    marginBottom: 12,
-    paddingVertical: 0,
+    alignItems: 'center',
+    gap: 10,
   },
   alertLabel: {
-    fontSize: 17,
+    fontSize: 15,
     fontWeight: '600',
     color: palette.error,
   },
   alertText: {
-    fontSize: 17,
+    fontSize: 15,
     color: palette.primaryText,
   },
-  rowGap: {
+  quickActionGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  quickActionCard: {
+    flexGrow: 1,
+    flexBasis: '48%',
+    minWidth: '48%',
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+  },
+  quickActionCardPressed: {
+    transform: [{ scale: 0.98 }],
+  },
+  quickActionCardDisabled: {
+    opacity: 0.7,
+  },
+  quickActionInner: {
+    borderRadius: radii.lg,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    gap: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: color.card,
+  },
+  quickActionInnerDisabled: {
+    opacity: 0.7,
+  },
+  quickActionBadge: {
+    position: 'absolute',
+    top: 14,
+    right: 16,
+    width: 10,
+    height: 10,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.card,
+    backgroundColor: '#0A84FF',
+  },
+  quickActionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: radii.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickActionText: {
+    gap: 4,
+  },
+  quickActionLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  quickActionCaption: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  summarySection: {
+    gap: 20,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+    marginTop: 8,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: 12,
   },
-  weatherCard: {
-    width: 125,
-    height: 125,
-    borderRadius: radii.xl,
-    borderWidth: 2,
-    borderColor: palette.border,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 4,
-    overflow: 'hidden',
+  summaryTitle: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
-  weatherHeader: {
+  summarySubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  summaryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 12,
+  },
+  summaryBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.primary,
+  },
+  summaryTiles: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
+  summaryTile: {
+    flex: 1,
+    minWidth: 110,
+    borderRadius: radius.lg,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+    backgroundColor: color.card,
+    gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.06)',
+    shadowColor: 'rgba(15,22,34,0.08)',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 1,
+  },
+  summaryValue: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#1B1E2F',
+  },
+  summaryLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: '#5F6473',
+  },
+  summaryMeta: {
+    fontSize: 12,
+    color: palette.mutedText,
+  },
+  activityColumn: {
+    gap: 8,
+  },
+  activityTitle: {
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: palette.secondaryText,
+  },
+  activityRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  activityChip: {
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(10,132,255,0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  activityChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: palette.primaryText,
+  },
+  myPassList: {
+    gap: 12,
+  },
+  myPassCard: {
+    borderRadius: radius.lg,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(15,22,34,0.05)',
+    gap: 6,
+  },
+  myPassHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  myPassTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  myPassMeta: {
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  myPassNote: {
+    fontSize: 13,
+    color: palette.primaryText,
+    lineHeight: 18,
+  },
+  sheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  sheetBackdrop: {
+    flex: 1,
+  },
+  sheetContainer: {
+    backgroundColor: color.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 28,
+    gap: 18,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(15,22,34,0.15)',
+  },
+  sheetHeader: {
+    gap: 8,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  sheetDescription: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    lineHeight: 18,
+  },
+  sheetContent: {
+    gap: 12,
+  },
+  sheetActions: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    color: 'white',
+    gap: 12,
   },
-  weatherCity: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: 'white',
+  sheetSecondaryButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
-  weatherArrow: {
-    fontSize: 16,
-    color: 'white',
-    transform: [{ rotate: '320deg' }],
+  sheetSecondaryLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.primary,
   },
-  weatherTempRow: {
-    flexDirection: 'row',
+  sheetPrimaryButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: radius.full,
+    backgroundColor: palette.primary,
     alignItems: 'center',
-    gap: 22,
-    color: 'white',
+    justifyContent: 'center',
   },
-  weatherTemperature: {
-    fontSize: 28,
+  sheetPrimaryButtonDisabled: {
+    backgroundColor: palette.surfaceTint,
+    opacity: 0.7,
+  },
+  sheetPrimaryLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.inverseText,
+  },
+  sheetPrimaryLabelDisabled: {
+    color: palette.primaryText,
+  },
+  actionDetail: {
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceTint,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 6,
+  },
+  actionDetailTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  actionDetailMeta: {
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  actionDetailNote: {
+    fontSize: 13,
+    color: palette.primaryText,
+    lineHeight: 18,
+  },
+  actionDetailHint: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  actionEmptyText: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    lineHeight: 18,
+  },
+  reportInput: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(15,22,34,0.15)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: palette.primaryText,
+    minHeight: 110,
+    textAlignVertical: 'top',
+  },
+  reportHint: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  weatherPanel: {
+    borderRadius: radii.xl,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  weatherTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  weatherLocationBlock: {
+    gap: 2,
+  },
+  weatherMetaLabel: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.7)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  weatherLocation: {
+    fontSize: 16,
     fontWeight: '600',
     color: 'white',
   },
-  weatherIcon: {
-    marginTop: 2,
+  weatherMetaRight: {
+    alignItems: 'flex-end',
+    gap: 2,
   },
-  weatherDescription: {
-    fontSize: 14,
-    color: 'white',
+  weatherMetaValue: {
+    fontSize: 12,
     fontWeight: '500',
+    color: 'white',
   },
-  weatherRangeRow: {
+  weatherContentRow: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  weatherRange: {
-    fontSize: 14,
+  weatherTempBlock: {
+    gap: 4,
+  },
+  weatherTemperatureLarge: {
+    fontSize: 30,
+    fontWeight: '700',
     color: 'white',
-    fontWeight: '500',
+    letterSpacing: -1,
+  },
+  weatherSummary: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.9)',
+    letterSpacing: 0.2,
+  },
+  weatherIconLarge: {
+    marginRight: 2,
+    width: 34,
+    height: 34,
+  },
+  weatherMetrics: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: radius.full,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  weatherMetricItem: {
+    alignItems: 'center',
+    gap: 2,
+    flex: 1,
+  },
+  weatherMetricLabel: {
+    fontSize: 9,
+    color: 'rgba(255,255,255,0.7)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  weatherMetricValue: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'white',
+  },
+  weatherMetricDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
   scheduleCard: {
     flex: 1,
-    height: 125,
-    backgroundColor: 'white',
+    minHeight: 140,
+    flexDirection: 'column',
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  scheduleHeaderRow: {
     flexDirection: 'row',
-    gap: 4,
-    marginLeft: 12,
-    marginRight: 0,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  scheduleBody: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  scheduleTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  scheduleSubtitle: {
+    fontSize: 11,
+    color: palette.secondaryText,
   },
   scheduleLeftColumn: {
     width: '50%',
-    gap: 10,
+    gap: 8,
   },
   scheduleRightColumn: {
     width: '50%',
-    gap: 14,
+    gap: 12,
   },
   scheduleMainDay: {
     gap: 2,
@@ -524,14 +1507,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: palette.accent,
-    textTransform: 'uppercase',
     letterSpacing: 0.1,
   },
   scheduleMainDate: {
     fontSize: 21,
     fontWeight: '400',
     color: palette.primaryText,
-    textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   scheduleMainEvents: {
@@ -544,29 +1525,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: palette.mutedText,
-    textTransform: 'uppercase',
+    letterSpacing: 0.2,
   },
   scheduleSecondaryEvents: {
     gap: 6,
-  },
-  scheduleDateColumn: {
-    gap: 6,
-  },
-  scheduleDay: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: palette.accent,
-  },
-  scheduleDate: {
-    fontSize: 22,
-    fontWeight: '400',
-    color: palette.primaryText,
-  },
-  scheduleTodayList: {
-    flex: 1,
-    alignItems: 'flex-start',
-    gap: 6,
-    width: '50%',
   },
   scheduleChip: {
     flexDirection: 'row',
@@ -585,34 +1547,8 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
     flexShrink: 1,
   },
-  upcomingList: {
-    gap: 6,
-    flexDirection: 'column',
-    wordWrap: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  upcomingRow: {
-    gap: 6,
-    wordWrap: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  upcomingLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: palette.secondaryText,
-  },
-  upcomingChips: {
-    flexDirection: 'column',
-    gap: 6,
-    wordWrap: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
   sectionBlock: {
     gap: 14,
-    paddingHorizontal: 12,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -652,10 +1588,9 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   primaryCard: {
-    backgroundColor: color.card,
+    backgroundColor: palette.surfaceTint,
     borderRadius: radius.lg,
     padding: space.lg,
-    gap: 0,
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],

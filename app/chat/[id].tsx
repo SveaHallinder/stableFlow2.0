@@ -16,154 +16,182 @@ import { theme } from '@/components/theme';
 import { radius, space } from '@/design/tokens';
 import { HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
-
-type ConversationMessage = {
-  id: string;
-  author: 'me' | 'other';
-  text: string;
-  timestamp?: string;
-  status?: string;
-  avatar?: ImageSourcePropType;
-};
+import { useAppData } from '@/context/AppDataContext';
+import type { ConversationMessage, MessagePreview } from '@/context/AppDataContext';
+import UserGroupsIcon from '@/assets/images/User Groups.svg';
+import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 
-const conversation: ConversationMessage[] = [
-  {
-    id: 'msg-1',
-    author: 'other',
-    text:
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
-    avatar: require('@/assets/images/dummy-avatar.png'),
-  },
-  {
-    id: 'msg-2',
-    author: 'me',
-    text:
-      'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et.',
-  },
-  {
-    id: 'msg-3',
-    author: 'me',
-    text: 'Lorem ipsum dolor sit amet.',
-    status: 'Delivered',
-  },
-];
-
 export default function ChatScreen() {
   const router = useRouter();
-  const { name } = useLocalSearchParams<{ name?: string }>();
+  const { state, actions } = useAppData();
+  const { id: rawId, name } = useLocalSearchParams<{ id?: string; name?: string }>();
+  const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
+  const conversationPreview = state.messages.find(
+    (message: MessagePreview) => message.id === conversationId,
+  );
+  const displayName = name ?? conversationPreview?.title ?? 'Konversation';
+  const isGroup = conversationPreview?.group ?? false;
+
+  const messages = state.conversations[conversationId] ?? [];
+  const [composerText, setComposerText] = React.useState('');
+  const toast = useToast();
+
+  React.useEffect(() => {
+    if (conversationId) {
+      actions.markConversationRead(conversationId);
+    }
+  }, [conversationId, actions]);
+
+  const handleSend = React.useCallback(() => {
+    if (!conversationId || !composerText.trim()) {
+      return;
+    }
+    const result = actions.sendConversationMessage(conversationId, composerText);
+    if (result.success) {
+      setComposerText('');
+    } else if (!result.success) {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, conversationId, composerText, toast]);
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <ScreenHeader
-          style={styles.pageHeader}
-          title="" // Empty title since we use children
-          left={
-            <HeaderIconButton
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-              onPress={() => router.back()}
-              style={styles.backButton}
-            >
-              <Text style={styles.backIcon}>‹</Text>
-            </HeaderIconButton>
-          }
-          showLogo={false}
-          showSearch={false}
-        >
-          <View style={styles.headerProfile}>
-            <Image
-              source={require('@/assets/images/dummy-avatar.png')}
-              style={styles.headerAvatar}
-            />
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {name ?? 'Ida Magnusson'}
-            </Text>
-          </View>
-        </ScreenHeader>
-
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.messagesContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {conversation.map((item, index) => {
-            const isMe = item.author === 'me';
-            const isLast = index === conversation.length - 1;
-
-            return (
-              <View
-                key={item.id}
-                style={[
-                  styles.messageGroup,
-                  isLast && styles.messageGroupLast,
-                ]}
+        <View style={styles.container}>
+          <ScreenHeader
+            style={styles.pageHeader}
+            title=""
+            left={
+              <HeaderIconButton
+                accessibilityRole="button"
+                accessibilityLabel="Tillbaka"
+                onPress={() => router.back()}
+                style={styles.backButton}
               >
-                <View
-                  style={[
-                    styles.messageRow,
-                    isMe ? styles.messageRowMe : styles.messageRowOther,
-                  ]}
-                >
-                  {!isMe && item.avatar && (
-                    <Image source={item.avatar} style={styles.messageAvatar} />
-                  )}
+                <Text style={styles.backIcon}>‹</Text>
+              </HeaderIconButton>
+            }
+            showLogo={false}
+            showSearch={false}
+          >
+            <View style={styles.headerProfile}>
+              {isGroup ? (
+                <View style={styles.headerGroupAvatar}>
+                  <UserGroupsIcon width={20} height={20} />
+                </View>
+              ) : (
+                <Image
+                  source={
+                    conversationPreview?.avatar ?? require('@/assets/images/dummy-avatar.png')
+                  }
+                  style={styles.headerAvatar}
+                />
+              )}
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {displayName}
+              </Text>
+            </View>
+          </ScreenHeader>
 
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.messagesContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {messages.map((message, index) => {
+              const isMe = message.authorId === state.currentUserId;
+              const isLast = index === messages.length - 1;
+              const avatarSource = !isMe
+                ? getAvatarForAuthor(message, conversationPreview)
+                : undefined;
+
+              return (
+                <View
+                  key={message.id}
+                  style={[styles.messageGroup, isLast && styles.messageGroupLast]}
+                >
                   <View
                     style={[
-                      styles.messageBubble,
-                      isMe && styles.messageBubbleMe,
+                      styles.messageRow,
+                      isMe ? styles.messageRowMe : styles.messageRowOther,
                     ]}
                   >
-                    <Text
-                      style={[styles.messageText, isMe && styles.messageTextMe]}
+                    {!isMe && avatarSource && (
+                      <Image source={avatarSource} style={styles.messageAvatar} />
+                    )}
+
+                    <View
+                      style={[
+                        styles.messageBubble,
+                        isMe && styles.messageBubbleMe,
+                      ]}
                     >
-                      {item.text}
-                    </Text>
+                      <Text style={[styles.messageText, isMe && styles.messageTextMe]}>
+                        {message.text}
+                      </Text>
+                    </View>
                   </View>
+
+                  {message.status ? (
+                    <Text
+                      style={[
+                        styles.statusText,
+                        isMe ? styles.statusTextMe : styles.statusTextOther,
+                      ]}
+                    >
+                      {message.status}
+                    </Text>
+                  ) : null}
                 </View>
+              );
+            })}
 
-                {item.status && (
-                  <Text
-                    style={[
-                      styles.statusText,
-                      isMe ? styles.statusTextMe : styles.statusTextOther,
-                    ]}
-                  >
-                    {item.status}
-                  </Text>
-                )}
-              </View>
-            );
-          })}
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
 
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
+          <View style={styles.composerContainer}>
+            <View style={styles.composer}>
+              <TouchableOpacity style={styles.composerAction}>
+                <Text style={styles.composerActionIcon}>+</Text>
+              </TouchableOpacity>
 
-        <View style={styles.composerContainer}>
-          <View style={styles.composer}>
-            <TouchableOpacity style={styles.composerAction}>
-              <Text style={styles.composerActionIcon}>+</Text>
+              <TextInput
+                placeholder="Skriv ditt meddelande..."
+                placeholderTextColor={palette.mutedText}
+                style={styles.composerInput}
+                value={composerText}
+                onChangeText={setComposerText}
+                onSubmitEditing={handleSend}
+                returnKeyType="send"
+              />
+            </View>
+
+            <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+              <Text style={styles.sendButtonIcon}>↑</Text>
             </TouchableOpacity>
-
-            <TextInput
-              placeholder="Write your message here..."
-              placeholderTextColor={palette.mutedText}
-              style={styles.composerInput}
-            />
           </View>
-
-          <TouchableOpacity style={styles.sendButton}>
-            <Text style={styles.sendButtonIcon}>↑</Text>
-          </TouchableOpacity>
         </View>
-      </View>
       </SafeAreaView>
     </LinearGradient>
   );
+}
+
+function getAvatarForAuthor(
+  message: ConversationMessage,
+  preview?: MessagePreview,
+): ImageSourcePropType | undefined {
+  if (preview?.group) {
+    return require('@/assets/images/dummy-avatar.png');
+  }
+  if (message.authorId === 'user-karl') {
+    return require('@/assets/images/dummy-avatar.png');
+  }
+  if (preview?.avatar) {
+    return preview.avatar;
+  }
+  return require('@/assets/images/dummy-avatar.png');
 }
 
 const styles = StyleSheet.create({
@@ -205,6 +233,14 @@ const styles = StyleSheet.create({
     width: 35,
     height: 35,
     borderRadius: radius.full,
+  },
+  headerGroupAvatar: {
+    width: 35,
+    height: 35,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceTint,
   },
   headerTitle: {
     fontSize: 18,
@@ -284,6 +320,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
+    paddingBottom: space.md,
   },
   composer: {
     flex: 1,
@@ -320,6 +357,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 12,
   },
   sendButtonIcon: {
     fontSize: 18,
