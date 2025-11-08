@@ -24,6 +24,7 @@ import WarningIcon from '@/assets/images/⚠.svg';
 import BroomIcon from '@/assets/images/broom.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
+import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { color, radius, space } from '@/design/tokens';
@@ -68,24 +69,9 @@ const quickActionStyles: Record<
   QuickActionTint,
   { gradient: [string, string]; icon: string; accentBorder: string; shadow: string }
 > = {
-  primary: {
-    gradient: ['#ECF2FF', '#F8FAFF'],
-    icon: '#2D6CF6',
-    accentBorder: 'rgba(45, 108, 246, 0.18)',
-    shadow: 'rgba(45, 108, 246, 0.12)',
-  },
-  accent: {
-    gradient: ['#EAF9F4', '#F6FBF9'],
-    icon: '#1BA97A',
-    accentBorder: 'rgba(27, 169, 122, 0.18)',
-    shadow: 'rgba(27, 169, 122, 0.12)',
-  },
-  warning: {
-    gradient: ['#FFF6EB', '#FFF9F1'],
-    icon: '#E29833',
-    accentBorder: 'rgba(226, 152, 51, 0.18)',
-    shadow: 'rgba(226, 152, 51, 0.12)',
-  },
+  primary: quickActionVariants.primary,
+  accent: quickActionVariants.accent,
+  warning: quickActionVariants.warning,
 };
 
 export default function OverviewScreen() {
@@ -1095,7 +1081,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     gap: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: color.card,
+    backgroundColor: systemPalette.surface,
   },
   quickActionInnerDisabled: {
     opacity: 0.7,

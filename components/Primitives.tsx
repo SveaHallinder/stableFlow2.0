@@ -12,6 +12,7 @@ import {
   type ViewProps,
 } from 'react-native';
 import { shadow, color, radius, space } from '../design/tokens';
+import { systemPalette } from '../design/system';
 
 type CardProps = PropsWithChildren<
   ViewProps & {
@@ -140,9 +141,9 @@ const headerStyles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: color.card,
+    backgroundColor: systemPalette.surface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.divider,
+    borderColor: systemPalette.border,
   },
   titleStack: {
     alignItems: 'center',

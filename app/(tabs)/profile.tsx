@@ -13,6 +13,7 @@ import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
 import { color, radius, space } from '@/design/tokens';
+import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
@@ -110,20 +111,28 @@ export default function ProfileScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <Card elevated tone="muted" style={styles.profileCard}>
-            <View style={styles.profileTopRow}>
+          <View style={styles.profileHero}>
+            <View style={styles.profileHeroContent}>
               <Image
                 source={currentUser.avatar ?? require('@/assets/images/dummy-avatar.png')}
                 style={styles.avatar}
               />
-              <View style={styles.profileDetails}>
-                <Text style={styles.profileRole}>
+              <View style={styles.heroTextBlock}>
+                <Text style={styles.heroName}>{currentUser.name}</Text>
+                <Text style={styles.heroRole}>
                   {currentUser.responsibilities.join(' · ') || 'Stallmedlem'}
                 </Text>
-                <DetailRow icon="user" text={currentUser.horses.join(', ')} />
                 <DetailRow icon="map-pin" text={currentUser.location} />
                 <DetailRow icon="phone" text={currentUser.phone} />
               </View>
+            </View>
+            <View style={styles.heroChips}>
+              {currentUser.horses.map((horse) => (
+                <View key={horse} style={styles.heroChip}>
+                  <Feather name="heart" size={12} color="#2D6CF6" />
+                  <Text style={styles.heroChipText}>{horse}</Text>
+                </View>
+              ))}
             </View>
             <View style={styles.profileActionRow}>
               <TouchableOpacity style={styles.primaryActionButton} onPress={handleCall}>
@@ -131,25 +140,25 @@ export default function ProfileScreen() {
                 <Text style={styles.primaryActionLabel}>Ring</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage}>
-                <Feather name="message-circle" size={16} color={palette.primary} />
+                <Feather name="message-circle" size={16} color="#2D6CF6" />
                 <Text style={styles.secondaryActionLabel}>Chatta</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.moreActionButton}>
                 <Feather name="more-horizontal" size={18} color={palette.icon} />
               </TouchableOpacity>
             </View>
-          </Card>
+          </View>
 
-          <Card tone="muted" style={styles.statsCard}>
+          <View style={styles.statsSection}>
             <View style={styles.statsRow}>
               {profileStats.map((item) => (
                 <View key={item.id} style={styles.statItem}>
-                  <Text style={styles.statValue}>{item.value}</Text>
                   <Text style={styles.statLabel}>{item.label}</Text>
+                  <Text style={styles.statValue}>{item.value}</Text>
                 </View>
               ))}
             </View>
-          </Card>
+          </View>
 
           <View style={styles.sectionBlock}>
             <View style={styles.sectionHeader}>
@@ -465,31 +474,57 @@ const styles = StyleSheet.create({
   pageHeader: {
     marginBottom: 0,
   },
-  profileCard: {
+  profileHero: {
     gap: 18,
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    borderWidth: 0,
+    paddingHorizontal: 22,
+    paddingVertical: 22,
+    borderRadius: radius.xl,
+    backgroundColor: surfacePresets.hero,
   },
-  profileTopRow: {
+  profileHeroContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 18,
+    gap: 16,
   },
   avatar: {
-    width: 68,
-    height: 68,
+    width: 72,
+    height: 72,
     borderRadius: radius.full,
   },
-  profileDetails: {
+  heroTextBlock: {
     flex: 1,
-    gap: 8,
+    gap: 6,
   },
-  profileRole: {
+  heroName: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  heroRole: {
     fontSize: 14,
     fontWeight: '600',
-    color: palette.secondaryText,
-    letterSpacing: -0.1,
+    color: '#4E5A76',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  heroChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  heroChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: surfacePresets.section,
+  },
+  heroChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: systemPalette.primary,
   },
   detailRow: {
     flexDirection: 'row',
@@ -498,7 +533,7 @@ const styles = StyleSheet.create({
   },
   detailText: {
     fontSize: 14,
-    fontWeight: '400',
+    fontWeight: '500',
     color: palette.primaryText,
   },
   profileActionRow: {
@@ -525,7 +560,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: surfacePresets.section,
     borderRadius: radius.full,
     paddingHorizontal: 18,
     paddingVertical: 10,
@@ -543,11 +578,11 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     backgroundColor: palette.surfaceTint,
   },
-  statsCard: {
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+  statsSection: {
+    paddingHorizontal: 22,
+    paddingVertical: 20,
+    backgroundColor: surfacePresets.section,
+    borderRadius: radius.xl,
   },
   statsRow: {
     flexDirection: 'row',
@@ -556,17 +591,18 @@ const styles = StyleSheet.create({
   },
   statItem: {
     flex: 1,
-    gap: 4,
+    gap: 6,
   },
   statValue: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
-    color: palette.primaryText,
+    color: systemPalette.textPrimary,
   },
   statLabel: {
     fontSize: 12,
-    color: palette.secondaryText,
-    letterSpacing: 0.2,
+    color: systemPalette.textSecondary,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
   },
   sectionBlock: {
     gap: 14,

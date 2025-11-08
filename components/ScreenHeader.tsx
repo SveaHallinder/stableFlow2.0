@@ -4,8 +4,13 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet, Text, View } from 'react-native';
 import Logo from '@/assets/images/logo-blue.svg';
 import SearchIcon from '@/assets/images/Search-icon.svg';
-import { HeaderActionButton, HeaderIconButton, PageHeader, headerStyles } from '@/components/Primitives';
-import { color } from '@/design/tokens';
+import {
+  HeaderActionButton,
+  HeaderIconButton,
+  PageHeader,
+  headerStyles,
+} from '@/components/Primitives';
+import { systemPalette } from '@/design/system';
 
 type ScreenHeaderProps = {
   title: string;
@@ -107,14 +112,14 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 12,
-    color: color.textMuted,
+    color: systemPalette.textMuted,
     letterSpacing: -0.1,
   },
   actionDisabled: {
-    backgroundColor: color.cardGlass,
-    borderColor: color.divider,
+    backgroundColor: systemPalette.surfaceGlass,
+    borderColor: systemPalette.border,
   },
   actionDisabledText: {
-    color: color.textMuted,
+    color: systemPalette.textMuted,
   },
 });
