@@ -44,7 +44,7 @@ export default function ChatScreen() {
     }
   }, [conversationId, actions]);
 
-  const handleSend = React.useCallback(() => {
+  const handleSend = () => {
     if (!conversationId || !composerText.trim()) {
       return;
     }
@@ -54,7 +54,7 @@ export default function ChatScreen() {
     } else if (!result.success) {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, conversationId, composerText, toast]);
+  };
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>

@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
+        "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar."
+      }
     },
     "web": {
       "bundler": "metro",

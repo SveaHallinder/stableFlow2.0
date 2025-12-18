@@ -6,6 +6,16 @@ export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
 export type AssignmentIcon = 'sun' | 'clock' | 'moon';
 
+// Monday-first index (0 = Monday, 6 = Sunday)
+export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type DefaultPass = {
+  weekday: WeekdayIndex;
+  slot: AssignmentSlot;
+};
+
+export type AssignmentAssignedVia = 'default' | 'manual';
+
 export type Assignment = {
   id: string;
   date: string; // ISO date string e.g. 2025-03-10
@@ -17,6 +27,8 @@ export type Assignment = {
   status: AssignmentStatus;
   assigneeId?: string;
   completedAt?: string;
+  assignedVia?: AssignmentAssignedVia;
+  declinedByUserIds?: string[];
 };
 
 export type CreateAssignmentInput = {
@@ -91,6 +103,20 @@ export type CompetitionEvent = {
   status: 'open' | 'closed';
 };
 
+export type PaddockImage = {
+  uri: string;
+  base64?: string;
+  mimeType?: string;
+};
+
+export type Paddock = {
+  id: string;
+  name: string;
+  horseNames: string[];
+  image?: PaddockImage;
+  updatedAt: string;
+};
+
 type AwayNotice = {
   id: string;
   start: string;
@@ -120,8 +146,16 @@ export type UserProfile = {
   location: string;
   phone: string;
   responsibilities: string[];
+  defaultPasses: DefaultPass[];
   awayNotices: AwayNotice[];
   avatar?: ImageSourcePropType;
+};
+
+export type UpsertPaddockInput = {
+  id?: string;
+  name: string;
+  horseNames: string[];
+  image?: PaddockImage | null;
 };
 
 type AppDataState = {
@@ -134,7 +168,7 @@ type AppDataState = {
     assignmentId: string;
     label: string;
     timestamp: string;
-    action: 'created' | 'completed' | 'assigned';
+    action: 'created' | 'completed' | 'assigned' | 'declined';
   }>;
   messages: MessagePreview[];
   conversations: Record<string, ConversationMessage[]>;
@@ -142,11 +176,12 @@ type AppDataState = {
   ridingSchedule: RidingDay[];
   competitionEvents: CompetitionEvent[];
   dayEvents: DayEvent[];
+  paddocks: Paddock[];
 };
 
 type AssignmentUpdateAction = {
   type: 'ASSIGNMENT_UPDATE';
-  payload: { id: string; updates: Partial<Assignment> };
+  payload: { id: string; updates: Partial<Assignment>; silent?: boolean };
 };
 
 type AssignmentAddAction = {
@@ -159,7 +194,7 @@ type AssignmentHistoryPushAction = {
   payload: {
     assignmentId: string;
     label: string;
-    action: 'created' | 'completed' | 'assigned';
+    action: 'created' | 'completed' | 'assigned' | 'declined';
   };
 };
 
@@ -183,6 +218,21 @@ type AppendConversationMessageAction = {
   payload: { conversationId: string; message: ConversationMessage; preview: MessagePreview };
 };
 
+type UserUpdateAction = {
+  type: 'USER_UPDATE';
+  payload: { id: string; updates: Partial<UserProfile> };
+};
+
+type PaddockUpsertAction = {
+  type: 'PADDOCK_UPSERT';
+  payload: Paddock;
+};
+
+type PaddockDeleteAction = {
+  type: 'PADDOCK_DELETE';
+  payload: { id: string };
+};
+
 type AppDataAction =
   | AssignmentUpdateAction
   | AssignmentAddAction
@@ -190,7 +240,10 @@ type AppDataAction =
   | AssignmentRemoveAction
   | AddAlertAction
   | MarkMessageReadAction
-  | AppendConversationMessageAction;
+  | AppendConversationMessageAction
+  | UserUpdateAction
+  | PaddockUpsertAction
+  | PaddockDeleteAction;
 
 export type ActionResult<T = void> =
   | { success: true; data?: T }
@@ -220,7 +273,10 @@ type AppDataContextValue = {
     createAssignment: (input: CreateAssignmentInput) => ActionResult<Assignment>;
     updateAssignment: (input: UpdateAssignmentInput) => ActionResult<Assignment>;
     deleteAssignment: (assignmentId: string) => ActionResult;
-    reportIssue: (message: string) => ActionResult<AlertMessage>;
+    addEvent: (message: string, type?: AlertMessage['type']) => ActionResult<AlertMessage>;
+    toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => ActionResult<UserProfile>;
+    upsertPaddock: (input: UpsertPaddockInput) => ActionResult<Paddock>;
+    deletePaddock: (paddockId: string) => ActionResult;
     markConversationRead: (conversationId: string) => void;
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
   };
@@ -238,6 +294,10 @@ const initialState: AppDataState = {
       location: 'Täby, Stockholm',
       phone: '+46 70-000 00 00',
       responsibilities: ['Foder', 'Kvällspass'],
+      defaultPasses: [
+        { weekday: 0, slot: 'Morning' },
+        { weekday: 0, slot: 'Evening' },
+      ],
       awayNotices: [
         { id: 'away-1', start: '2025-03-13', end: '2025-03-14', note: 'Träningsläger med Cinder' },
         { id: 'away-2', start: '2025-03-22', end: '2025-03-22', note: 'Semester' },
@@ -251,6 +311,7 @@ const initialState: AppDataState = {
       location: 'Täby, Stockholm',
       phone: '+46 72-111 11 11',
       responsibilities: ['Lunchpass'],
+      defaultPasses: [{ weekday: 0, slot: 'Lunch' }],
       awayNotices: [],
       avatar: require('@/assets/images/dummy-avatar.png'),
     },
@@ -484,6 +545,20 @@ const initialState: AppDataState = {
       tone: 'riderAway',
     },
   ],
+  paddocks: [
+    {
+      id: 'paddock-1',
+      name: 'Hage 1',
+      horseNames: ['Cinder', 'Atlas'],
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      id: 'paddock-2',
+      name: 'Hage 2',
+      horseNames: ['Kanel'],
+      updatedAt: new Date().toISOString(),
+    },
+  ],
 };
 
 function reducer(state: AppDataState, action: AppDataAction): AppDataState {
@@ -505,20 +580,26 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
       };
     }
     case 'ASSIGNMENT_UPDATE': {
-      const { id, updates } = action.payload;
+      const { id, updates, silent } = action.payload;
       const updatedAssignments = state.assignments.map((assignment) =>
         assignment.id === id ? { ...assignment, ...updates } : assignment,
       );
       const updatedAssignment = updatedAssignments.find((item) => item.id === id);
-      const historyEntry = updates.status && updatedAssignment
-        ? {
-            id: `${id}-${Date.now()}`,
-            assignmentId: id,
-            label: `${updatedAssignment.label} ${updatedAssignment.time}`.trim(),
-            timestamp: new Date().toISOString(),
-            action: updates.status === 'completed' ? 'completed' : 'assigned',
-          } as const
-        : undefined;
+      const historyEntry =
+        !silent && updates.status && updatedAssignment
+          ? {
+              id: `${id}-${Date.now()}`,
+              assignmentId: id,
+              label: `${updatedAssignment.label} ${updatedAssignment.time}`.trim(),
+              timestamp: new Date().toISOString(),
+              action:
+                updates.status === 'completed'
+                  ? 'completed'
+                  : updates.status === 'open'
+                    ? 'declined'
+                    : 'assigned',
+            } as const
+          : undefined;
 
       return {
         ...state,
@@ -579,6 +660,45 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         messages: updatedPreview,
       };
     }
+    case 'USER_UPDATE': {
+      const { id, updates } = action.payload;
+      const existing = state.users[id];
+      if (!existing) {
+        return state;
+      }
+
+      return {
+        ...state,
+        users: {
+          ...state.users,
+          [id]: {
+            ...existing,
+            ...updates,
+          },
+        },
+      };
+    }
+    case 'PADDOCK_UPSERT': {
+      const existingIndex = state.paddocks.findIndex((paddock) => paddock.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.paddocks];
+        next[existingIndex] = action.payload;
+        return {
+          ...state,
+          paddocks: next,
+        };
+      }
+      return {
+        ...state,
+        paddocks: [...state.paddocks, action.payload],
+      };
+    }
+    case 'PADDOCK_DELETE': {
+      return {
+        ...state,
+        paddocks: state.paddocks.filter((paddock) => paddock.id !== action.payload.id),
+      };
+    }
     default:
       return state;
   }
@@ -600,6 +720,16 @@ function compareAssignmentDateTime(a: Assignment, b: Assignment) {
   const aDate = new Date(`${a.date}T${a.time}`);
   const bDate = new Date(`${b.date}T${b.time}`);
   return aDate.getTime() - bDate.getTime();
+}
+
+function getWeekdayIndex(isoDate: string): WeekdayIndex {
+  const date = new Date(`${isoDate}T00:00:00`);
+  const mondayFirst = (date.getDay() + 6) % 7;
+  return mondayFirst as WeekdayIndex;
+}
+
+function hasDefaultPass(user: UserProfile, weekday: WeekdayIndex, slot: AssignmentSlot) {
+  return user.defaultPasses.some((entry) => entry.weekday === weekday && entry.slot === slot);
 }
 
 const slotLabels: Record<AssignmentSlot, string> = {
@@ -648,6 +778,26 @@ function formatNextUpdate(assignments: Assignment[]) {
   })}`;
 }
 
+function normalizeHorseNames(names: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  names.forEach((name) => {
+    const cleaned = name.trim();
+    if (!cleaned) {
+      return;
+    }
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push(cleaned);
+  });
+
+  return result;
+}
+
 export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
@@ -655,6 +805,86 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   React.useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  React.useEffect(() => {
+    const todayIso = new Date().toISOString().split('T')[0];
+    const users = Object.values(state.users).sort((a, b) => a.id.localeCompare(b.id));
+
+    state.assignments.forEach((assignment) => {
+      if (assignment.status === 'completed') {
+        return;
+      }
+
+      if (assignment.date < todayIso) {
+        return;
+      }
+
+      const weekday = getWeekdayIndex(assignment.date);
+      const candidates = users.filter((user) => hasDefaultPass(user, weekday, assignment.slot));
+
+      if (assignment.status === 'open' && !assignment.assigneeId) {
+        if (candidates.length !== 1) {
+          return;
+        }
+
+        const candidate = candidates[0];
+        if (assignment.declinedByUserIds?.includes(candidate.id)) {
+          return;
+        }
+
+        dispatch({
+          type: 'ASSIGNMENT_UPDATE',
+          payload: {
+            id: assignment.id,
+            silent: true,
+            updates: {
+              status: 'assigned',
+              assigneeId: candidate.id,
+              assignedVia: 'default',
+            },
+          },
+        });
+        return;
+      }
+
+      if (assignment.status === 'assigned' && assignment.assignedVia === 'default' && assignment.assigneeId) {
+        const owner = state.users[assignment.assigneeId];
+        if (!owner) {
+          dispatch({
+            type: 'ASSIGNMENT_UPDATE',
+            payload: {
+              id: assignment.id,
+              silent: true,
+              updates: {
+                status: 'open',
+                assigneeId: undefined,
+                assignedVia: undefined,
+              },
+            },
+          });
+          return;
+        }
+
+        const shouldOwn = candidates.length === 1 && candidates[0].id === owner.id;
+        const declined = assignment.declinedByUserIds?.includes(owner.id);
+
+        if (!shouldOwn || declined) {
+          dispatch({
+            type: 'ASSIGNMENT_UPDATE',
+            payload: {
+              id: assignment.id,
+              silent: true,
+              updates: {
+                status: 'open',
+                assigneeId: undefined,
+                assignedVia: undefined,
+              },
+            },
+          });
+        }
+      }
+    });
+  }, [state.assignments, state.users]);
 
   const derived = React.useMemo(() => {
     const { assignments, alerts, currentUserId } = state;
@@ -718,6 +948,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: false, reason: 'Alla pass är redan bemannade.' };
     }
 
+    const declinedByUserIds = assignment.declinedByUserIds?.filter(
+      (id) => id !== current.currentUserId,
+    );
+
     dispatch({
       type: 'ASSIGNMENT_UPDATE',
       payload: {
@@ -725,13 +959,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updates: {
           status: 'assigned',
           assigneeId: current.currentUserId,
+          assignedVia: 'manual',
+          declinedByUserIds,
         },
       },
     });
 
     return {
       success: true,
-      data: { ...assignment, status: 'assigned', assigneeId: current.currentUserId },
+      data: {
+        ...assignment,
+        status: 'assigned',
+        assigneeId: current.currentUserId,
+        assignedVia: 'manual',
+        declinedByUserIds,
+      },
     };
   }, []);
 
@@ -747,6 +989,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Passet är redan bemannat.' };
       }
 
+      const declinedByUserIds = assignment.declinedByUserIds?.filter(
+        (id) => id !== current.currentUserId,
+      );
+
       dispatch({
         type: 'ASSIGNMENT_UPDATE',
         payload: {
@@ -754,13 +1000,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           updates: {
             status: 'assigned',
             assigneeId: current.currentUserId,
+            assignedVia: 'manual',
+            declinedByUserIds,
           },
         },
       });
 
       return {
         success: true,
-        data: { ...assignment, status: 'assigned', assigneeId: current.currentUserId },
+        data: {
+          ...assignment,
+          status: 'assigned',
+          assigneeId: current.currentUserId,
+          assignedVia: 'manual',
+          declinedByUserIds,
+        },
       };
     },
     [],
@@ -789,6 +1043,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: input.note,
         status,
         assigneeId,
+        assignedVia: input.assignToCurrentUser ? 'manual' : undefined,
       };
 
       dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
@@ -837,9 +1092,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (input.assignToCurrentUser) {
           updates.status = 'assigned';
           updates.assigneeId = current.currentUserId;
+          updates.assignedVia = 'manual';
+          updates.declinedByUserIds = existing.declinedByUserIds?.filter(
+            (id) => id !== current.currentUserId,
+          );
         } else {
           updates.status = 'open';
           updates.assigneeId = undefined;
+          updates.assignedVia = undefined;
+
+          if (existing.assigneeId === current.currentUserId) {
+            const nextDeclined = new Set(existing.declinedByUserIds ?? []);
+            nextDeclined.add(current.currentUserId);
+            updates.declinedByUserIds = Array.from(nextDeclined);
+          }
         }
       }
 
@@ -870,16 +1136,46 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const reportIssue = React.useCallback(
-    (message: string): ActionResult<AlertMessage> => {
+  const addEvent = React.useCallback(
+    (message: string, type: AlertMessage['type'] = 'info'): ActionResult<AlertMessage> => {
       const alert: AlertMessage = {
         id: `alert-${Date.now()}`,
         message,
-        type: 'critical',
+        type,
         createdAt: new Date().toISOString(),
       };
       dispatch({ type: 'ALERT_ADD', payload: alert });
       return { success: true, data: alert };
+    },
+    [],
+  );
+
+  const toggleDefaultPass = React.useCallback(
+    (weekday: WeekdayIndex, slot: AssignmentSlot): ActionResult<UserProfile> => {
+      const current = stateRef.current;
+      const user = current.users[current.currentUserId];
+      if (!user) {
+        return { success: false, reason: 'Användaren kunde inte hittas.' };
+      }
+
+      const exists = user.defaultPasses.some(
+        (entry) => entry.weekday === weekday && entry.slot === slot,
+      );
+      const nextDefaultPasses = exists
+        ? user.defaultPasses.filter((entry) => !(entry.weekday === weekday && entry.slot === slot))
+        : [...user.defaultPasses, { weekday, slot }];
+
+      dispatch({
+        type: 'USER_UPDATE',
+        payload: {
+          id: user.id,
+          updates: {
+            defaultPasses: nextDefaultPasses,
+          },
+        },
+      });
+
+      return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
     },
     [],
   );
@@ -927,22 +1223,69 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const upsertPaddock = React.useCallback(
+    (input: UpsertPaddockInput): ActionResult<Paddock> => {
+      const current = stateRef.current;
+      const name = input.name.trim();
+
+      if (!name) {
+        return { success: false, reason: 'Hagen måste ha ett namn.' };
+      }
+
+      const existing = input.id
+        ? current.paddocks.find((paddock) => paddock.id === input.id)
+        : undefined;
+
+      const id = existing?.id ?? input.id ?? `paddock-${Date.now()}`;
+      const updatedAt = new Date().toISOString();
+      const horseNames = normalizeHorseNames(input.horseNames);
+      const image =
+        input.image === null ? undefined : input.image ?? existing?.image;
+
+      const paddock: Paddock = {
+        id,
+        name,
+        horseNames,
+        image,
+        updatedAt,
+      };
+
+      dispatch({ type: 'PADDOCK_UPSERT', payload: paddock });
+      return { success: true, data: paddock };
+    },
+    [],
+  );
+
+  const deletePaddock = React.useCallback((paddockId: string): ActionResult => {
+    const current = stateRef.current;
+    const existing = current.paddocks.find((paddock) => paddock.id === paddockId);
+    if (!existing) {
+      return { success: false, reason: 'Hagen kunde inte hittas.' };
+    }
+
+    dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
+    return { success: true };
+  }, []);
+
   const value = React.useMemo<AppDataContextValue>(
     () => ({
       state,
       derived,
-    actions: {
-      logNextAssignment,
-      claimNextOpenAssignment,
-      claimAssignment,
-      createAssignment,
-      updateAssignment,
-      deleteAssignment,
-      reportIssue,
-      markConversationRead,
-      sendConversationMessage,
-    },
-  }),
+      actions: {
+        logNextAssignment,
+        claimNextOpenAssignment,
+        claimAssignment,
+        createAssignment,
+        updateAssignment,
+        deleteAssignment,
+        addEvent,
+        toggleDefaultPass,
+        upsertPaddock,
+        deletePaddock,
+        markConversationRead,
+        sendConversationMessage,
+      },
+    }),
     [
       state,
       derived,
@@ -952,7 +1295,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       createAssignment,
       updateAssignment,
       deleteAssignment,
-      reportIssue,
+      addEvent,
+      toggleDefaultPass,
+      upsertPaddock,
+      deletePaddock,
       markConversationRead,
       sendConversationMessage,
     ],

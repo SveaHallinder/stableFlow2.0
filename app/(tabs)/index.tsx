@@ -14,6 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -30,20 +31,16 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import type { Assignment, AssignmentSlot, CreateAssignmentInput } from '@/context/AppDataContext';
+import type { Assignment } from '@/context/AppDataContext';
 import {
   groupAssignmentsByDay,
   formatPrimaryDay,
   formatPrimaryDate,
   formatSecondaryLabel,
-  generateDateOptions,
-  type DateOption,
 } from '@/lib/schedule';
-import { NewAssignmentModal } from '@/components/NewAssignmentModal';
 
 const palette = theme.colors;
 const radii = theme.radii;
-const weatherGradient = theme.gradients.weather;
 
 type StatusChip = {
   label: string;
@@ -52,8 +49,8 @@ type StatusChip = {
 };
 
 type QuickActionTint = 'primary' | 'accent' | 'warning';
-type QuickActionIcon = 'clock' | 'users' | 'alert-triangle';
-type QuickActionId = 'my-passes' | 'handover' | 'report-issue';
+type QuickActionIcon = 'clock' | 'users' | 'alert-triangle' | 'map';
+type QuickActionId = 'my-passes' | 'open-passes' | 'events' | 'paddocks';
 
 type QuickAction = {
   id: QuickActionId;
@@ -75,49 +72,34 @@ const quickActionStyles: Record<
 };
 
 export default function OverviewScreen() {
+  const router = useRouter();
   const { state, derived, actions } = useAppData();
-  const { assignments, alerts, messages: messageItems, posts: postItems, currentUserId, users } =
-    state;
-  const currentUser = users[currentUserId];
+  const {
+    assignments,
+    alerts,
+    messages: messageItems,
+    posts: postItems,
+    currentUserId,
+    paddocks,
+  } = state;
   const toast = useToast();
 
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
-  const [newPassModal, setNewPassModal] = React.useState<{
-    visible: boolean;
-    date?: string;
-    slot?: AssignmentSlot;
-    note?: string;
-    assignToCurrentUser?: boolean;
-  }>({ visible: false });
-  const [activeQuickAction, setActiveQuickAction] = React.useState<QuickActionId | null>(null);
-  const [issueDescription, setIssueDescription] = React.useState('');
+  const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
+  const [eventText, setEventText] = React.useState('');
 
   React.useEffect(() => {
-    if (activeQuickAction === 'report-issue') {
-      setIssueDescription('');
+    if (eventsModalVisible) {
+      setEventText('');
     }
-  }, [activeQuickAction]);
+  }, [eventsModalVisible]);
 
-  const openNewPassModal = React.useCallback(
-    (defaults?: {
-      date?: string;
-      slot?: AssignmentSlot;
-      note?: string;
-      assignToCurrentUser?: boolean;
-    }) => {
-      setNewPassModal({
-        visible: true,
-        date: defaults?.date,
-        slot: defaults?.slot,
-        note: defaults?.note,
-        assignToCurrentUser: defaults?.assignToCurrentUser,
-      });
-    },
-    [],
+  const alertBanner = React.useMemo(
+    () => alerts.find((alert) => alert.type === 'critical'),
+    [alerts],
   );
-
-  const alertBanner = alerts[0];
+  const latestEvent = alerts[0];
   const groupedDays = React.useMemo(() => groupAssignmentsByDay(assignments), [assignments]);
   const primaryDayGroup = groupedDays[0];
   const secondaryDayGroups = groupedDays.slice(1, 2);
@@ -151,7 +133,12 @@ export default function OverviewScreen() {
   );
 
   const myNextAssignment = myAssignedUpcoming[0];
-  const claimableAssignment = derived.claimableAssignment;
+
+  const paddockSummary = React.useMemo(() => {
+    const paddockCount = paddocks.length;
+    const horseCount = paddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
+    return { paddockCount, horseCount };
+  }, [paddocks]);
 
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
@@ -159,58 +146,87 @@ export default function OverviewScreen() {
         id: 'my-passes',
         label: 'Mina pass',
         caption: myNextAssignment
-          ? `${myNextAssignment.label} · ${myNextAssignment.time}`
-          : 'Inga pass på dig just nu',
+          ? `Nästa: ${myNextAssignment.label} · ${myNextAssignment.time}`
+          : 'Inga tilldelade pass',
         icon: 'clock',
         tint: 'primary',
         highlight: myAssignedUpcoming.length > 0,
       },
       {
-        id: 'handover',
-        label: 'Fördela uppgifter',
-        caption: claimableAssignment
-          ? `${claimableAssignment.label} · ${claimableAssignment.time}`
-          : 'Skapa nytt öppet pass',
+        id: 'open-passes',
+        label: 'Lediga pass',
+        caption: derived.summary.open
+          ? `${derived.summary.open} lediga pass\nÖppna schema`
+          : 'Alla pass är bemannade\nÖppna schema',
         icon: 'users',
         tint: 'accent',
-        disabled: !claimableAssignment,
-        highlight: !!claimableAssignment,
+        highlight: derived.summary.open > 0,
       },
       {
-        id: 'report-issue',
-        label: 'Rapportera hinder',
-        caption: 'Larma om trasiga boxar eller skador',
+        id: 'events',
+        label: 'Händelser',
+        caption: latestEvent
+          ? `${truncateText(latestEvent.message, 34)}\nLägg till uppdatering`
+          : 'Lägg till uppdatering\nSe senaste',
         icon: 'alert-triangle',
         tint: 'warning',
       },
+      {
+        id: 'paddocks',
+        label: 'Hagar',
+        caption: paddockSummary.paddockCount
+          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar\nÖppna & skriv ut`
+          : 'Lägg in hagar\nSkriv ut haglista',
+        icon: 'map',
+        tint: 'primary',
+        highlight: paddockSummary.paddockCount === 0,
+      },
     ];
-  }, [myNextAssignment, myAssignedUpcoming.length, claimableAssignment]);
-  const isIssueValid = issueDescription.trim().length >= 3;
+  }, [
+    myNextAssignment,
+    myAssignedUpcoming.length,
+    derived.summary.open,
+    latestEvent,
+    paddockSummary,
+  ]);
+  const isEventValid = eventText.trim().length >= 3;
+
+  const todaySummary = React.useMemo(() => {
+    const assignmentsForDay = primaryDayGroup?.assignments ?? [];
+    const total = assignmentsForDay.length;
+    const completed = assignmentsForDay.filter((assignment) => assignment.status === 'completed').length;
+    const open = assignmentsForDay.filter((assignment) => assignment.status === 'open').length;
+    const mine = assignmentsForDay.filter(
+      (assignment) =>
+        assignment.assigneeId === currentUserId &&
+        (assignment.status === 'assigned' || assignment.status === 'completed'),
+    ).length;
+
+    return { total, completed, open, mine };
+  }, [primaryDayGroup, currentUserId]);
 
   const summaryStats = React.useMemo(
     () => [
       {
         id: 'completed',
-        label: 'Utförda pass',
-        value: `${derived.summary.completed} / ${derived.summary.total}`,
-        meta: derived.summary.nextUpdateLabel,
+        label: 'Klara idag',
+        value: todaySummary.total ? `${todaySummary.completed} / ${todaySummary.total}` : '—',
+        meta: todaySummary.total ? 'Markerade som klara' : 'Inga pass idag',
       },
       {
         id: 'open',
-        label: 'Lediga pass',
-        value: `${derived.summary.open}`,
-        meta: derived.summary.openSlotLabels.length
-          ? formatSlotListDisplay(derived.summary.openSlotLabels)
-          : 'Inga lediga pass',
+        label: 'Saknar ansvarig',
+        value: `${todaySummary.open}`,
+        meta: todaySummary.open ? 'Behöver täckas' : 'Alla pass täckta',
       },
       {
-        id: 'alerts',
-        label: 'Aviseringar',
-        value: `${derived.summary.alerts}`,
-        meta: alertBanner ? truncateText(alertBanner.message, 36) : 'Allt lugnt',
+        id: 'mine',
+        label: 'På dig idag',
+        value: `${todaySummary.mine}`,
+        meta: todaySummary.mine ? 'Dina pass idag' : 'Inget på dig idag',
       },
     ],
-    [derived.summary, alertBanner],
+    [todaySummary],
   );
 
   const visibleMessages = messagesExpanded ? messageItems : messageItems.slice(0, 1);
@@ -226,92 +242,43 @@ export default function OverviewScreen() {
 
   const handleQuickActionPress = React.useCallback(
     (action: QuickAction) => {
-      if (action.disabled) {
+      if (action.id === 'my-passes') {
+        router.push('/calendar?view=mine');
         return;
       }
-      setActiveQuickAction(action.id);
-    },
-    [],
-  );
-
-  const overviewDateOptions = React.useMemo<DateOption[]>(
-    () =>
-      generateDateOptions(groupedDays, {
-        includeDates: newPassModal.date ? [newPassModal.date] : undefined,
-      }),
-    [groupedDays, newPassModal.date],
-  );
-
-  const handleCreateAssignment = React.useCallback(
-    (input: CreateAssignmentInput) => {
-      const result = actions.createAssignment(input);
-      if (result.success && result.data) {
-        const message = input.assignToCurrentUser
-          ? `${result.data.label} ${result.data.time} lades till på dig.`
-          : `${result.data.label} ${result.data.time} finns nu som ledigt pass.`;
-        toast.showToast(message, 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
+      if (action.id === 'open-passes') {
+        router.push('/calendar?view=open');
+        return;
+      }
+      if (action.id === 'paddocks') {
+        router.push('/paddocks');
+        return;
+      }
+      if (action.id === 'events') {
+        setEventsModalVisible(true);
       }
     },
-    [actions, toast],
+    [router],
   );
 
   const handlePrimaryAction = React.useCallback(() => {
-    setActiveQuickAction('my-passes');
-  }, []);
+    router.push('/calendar');
+  }, [router]);
 
-  const closeQuickActionSheet = React.useCallback(() => {
-    setActiveQuickAction(null);
-  }, []);
-
-  const handleConfirmClaim = React.useCallback(() => {
-    const result = actions.claimNextOpenAssignment();
-
-    if (!result.success) {
-      toast.showToast(`${result.reason} Skapar nytt pass i stället.`, 'info');
-      openNewPassModal({
-        date: derived.claimableAssignment?.date ?? primaryDayGroup?.isoDate,
-        slot: derived.claimableAssignment?.slot ?? 'Lunch',
-        note: 'Behöver bemanning',
-        assignToCurrentUser: false,
-      });
-      setActiveQuickAction(null);
-      return;
-    }
-
-    if (result.data) {
-      toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-    } else {
-      toast.showToast('Passet är ditt.', 'success');
-    }
-    setActiveQuickAction(null);
-  }, [actions, toast, derived.claimableAssignment, openNewPassModal, primaryDayGroup]);
-
-  const handlePlanNewPass = React.useCallback(() => {
-    openNewPassModal({
-      date: derived.claimableAssignment?.date ?? primaryDayGroup?.isoDate,
-      slot: derived.claimableAssignment?.slot ?? 'Morning',
-      note: 'Behöver bemanning',
-      assignToCurrentUser: false,
-    });
-    setActiveQuickAction(null);
-  }, [derived.claimableAssignment, openNewPassModal, primaryDayGroup]);
-
-  const handleSubmitIssue = React.useCallback(() => {
-    const details = issueDescription.trim();
+  const handleSubmitEvent = React.useCallback(() => {
+    const details = eventText.trim();
     if (!details) {
-      toast.showToast('Beskriv vad som behöver rapporteras.', 'error');
+      toast.showToast('Skriv en kort uppdatering.', 'error');
       return;
     }
-    const result = actions.reportIssue(details);
+    const result = actions.addEvent(details, 'info');
     if (result.success) {
-      toast.showToast('Aviseringen skickades till överblicken.', 'success');
-      setActiveQuickAction(null);
+      toast.showToast('Händelsen lades till.', 'success');
+      setEventsModalVisible(false);
     } else {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, issueDescription, toast]);
+  }, [actions, eventText, toast]);
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -319,7 +286,7 @@ export default function OverviewScreen() {
         <ScreenHeader
           style={styles.pageHeader}
           title="Dagens överblick"
-          primaryActionLabel="Visa mina pass"
+          primaryActionLabel="Öppna schema"
           onPressPrimaryAction={handlePrimaryAction}
           primaryActionDisabled={false}
         />
@@ -350,8 +317,8 @@ export default function OverviewScreen() {
           <View style={styles.summarySection}>
             <View style={styles.summaryHeader}>
               <View>
-                <Text style={styles.summaryTitle}>Dagens läge</Text>
-                <Text style={styles.summarySubtitle}>Snabb överblick över passen</Text>
+                <Text style={styles.summaryTitle}>Idag</Text>
+                <Text style={styles.summarySubtitle}>Status för dagens pass</Text>
               </View>
               <View style={styles.summaryBadge}>
                 <Feather name="clock" size={14} color={palette.primary} />
@@ -520,132 +487,23 @@ export default function OverviewScreen() {
       </ScrollView>
     </SafeAreaView>
       <QuickActionSheet
-        visible={activeQuickAction === 'my-passes'}
-        title="Mina pass"
-        description={
-          myAssignedUpcoming.length > 0
-            ? 'Här är passen du redan tagit på dig. Behöver du assistans kan du dela ut pass via snabbåtgärden Fördela uppgifter.'
-            : 'Du har inga pass på dig just nu. Plocka ett ledigt pass eller skapa ett nytt om något saknas.'
-        }
-        onClose={closeQuickActionSheet}
-        secondaryLabel={claimableAssignment ? 'Fördela uppgift' : undefined}
-        onSecondary={
-          claimableAssignment
-            ? () => {
-                setActiveQuickAction('handover');
-              }
-            : undefined
-        }
-      >
-        {myAssignedUpcoming.length > 0 ? (
-          <View style={styles.myPassList}>
-            {myAssignedUpcoming.map((assignment) => {
-              const note = formatOwnerNote(assignment);
-              return (
-                <View key={assignment.id} style={styles.myPassCard}>
-                  <View style={styles.myPassHeader}>
-                    <Feather
-                      name={
-                        assignment.slot === 'Evening'
-                          ? 'moon'
-                          : assignment.slot === 'Lunch'
-                          ? 'sunrise'
-                          : 'sun'
-                      }
-                      size={16}
-                      color={palette.primary}
-                    />
-                    <Text style={styles.myPassTitle}>{assignment.label}</Text>
-                  </View>
-                  <Text style={styles.myPassMeta}>
-                    {formatActionDate(assignment.date)} · {assignment.time}
-                  </Text>
-                  {note ? <Text style={styles.myPassNote}>{note}</Text> : null}
-                </View>
-              );
-            })}
-          </View>
-        ) : (
-          <Text style={styles.actionEmptyText}>
-            Du kan alltid ta ett ledigt pass via snabbåtgärden ”Fördela uppgifter”.
-          </Text>
-        )}
-      </QuickActionSheet>
-      <QuickActionSheet
-        visible={activeQuickAction === 'handover'}
-        title="Fördela uppgifter"
-        description="Ta över nästa lediga pass eller skapa ett nytt pass som behöver bemanning."
-        onClose={closeQuickActionSheet}
-        primaryLabel="Ta över pass"
-        primaryDisabled={!claimableAssignment}
-        onPrimary={claimableAssignment ? handleConfirmClaim : undefined}
-        secondaryLabel="Skapa nytt pass"
-        onSecondary={handlePlanNewPass}
-      >
-        {claimableAssignment ? (
-          <View style={styles.actionDetail}>
-            <Text style={styles.actionDetailTitle}>{claimableAssignment.label}</Text>
-            <Text style={styles.actionDetailMeta}>
-              {formatActionDate(claimableAssignment.date)} · {claimableAssignment.time}
-            </Text>
-            <Text style={styles.actionDetailHint}>
-              Passet markeras på dig när du bekräftar.
-            </Text>
-          </View>
-        ) : (
-          <Text style={styles.actionEmptyText}>
-            Alla pass är bemannade – skapa ett nytt pass om något saknas.
-          </Text>
-        )}
-      </QuickActionSheet>
-      <QuickActionSheet
-        visible={activeQuickAction === 'report-issue'}
-        title="Rapportera hinder"
-        description="Berätta vad som behöver fixas så delas det med stallet direkt."
-        onClose={closeQuickActionSheet}
+        visible={eventsModalVisible}
+        title="Händelser"
+        description="Skriv en kort uppdatering till stallet (t.ex. tappskor, hagbyte, parkering)."
+        onClose={() => setEventsModalVisible(false)}
         primaryLabel="Skicka"
-        primaryDisabled={!isIssueValid}
-        onPrimary={isIssueValid ? handleSubmitIssue : undefined}
+        primaryDisabled={!isEventValid}
+        onPrimary={isEventValid ? handleSubmitEvent : undefined}
       >
         <TextInput
-          value={issueDescription}
-          onChangeText={setIssueDescription}
-          placeholder="Ex. Trasig boxdörr vid gång B eller halt underlag i paddocken."
+          value={eventText}
+          onChangeText={setEventText}
+          placeholder="Ex. Kanel har tappat en sko. / Parkera inte vid containern."
           placeholderTextColor={palette.secondaryText}
-          style={styles.reportInput}
-          multiline
-          numberOfLines={4}
+          style={[styles.reportInput, styles.reportInputCompact]}
         />
-        <Text style={styles.reportHint}>Din rapport sparas som en avisering i listan ovan.</Text>
+        <Text style={styles.reportHint}>Händelsen syns högst upp i överblicken och i schemat.</Text>
       </QuickActionSheet>
-      <NewAssignmentModal
-        visible={newPassModal.visible}
-        onClose={() => setNewPassModal({ visible: false })}
-        onSubmit={(input) => {
-          const fallbackDate =
-            newPassModal.date ??
-            overviewDateOptions[0]?.value ??
-            new Date().toISOString().split('T')[0];
-          const payload: CreateAssignmentInput = {
-            date: input.date ?? fallbackDate,
-            slot: input.slot ?? newPassModal.slot ?? 'Morning',
-            note: input.noteProvided
-              ? input.note && input.note.length > 0
-                ? input.note
-                : undefined
-              : newPassModal.note,
-            assignToCurrentUser:
-              input.assignToCurrentUser ?? newPassModal.assignToCurrentUser ?? false,
-          };
-          handleCreateAssignment(payload);
-          setNewPassModal({ visible: false });
-        }}
-        dateOptions={overviewDateOptions}
-        initialDate={newPassModal.date}
-        initialSlot={newPassModal.slot}
-        initialNote={newPassModal.note}
-        initialAssignToMe={newPassModal.assignToCurrentUser}
-      />
     </LinearGradient>
   );
 }
@@ -966,55 +824,11 @@ function sortAssignments(assignments: Assignment[]) {
   );
 }
 
-function formatSlotListDisplay(values: string[]) {
-  return values.map(capitalize).join(', ');
-}
-
-function formatOwnerNote(assignment: Assignment) {
-  const raw = assignment.note?.trim();
-  if (!raw) {
-    return undefined;
-  }
-
-  if (assignment.status !== 'assigned') {
-    return capitalize(raw);
-  }
-
-  let cleaned = raw.replace(/\s+/g, ' ').trim();
-  if (/saknas/i.test(cleaned)) {
-    cleaned = cleaned.replace(/saknas/gi, '').trim();
-  }
-  if (/^behöver\s+/i.test(cleaned)) {
-    cleaned = cleaned.replace(/^behöver\s+/i, '').trim();
-  }
-
-  return cleaned ? capitalize(cleaned) : undefined;
-}
-
-function capitalize(value: string) {
-  if (!value) {
-    return value;
-  }
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function truncateText(value: string, maxLength: number) {
   if (value.length <= maxLength) {
     return value;
   }
   return `${value.slice(0, maxLength - 1)}…`;
-}
-
-function formatActionDate(value: string) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleDateString('sv-SE', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
 }
 
 const styles = StyleSheet.create({
@@ -1063,7 +877,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   quickActionCard: {
-    flexGrow: 1,
+    flexGrow: 0,
     flexBasis: '48%',
     minWidth: '48%',
     borderRadius: radii.lg,
@@ -1356,6 +1170,10 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
     minHeight: 110,
     textAlignVertical: 'top',
+  },
+  reportInputCompact: {
+    minHeight: 46,
+    textAlignVertical: 'center',
   },
   reportHint: {
     fontSize: 12,

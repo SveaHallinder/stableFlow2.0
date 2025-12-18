@@ -61,8 +61,8 @@ function ToastViewport({ toasts }: { toasts: ToastRecord[] }) {
 }
 
 function ToastItem({ toast }: { toast: ToastRecord }) {
-  const translateY = React.useRef(new Animated.Value(-60)).current;
-  const opacity = React.useRef(new Animated.Value(0)).current;
+  const translateY = React.useMemo(() => new Animated.Value(-60), []);
+  const opacity = React.useMemo(() => new Animated.Value(0), []);
 
   React.useEffect(() => {
     Animated.parallel([

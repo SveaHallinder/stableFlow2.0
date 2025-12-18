@@ -9,6 +9,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams } from 'expo-router';
 import { theme } from '@/components/theme';
 import { Card, Pill } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -41,8 +42,16 @@ const radii = theme.radii;
 const statusColors = theme.status;
 const gradients = theme.gradients;
 
-const filters = ['Regular', 'Riding', 'Competition'] as const;
+const filters = ['Pass', 'Riddagar', 'Tävling'] as const;
 type Filter = (typeof filters)[number];
+
+type PassView = 'all' | 'mine' | 'open';
+
+const passViewOptions: { id: PassView; label: string }[] = [
+  { id: 'all', label: 'Alla' },
+  { id: 'mine', label: 'Mina' },
+  { id: 'open', label: 'Lediga' },
+];
 
 type RegularSlotIcon = 'sun' | 'clock' | 'moon';
 
@@ -53,6 +62,8 @@ type RegularSlot = {
   color: string;
   note?: string;
   assignedTo?: string;
+  isMine: boolean;
+  assignedVia?: Assignment['assignedVia'];
   time?: string;
   status: AssignmentStatus;
   slotType: AssignmentSlot;
@@ -64,6 +75,8 @@ type RegularDayView = {
   date: string;
   selected?: boolean;
   slots: RegularSlot[];
+  openSlots: number;
+  mineSlots: number;
   openAssignments: Assignment[];
   events: Array<{ id: string; label: string; color: string }>;
 };
@@ -99,9 +112,21 @@ const dayEventColorMap: Record<DayEventTone, string> = {
 
 const competitionCategories = ['Endurance', 'Dressage'] as const;
 
+function resolvePassView(raw?: string | string[]): PassView {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value === 'mine') {
+    return 'mine';
+  }
+  if (value === 'open') {
+    return 'open';
+  }
+  return 'all';
+}
+
 export default function CalendarScreen() {
   const { state, actions } = useAppData();
   const { assignments, users, ridingSchedule, competitionEvents, dayEvents, currentUserId } = state;
+  const { view } = useLocalSearchParams<{ view?: string | string[] }>();
   const [assignmentModal, setAssignmentModal] = React.useState<{
     visible: boolean;
     mode: 'create' | 'edit';
@@ -112,10 +137,15 @@ export default function CalendarScreen() {
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
   const toast = useToast();
-  const [activeFilter, setActiveFilter] = React.useState<Filter>('Regular');
+  const [activeFilter, setActiveFilter] = React.useState<Filter>('Pass');
+  const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
   const [categoryIndex, setCategoryIndex] = React.useState(0);
 
   const groupedDays = React.useMemo(() => groupAssignmentsByDay(assignments), [assignments]);
+
+  React.useEffect(() => {
+    setPassView(resolvePassView(view));
+  }, [view]);
 
   const dayEventsByDate = React.useMemo(() => {
     const map = new Map<string, DayEvent[]>();
@@ -164,8 +194,19 @@ export default function CalendarScreen() {
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = activeWeek?.days ?? [];
 
+  const todayIso = React.useMemo(() => new Date().toISOString().split('T')[0], []);
+  const upcomingDayGroups = React.useMemo(
+    () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
+    [groupedDays, todayIso],
+  );
+
+  const visiblePassDays = React.useMemo(
+    () => (passView === 'all' ? activeDays : upcomingDayGroups),
+    [activeDays, passView, upcomingDayGroups],
+  );
+
   const regularDays = React.useMemo<RegularDayView[]>(() => {
-    return activeDays.map((day, index) => {
+    return visiblePassDays.map((day, index) => {
       const sortedAssignments = sortAssignments(day.assignments);
       const eventsForDay = dayEventsByDate.get(day.isoDate) ?? [];
       const eventLabels = eventsForDay.map((event) => formatPassNote(event.label));
@@ -180,8 +221,12 @@ export default function CalendarScreen() {
           color: slotColorMap[assignment.slot],
           note: noteHidden ? undefined : formattedNote,
           assignedTo: assignment.assigneeId
-            ? users[assignment.assigneeId]?.name ?? undefined
+            ? assignment.assigneeId === currentUserId
+              ? 'Du'
+              : users[assignment.assigneeId]?.name ?? undefined
             : undefined,
+          isMine: assignment.assigneeId === currentUserId,
+          assignedVia: assignment.assignedVia,
           time: assignment.time,
           status: assignment.status,
           slotType: assignment.slot,
@@ -200,11 +245,25 @@ export default function CalendarScreen() {
         date: formatDayNumber(day.date),
         selected: index === 0,
         slots,
+        openSlots: sortedAssignments.filter((assignment) => assignment.status === 'open').length,
+        mineSlots: sortedAssignments.filter(
+          (assignment) => assignment.assigneeId === currentUserId && assignment.status !== 'open',
+        ).length,
         openAssignments: sortedAssignments.filter((assignment) => assignment.status === 'open'),
         events: dayEventViews,
       };
     });
-  }, [activeDays, users, dayEventsByDate]);
+  }, [visiblePassDays, users, dayEventsByDate, currentUserId]);
+
+  const visibleRegularDays = React.useMemo(() => {
+    if (passView === 'mine') {
+      return regularDays.filter((day) => day.mineSlots > 0);
+    }
+    if (passView === 'open') {
+      return regularDays.filter((day) => day.openSlots > 0);
+    }
+    return regularDays;
+  }, [passView, regularDays]);
 
   const selectedCategory = competitionCategories[categoryIndex];
   const weekHeading = activeWeek ? formatWeekHeading(activeWeek.start, activeWeek.end) : 'Veckoschema';
@@ -330,6 +389,30 @@ export default function CalendarScreen() {
     [actions, toast],
   );
 
+  const handleDeclineAssignment = React.useCallback(
+    (assignmentId: string) => {
+      const result = actions.declineAssignment(assignmentId);
+      if (result.success) {
+        toast.showToast('Passet släpptes och blev ledigt.', 'success');
+      } else if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
+  const handleCompleteAssignment = React.useCallback(
+    (assignmentId: string) => {
+      const result = actions.completeAssignment(assignmentId);
+      if (result.success) {
+        toast.showToast('Markerat som klart.', 'success');
+      } else if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
   return (
     <LinearGradient colors={gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
@@ -359,7 +442,24 @@ export default function CalendarScreen() {
             })}
           </Card>
 
-          {activeFilter === 'Regular' && (
+          {activeFilter === 'Pass' && (
+            <Card tone="muted" style={styles.subFilterRow}>
+              {passViewOptions.map((option) => {
+                const active = option.id === passView;
+                return (
+                  <TouchableOpacity key={option.id} onPress={() => setPassView(option.id)}>
+                    <Pill active={active} style={styles.subFilterChip}>
+                      <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pill>
+                  </TouchableOpacity>
+                );
+              })}
+            </Card>
+          )}
+
+          {activeFilter === 'Pass' && (
             <Card tone="muted" style={styles.legendCard}>
               {legend.map((item) => (
                 <View key={item.label} style={styles.legendItem}>
@@ -370,40 +470,60 @@ export default function CalendarScreen() {
             </Card>
           )}
 
-          <View style={styles.weekRow}>
-            <TouchableOpacity
-              style={[styles.weekButton, !canGoPreviousWeek && styles.weekButtonDisabled]}
-              onPress={handlePrevWeek}
-              disabled={!canGoPreviousWeek}
-            >
-              <Feather
-                name="chevron-left"
-                size={16}
-                color={canGoPreviousWeek ? palette.icon : palette.secondaryText}
-              />
-            </TouchableOpacity>
-            <View style={styles.weekTitleBlock}>
-              <Text style={styles.weekTitle}>
-                {weekNumber ? `Vecka ${weekNumber}` : 'Veckoschema'}
-              </Text>
-              {weekRangeLabel ? <Text style={styles.weekSubtitle}>{weekRangeLabel}</Text> : null}
+          {activeFilter === 'Pass' && passView === 'all' ? (
+            <View style={styles.weekRow}>
+              <TouchableOpacity
+                style={[styles.weekButton, !canGoPreviousWeek && styles.weekButtonDisabled]}
+                onPress={handlePrevWeek}
+                disabled={!canGoPreviousWeek}
+              >
+                <Feather
+                  name="chevron-left"
+                  size={16}
+                  color={canGoPreviousWeek ? palette.icon : palette.secondaryText}
+                />
+              </TouchableOpacity>
+              <View style={styles.weekTitleBlock}>
+                <Text style={styles.weekTitle}>
+                  {weekNumber ? `Vecka ${weekNumber}` : 'Veckoschema'}
+                </Text>
+                {weekRangeLabel ? <Text style={styles.weekSubtitle}>{weekRangeLabel}</Text> : null}
+              </View>
+              <TouchableOpacity
+                style={[styles.weekButton, !canGoNextWeek && styles.weekButtonDisabled]}
+                onPress={handleNextWeek}
+                disabled={!canGoNextWeek}
+              >
+                <Feather
+                  name="chevron-right"
+                  size={16}
+                  color={canGoNextWeek ? palette.icon : palette.secondaryText}
+                />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={[styles.weekButton, !canGoNextWeek && styles.weekButtonDisabled]}
-              onPress={handleNextWeek}
-              disabled={!canGoNextWeek}
-            >
-              <Feather
-                name="chevron-right"
-                size={16}
-                color={canGoNextWeek ? palette.icon : palette.secondaryText}
-              />
-            </TouchableOpacity>
-          </View>
+          ) : activeFilter === 'Pass' ? (
+            <View style={styles.listHeaderRow}>
+              <View>
+                <Text style={styles.weekTitle}>Kommande dagar</Text>
+                <Text style={styles.weekSubtitle}>
+                  {passView === 'mine'
+                    ? 'Pass som står på dig'
+                    : 'Pass som saknar ansvarig'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.listHeaderAction}
+                onPress={() => setPassView('all')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.listHeaderActionText}>Veckovy</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
-          {activeFilter === 'Regular' && (
+          {activeFilter === 'Pass' && (
             <View style={styles.scheduleList}>
-              {regularDays.map((day) => (
+              {visibleRegularDays.map((day) => (
                 <RegularDayCard
                   key={day.id}
                   day={day.day}
@@ -411,8 +531,11 @@ export default function CalendarScreen() {
                   isoDate={day.id}
                   selected={day.selected}
                   slots={day.slots}
+                  openSlots={day.openSlots}
+                  mineSlots={day.mineSlots}
                   openAssignments={day.openAssignments}
                   events={day.events}
+                  mode={passView}
                   onClaimOpenAssignment={handleClaimAssignment}
                   onCreateAssignment={(defaults) =>
                     setAssignmentModal({
@@ -424,12 +547,23 @@ export default function CalendarScreen() {
                     })
                   }
                   onEditAssignment={handleEditAssignment}
+                  onDeclineAssignment={handleDeclineAssignment}
+                  onCompleteAssignment={handleCompleteAssignment}
                 />
               ))}
+              {visibleRegularDays.length === 0 ? (
+                <Text style={styles.emptyStateText}>
+                  {passView === 'mine'
+                    ? 'Du har inga pass på dig kommande dagar.'
+                    : passView === 'open'
+                      ? 'Inga lediga pass kommande dagar.'
+                      : 'Inga pass att visa.'}
+                </Text>
+              ) : null}
             </View>
           )}
 
-          {activeFilter === 'Riding' && (
+          {activeFilter === 'Riddagar' && (
             <View style={styles.ridingList}>
               {ridingSchedule.map((day) => (
                 <RidingDayRow
@@ -443,7 +577,7 @@ export default function CalendarScreen() {
             </View>
           )}
 
-          {activeFilter === 'Competition' && (
+          {activeFilter === 'Tävling' && (
             <View style={styles.competitionSection}>
               <TouchableOpacity style={styles.competitionCategory} onPress={handleCategoryToggle}>
                 <Text style={styles.competitionCategoryText}>{selectedCategory}</Text>
@@ -522,24 +656,39 @@ function RegularDayCard({
   isoDate,
   selected,
   slots,
+  openSlots,
+  mineSlots,
   openAssignments,
   events,
+  mode,
   onClaimOpenAssignment,
   onCreateAssignment,
   onEditAssignment,
+  onDeclineAssignment,
+  onCompleteAssignment,
 }: {
   day: string;
   date: string;
   isoDate: string;
   selected?: boolean;
   slots: RegularSlot[];
+  openSlots: number;
+  mineSlots: number;
   openAssignments: Assignment[];
   events: Array<{ id: string; label: string; color: string }>;
+  mode: PassView;
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
   onCreateAssignment?: (defaults: { date: string; slot?: AssignmentSlot }) => void;
   onEditAssignment?: (assignmentId: string) => void;
+  onDeclineAssignment?: (assignmentId: string) => void;
+  onCompleteAssignment?: (assignmentId: string) => void;
 }) {
-  const openSlots = openAssignments.length;
+  const visibleSlots =
+    mode === 'mine'
+      ? slots.filter((slot) => slot.isMine)
+      : mode === 'open'
+        ? slots.filter((slot) => slot.status === 'open')
+        : slots;
 
   const handleActionPress = () => {
     if (openSlots > 0) {
@@ -555,6 +704,8 @@ function RegularDayCard({
     }
   };
 
+  const showFooter = mode !== 'mine';
+
   return (
     <Card tone="muted" elevated style={styles.dayCard}>
       <View style={styles.dayHeader}>
@@ -564,7 +715,13 @@ function RegularDayCard({
           </Text>
         </View>
         <View style={styles.dayStatusGroup}>
-          {openSlots > 0 ? (
+          {mode === 'mine' ? (
+            <View style={styles.dayStatusPill}>
+              <Text style={styles.dayStatusPillText}>
+                {mineSlots > 0 ? `${mineSlots} på dig` : 'Inget på dig'}
+              </Text>
+            </View>
+          ) : openSlots > 0 ? (
             <View style={styles.dayStatusPill}>
               <Text style={styles.dayStatusPillText}>{openSlots} ledigt</Text>
             </View>
@@ -584,7 +741,7 @@ function RegularDayCard({
         </View>
       ) : null}
       <View style={styles.daySlots}>
-        {slots.map((slot, index) => (
+        {visibleSlots.map((slot, index) => (
           <ScheduleIcon
             key={slot.id}
             label={slot.label}
@@ -592,49 +749,63 @@ function RegularDayCard({
             color={slot.color}
             note={slot.note}
             assignedTo={slot.assignedTo}
+            isMine={slot.isMine}
+            assignedVia={slot.assignedVia}
             time={slot.time}
-            isLast={index === slots.length - 1}
+            isLast={index === visibleSlots.length - 1}
             status={slot.status}
-            onAction={() => {
-              if (slot.status === 'open') {
-                onClaimOpenAssignment?.(slot.id, {
-                  date: isoDate,
-                  slot: slot.slotType,
-                });
-              } else {
-                onEditAssignment?.(slot.id);
-              }
-            }}
+            onTake={
+              slot.status === 'open'
+                ? () =>
+                    onClaimOpenAssignment?.(slot.id, {
+                      date: isoDate,
+                      slot: slot.slotType,
+                    })
+                : undefined
+            }
+            onManage={slot.status !== 'open' ? () => onEditAssignment?.(slot.id) : undefined}
+            onDecline={
+              slot.isMine && slot.status === 'assigned'
+                ? () => onDeclineAssignment?.(slot.id)
+                : undefined
+            }
+            onComplete={
+              slot.isMine && slot.status === 'assigned'
+                ? () => onCompleteAssignment?.(slot.id)
+                : undefined
+            }
           />
         ))}
       </View>
-      <View style={styles.dayFooterRow}>
-        {openSlots > 0 ? (
-          <View style={styles.dayStatusBadge}>
-            <Feather name="alert-triangle" size={12} color={palette.warning} />
-            <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
-          </View>
-        ) : (
-          <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
-        )}
-        <TouchableOpacity
-          style={[
-            styles.dayActionButton,
-            openSlots > 0 && styles.dayActionButtonPrimary,
-          ]}
-          activeOpacity={0.85}
-          onPress={handleActionPress}
-        >
-          <Text
+      {showFooter ? (
+        <View style={styles.dayFooterRow}>
+          {openSlots > 0 ? (
+            <View style={styles.dayStatusBadge}>
+              <Feather name="alert-triangle" size={12} color={palette.warning} />
+              <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
+            </View>
+          ) : (
+            <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
+          )}
+          <TouchableOpacity
             style={[
-              styles.dayActionLabel,
-              openSlots > 0 && styles.dayActionLabelPrimary,
+              styles.dayActionButton,
+              openSlots > 0 && styles.dayActionButtonPrimary,
             ]}
+            activeOpacity={0.85}
+            onPress={handleActionPress}
           >
-            {openSlots > 0 ? 'Ta pass' : 'Visa detaljer'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+            <Text
+              style={[
+                styles.dayActionLabel,
+                openSlots > 0 && styles.dayActionLabelPrimary,
+              ]}
+            >
+              {openSlots > 0 ? 'Ta pass' : 'Visa detaljer'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
     </Card>
   );
 }
@@ -645,23 +816,35 @@ function ScheduleIcon({
   color,
   note,
   assignedTo,
+  isMine,
+  assignedVia,
   time,
   isLast,
   status,
-  onAction,
+  onTake,
+  onManage,
+  onDecline,
+  onComplete,
 }: {
   label: string;
   icon: RegularSlotIcon;
   color: string;
   note?: string;
   assignedTo?: string;
+  isMine: boolean;
+  assignedVia?: Assignment['assignedVia'];
   time?: string;
   isLast?: boolean;
   status: AssignmentStatus;
-  onAction?: () => void;
+  onTake?: () => void;
+  onManage?: () => void;
+  onDecline?: () => void;
+  onComplete?: () => void;
 }) {
   const noteColor = note ? resolveNoteColor(note) : undefined;
   const isOpen = status === 'open';
+  const isCompleted = status === 'completed';
+  const showDefaultTag = isMine && status === 'assigned' && assignedVia === 'default' && !note;
 
   const renderIcon = () => {
     if (icon === 'sun') {
@@ -709,28 +892,53 @@ function ScheduleIcon({
                     Ledigt pass
                   </Text>
                 </View>
-              ) : null}
-              {onAction ? (
-                <TouchableOpacity
-                  style={[
-                    styles.scheduleManageButton,
-                    isOpen && styles.scheduleTakeButton,
-                  ]}
-                  onPress={onAction}
-                >
-                  <Feather
-                    name={isOpen ? 'plus' : 'edit-3'}
-                    size={14}
-                    color={isOpen ? palette.inverseText : palette.primary}
-                  />
-                  <Text
-                    style={[
-                      styles.scheduleManageLabel,
-                      isOpen && styles.scheduleTakeLabel,
-                    ]}
-                  >
-                    {isOpen ? 'Ta pass' : 'Hantera'}
+              ) : isCompleted ? (
+                <View style={[styles.scheduleTag, styles.scheduleTagComplete]}>
+                  <Feather name="check" size={12} color={palette.success} />
+                  <Text style={[styles.scheduleTagText, styles.scheduleTagCompleteText]}>
+                    Klart
                   </Text>
+                </View>
+              ) : showDefaultTag ? (
+                <View style={[styles.scheduleTag, styles.scheduleTagDefault]}>
+                  <Feather name="repeat" size={12} color={palette.secondaryText} />
+                  <Text style={styles.scheduleTagText}>Standard</Text>
+                </View>
+              ) : null}
+              {isMine && status === 'assigned' && onDecline && onComplete ? (
+                <View style={styles.scheduleMineActions}>
+                  <TouchableOpacity
+                    style={styles.scheduleCantButton}
+                    onPress={onDecline}
+                    activeOpacity={0.85}
+                  >
+                    <Feather name="x" size={14} color={palette.secondaryText} />
+                    <Text style={styles.scheduleCantLabel}>Kan inte</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.scheduleManageButton, styles.scheduleCompleteButton]}
+                    onPress={onComplete}
+                    activeOpacity={0.85}
+                  >
+                    <Feather name="check" size={14} color={palette.inverseText} />
+                    <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
+                      Klart
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : onTake ? (
+                <TouchableOpacity
+                  style={[styles.scheduleManageButton, styles.scheduleTakeButton]}
+                  onPress={onTake}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="plus" size={14} color={palette.inverseText} />
+                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>Ta pass</Text>
+                </TouchableOpacity>
+              ) : onManage ? (
+                <TouchableOpacity style={styles.scheduleManageButton} onPress={onManage} activeOpacity={0.85}>
+                  <Feather name="edit-3" size={14} color={palette.primary} />
+                  <Text style={styles.scheduleManageLabel}>Hantera</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
