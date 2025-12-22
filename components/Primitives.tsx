@@ -156,18 +156,23 @@ const headerStyles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   actionButton: {
+    width: 40,
+    height: 40,
     borderRadius: radius.full,
-    paddingHorizontal: space.md,
-    paddingVertical: space.xs,
-    backgroundColor: color.card,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: systemPalette.surface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: color.divider,
+    borderColor: systemPalette.border,
   },
   actionLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: color.text,
     letterSpacing: -0.2,
+    textAlign: 'center',
   },
 });
 
@@ -199,7 +204,17 @@ export const HeaderActionButton = ({ label, children, style, textStyle, ...props
     activeOpacity={0.85}
     {...props}
   >
-    {children ?? <Text style={[headerStyles.actionLabel, textStyle]}>{label}</Text>}
+    {children ?? (
+      <Text
+        numberOfLines={1}
+        ellipsizeMode="tail"
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+        style={[headerStyles.actionLabel, textStyle]}
+      >
+        {label}
+      </Text>
+    )}
   </TouchableOpacity>
 );
 

@@ -18,7 +18,15 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/logo.png"
+      "favicon": "./assets/images/logo.png",
+      "name": "StableFlow",
+      "shortName": "StableFlow",
+      "themeColor": "#2D6CF6",
+      "backgroundColor": "#F8FAFD",
+      "display": "standalone",
+      "startUrl": ".",
+      "lang": "sv",
+      "orientation": "portrait"
     },
     "plugins": [
       "expo-router",

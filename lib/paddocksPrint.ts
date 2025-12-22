@@ -40,6 +40,12 @@ export function createPaddocksPrintHtml(paddocks: Paddock[]) {
   const content = sorted
     .map((paddock) => {
       const imageSrc = toDataUri(paddock.image);
+      const season =
+        paddock.season === 'summer'
+          ? 'Sommarhage'
+          : paddock.season === 'winter'
+            ? 'Vinterhage'
+            : 'Året runt';
       const horses =
         paddock.horseNames.length > 0
           ? paddock.horseNames
@@ -51,7 +57,7 @@ export function createPaddocksPrintHtml(paddocks: Paddock[]) {
         <section class="paddock">
           <header class="paddockHeader">
             <h2 class="paddockTitle">${escapeHtml(paddock.name)}</h2>
-            <div class="paddockMeta">${paddock.horseNames.length} hästar</div>
+            <div class="paddockMeta">${paddock.horseNames.length} hästar · ${season}</div>
           </header>
           ${
             imageSrc
@@ -222,4 +228,3 @@ export function createPaddocksPrintHtml(paddocks: Paddock[]) {
   </html>
   `.trim();
 }
-

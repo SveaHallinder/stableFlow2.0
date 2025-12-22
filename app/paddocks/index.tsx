@@ -32,6 +32,7 @@ type PaddockDraft = {
   name: string;
   horsesText: string;
   image: PaddockImage | null;
+  season: NonNullable<Paddock['season']>;
 };
 
 const draftFromPaddock = (paddock?: Paddock): PaddockDraft => ({
@@ -39,6 +40,7 @@ const draftFromPaddock = (paddock?: Paddock): PaddockDraft => ({
   name: paddock?.name ?? '',
   horsesText: paddock?.horseNames?.join('\n') ?? '',
   image: paddock?.image ?? null,
+  season: paddock?.season ?? 'yearRound',
 });
 
 function parseHorseNames(input: string) {
@@ -86,7 +88,10 @@ export default function PaddocksScreen() {
   const router = useRouter();
   const toast = useToast();
   const { state, actions } = useAppData();
-  const paddocks = state.paddocks;
+  const paddocks = React.useMemo(
+    () => state.paddocks.filter((paddock) => paddock.stableId === state.currentStableId),
+    [state.paddocks, state.currentStableId],
+  );
 
   const [modalState, setModalState] = React.useState<{ visible: boolean; paddockId?: string }>({
     visible: false,
@@ -122,7 +127,9 @@ export default function PaddocksScreen() {
       id: draft.id,
       name: draft.name,
       horseNames: parseHorseNames(draft.horsesText),
+      stableId: state.currentStableId,
       image: draft.image,
+      season: draft.season,
     };
 
     const result = actions.upsertPaddock(payload);
@@ -132,7 +139,16 @@ export default function PaddocksScreen() {
     } else if (!result.success) {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, closeModal, draft.horsesText, draft.id, draft.image, draft.name, toast]);
+  }, [
+    actions,
+    closeModal,
+    draft.horsesText,
+    draft.id,
+    draft.image,
+    draft.name,
+    state.currentStableId,
+    toast,
+  ]);
 
   const handleDelete = React.useCallback(() => {
     if (!draft.id) {
@@ -313,7 +329,20 @@ export default function PaddocksScreen() {
                         <Text style={styles.paddockName}>{paddock.name}</Text>
                         <Text style={styles.paddockCount}>{paddock.horseNames.length}</Text>
                       </View>
-                      <Text style={styles.paddockCaption}>{formatPaddockCaption(paddock)}</Text>
+                      <View style={styles.metaRow}>
+                        {paddock.season ? (
+                          <View style={styles.seasonPill}>
+                            <Text style={styles.seasonText}>
+                              {paddock.season === 'summer'
+                                ? 'Sommarhage'
+                                : paddock.season === 'winter'
+                                  ? 'Vinterhage'
+                                  : 'Året runt'}
+                            </Text>
+                          </View>
+                        ) : null}
+                        <Text style={styles.paddockCaption}>{formatPaddockCaption(paddock)}</Text>
+                      </View>
                     </View>
                     <Feather name="chevron-right" size={16} color={palette.mutedText} />
                   </View>
@@ -361,6 +390,29 @@ export default function PaddocksScreen() {
                   textAlignVertical="top"
                 />
                 <Text style={styles.formHint}>Tips: Du kan även separera med komma.</Text>
+              </View>
+
+              <View style={styles.formSection}>
+                <Text style={styles.formLabel}>Säsong</Text>
+                <View style={styles.chipRow}>
+                  {([
+                    { id: 'yearRound', label: 'Året runt' },
+                    { id: 'summer', label: 'Sommar' },
+                    { id: 'winter', label: 'Vinter' },
+                  ] as const).map((option) => {
+                    const active = draft.season === option.id;
+                    return (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[styles.chip, active && styles.chipActive]}
+                        onPress={() => setDraft((prev) => ({ ...prev, season: option.id }))}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </View>
 
               <View style={styles.formSection}>
@@ -529,6 +581,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   paddockName: {
     fontSize: 16,
     fontWeight: '700',
@@ -542,6 +595,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.primary,
   },
+  seasonPill: {
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  seasonText: { fontSize: 11, fontWeight: '600', color: palette.secondaryText },
   paddockCaption: {
     fontSize: 13,
     color: palette.secondaryText,
@@ -586,6 +646,21 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: palette.secondaryText,
   },
+  chipRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  chipActive: {
+    backgroundColor: 'rgba(45,108,246,0.1)',
+    borderColor: 'rgba(45,108,246,0.26)',
+  },
+  chipLabel: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
+  chipLabelActive: { color: palette.primary },
   textInput: {
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -699,4 +774,3 @@ const styles = StyleSheet.create({
     color: palette.inverseText,
   },
 });
-

@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PropsWithChildren } from 'react';
 import type { ImageSourcePropType } from 'react-native';
+import type * as SecureStoreType from 'expo-secure-store';
 
 export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
@@ -8,6 +9,43 @@ export type AssignmentIcon = 'sun' | 'clock' | 'moon';
 
 // Monday-first index (0 = Monday, 6 = Sunday)
 export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type UserRole = 'admin' | 'staff' | 'rider' | 'farrier' | 'vet' | 'trainer' | 'guest';
+
+export type Stable = {
+  id: string;
+  name: string;
+  location?: string;
+  farmId?: string;
+};
+
+export type StableMembership = {
+  stableId: string;
+  role: UserRole;
+  customRole?: string;
+  access?: 'owner' | 'edit' | 'view';
+  horseIds?: string[];
+  riderRole?: 'owner' | 'medryttare' | 'other';
+};
+
+export type Farm = {
+  id: string;
+  name: string;
+  location?: string;
+  hasIndoorArena?: boolean;
+  arenaNote?: string;
+};
+
+export type Horse = {
+  id: string;
+  name: string;
+  stableId: string;
+  ownerUserId?: string;
+  image?: ImageSourcePropType;
+  gender?: 'mare' | 'gelding' | 'stallion' | 'unknown';
+  age?: number;
+  note?: string;
+};
 
 export type DefaultPass = {
   weekday: WeekdayIndex;
@@ -19,6 +57,7 @@ export type AssignmentAssignedVia = 'default' | 'manual';
 export type Assignment = {
   id: string;
   date: string; // ISO date string e.g. 2025-03-10
+  stableId: string;
   label: string;
   slot: AssignmentSlot;
   icon: AssignmentIcon;
@@ -33,6 +72,7 @@ export type Assignment = {
 
 export type CreateAssignmentInput = {
   date: string;
+  stableId?: string;
   slot: AssignmentSlot;
   time?: string;
   note?: string;
@@ -43,6 +83,7 @@ export type CreateAssignmentInput = {
 export type UpdateAssignmentInput = {
   id: string;
   date?: string;
+  stableId?: string;
   slot?: AssignmentSlot;
   time?: string;
   note?: string;
@@ -112,9 +153,11 @@ export type PaddockImage = {
 export type Paddock = {
   id: string;
   name: string;
+  stableId: string;
   horseNames: string[];
   image?: PaddockImage;
   updatedAt: string;
+  season?: 'summer' | 'winter' | 'yearRound';
 };
 
 type AwayNotice = {
@@ -135,6 +178,7 @@ export type DayEventTone =
 export type DayEvent = {
   id: string;
   date: string;
+  stableId: string;
   label: string;
   tone: DayEventTone;
 };
@@ -142,6 +186,8 @@ export type DayEvent = {
 export type UserProfile = {
   id: string;
   name: string;
+  email?: string;
+  membership: StableMembership[];
   horses: string[];
   location: string;
   phone: string;
@@ -155,10 +201,64 @@ export type UpsertPaddockInput = {
   id?: string;
   name: string;
   horseNames: string[];
+  stableId: string;
   image?: PaddockImage | null;
+  season?: Paddock['season'];
+};
+
+export type UpsertStableInput = {
+  id?: string;
+  name: string;
+  location?: string;
+  farmId?: string;
+};
+
+export type UpsertFarmInput = {
+  id?: string;
+  name: string;
+  location?: string;
+  hasIndoorArena?: boolean;
+  arenaNote?: string;
+};
+
+export type UpsertHorseInput = {
+  id?: string;
+  name: string;
+  stableId: string;
+  ownerUserId?: string;
+  gender?: Horse['gender'];
+  age?: number;
+  note?: string;
+};
+
+export type AddMemberInput = {
+  name: string;
+  email: string;
+  stableId: string;
+  role: UserRole;
+  customRole?: string;
+  access?: 'owner' | 'edit' | 'view';
+  horseIds?: string[];
+  riderRole?: StableMembership['riderRole'];
+  phone?: string;
+  location?: string;
+};
+
+export type UpdateMemberRoleInput = {
+  userId: string;
+  stableId: string;
+  role: UserRole;
+  customRole?: string;
+  access?: 'owner' | 'edit' | 'view';
+  horseIds?: string[];
+  riderRole?: StableMembership['riderRole'];
 };
 
 type AppDataState = {
+  currentStableId: string;
+  stables: Stable[];
+  farms: Farm[];
+  horses: Horse[];
   currentUserId: string;
   users: Record<string, UserProfile>;
   alerts: AlertMessage[];
@@ -223,6 +323,11 @@ type UserUpdateAction = {
   payload: { id: string; updates: Partial<UserProfile> };
 };
 
+type UserSetAction = {
+  type: 'USER_SET';
+  payload: { id: string };
+};
+
 type PaddockUpsertAction = {
   type: 'PADDOCK_UPSERT';
   payload: Paddock;
@@ -231,6 +336,46 @@ type PaddockUpsertAction = {
 type PaddockDeleteAction = {
   type: 'PADDOCK_DELETE';
   payload: { id: string };
+};
+
+type StableUpsertAction = {
+  type: 'STABLE_UPSERT';
+  payload: Stable;
+};
+
+type StableDeleteAction = {
+  type: 'STABLE_DELETE';
+  payload: { id: string };
+};
+
+type StateHydrateAction = {
+  type: 'STATE_HYDRATE';
+  payload: Partial<AppDataState>;
+};
+
+type FarmUpsertAction = {
+  type: 'FARM_UPSERT';
+  payload: Farm;
+};
+
+type FarmDeleteAction = {
+  type: 'FARM_DELETE';
+  payload: { id: string };
+};
+
+type HorseUpsertAction = {
+  type: 'HORSE_UPSERT';
+  payload: Horse;
+};
+
+type HorseDeleteAction = {
+  type: 'HORSE_DELETE';
+  payload: { id: string };
+};
+
+type StableSetAction = {
+  type: 'STABLE_SET';
+  payload: { stableId: string };
 };
 
 type AppDataAction =
@@ -243,7 +388,16 @@ type AppDataAction =
   | AppendConversationMessageAction
   | UserUpdateAction
   | PaddockUpsertAction
-  | PaddockDeleteAction;
+  | PaddockDeleteAction
+  | StableSetAction
+  | StableUpsertAction
+  | StableDeleteAction
+  | FarmUpsertAction
+  | FarmDeleteAction
+  | HorseUpsertAction
+  | HorseDeleteAction
+  | StateHydrateAction
+  | UserSetAction;
 
 export type ActionResult<T = void> =
   | { success: true; data?: T }
@@ -265,11 +419,15 @@ type AppDataContextValue = {
     upcomingAssignmentsForUser: Assignment[];
     nextAssignmentForUser?: Assignment;
     recentActivities: AppDataState['assignmentHistory'];
+    membership?: StableMembership;
+    currentAccess: StableMembership['access'];
   };
   actions: {
     logNextAssignment: () => ActionResult<Assignment>;
     claimNextOpenAssignment: () => ActionResult<Assignment>;
     claimAssignment: (assignmentId: string) => ActionResult<Assignment>;
+    declineAssignment: (assignmentId: string) => ActionResult<Assignment>;
+    completeAssignment: (assignmentId: string) => ActionResult<Assignment>;
     createAssignment: (input: CreateAssignmentInput) => ActionResult<Assignment>;
     updateAssignment: (input: UpdateAssignmentInput) => ActionResult<Assignment>;
     deleteAssignment: (assignmentId: string) => ActionResult;
@@ -279,39 +437,110 @@ type AppDataContextValue = {
     deletePaddock: (paddockId: string) => ActionResult;
     markConversationRead: (conversationId: string) => void;
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
+    setCurrentStable: (stableId: string) => void;
+    upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
+    deleteFarm: (farmId: string) => ActionResult;
+    upsertStable: (input: UpsertStableInput) => ActionResult<Stable>;
+    deleteStable: (stableId: string) => ActionResult;
+    upsertHorse: (input: UpsertHorseInput) => ActionResult<Horse>;
+    deleteHorse: (horseId: string) => ActionResult;
+    addMember: (input: AddMemberInput) => ActionResult<UserProfile>;
+    updateMemberRole: (input: UpdateMemberRoleInput) => ActionResult<UserProfile>;
+    removeMemberFromStable: (userId: string, stableId: string) => ActionResult<UserProfile>;
+    setCurrentUser: (userId: string) => ActionResult;
   };
 };
 
 const AppDataContext = React.createContext<AppDataContextValue | undefined>(undefined);
 
+function addDays(date: Date, amount: number) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
+function toISODate(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+const PERSIST_KEY = 'stableflow-appdata';
+const accessLevel: Record<NonNullable<StableMembership['access']>, number> = {
+  view: 0,
+  edit: 1,
+  owner: 2,
+};
+
+let secureStoreModule: typeof SecureStoreType | null = null;
+try {
+  // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+  secureStoreModule = require('expo-secure-store');
+} catch {
+  secureStoreModule = null;
+}
+
+const referenceDay = new Date();
+referenceDay.setHours(0, 0, 0, 0);
+const isoDay0 = toISODate(referenceDay);
+const isoDay1 = toISODate(addDays(referenceDay, 1));
+const isoDay2 = toISODate(addDays(referenceDay, 2));
+const todayWeekday = ((referenceDay.getDay() + 6) % 7) as WeekdayIndex;
+
 const initialState: AppDataState = {
+  currentStableId: 'stable-1',
+  farms: [
+    { id: 'farm-1', name: 'Gillmyra gård', location: 'Täby', hasIndoorArena: true, arenaNote: '20x60 · bokningsbar' },
+  ],
+  stables: [
+    { id: 'stable-1', name: 'Stall A', location: 'Täby gård', farmId: 'farm-1' },
+    { id: 'stable-2', name: 'Stall B', location: 'Täby gård', farmId: 'farm-1' },
+  ],
+  horses: [
+    { id: 'horse-1', name: 'Cinder', stableId: 'stable-1', ownerUserId: 'user-jane', gender: 'mare', age: 10 },
+    { id: 'horse-2', name: 'Kanel', stableId: 'stable-1', ownerUserId: 'user-jane', gender: 'mare', age: 9 },
+    { id: 'horse-3', name: 'Atlas', stableId: 'stable-2', ownerUserId: 'user-karl', gender: 'gelding', age: 8 },
+  ],
   currentUserId: 'user-jane',
   users: {
     'user-jane': {
       id: 'user-jane',
       name: 'Jane Doe',
+      email: 'jane@example.com',
+      membership: [
+        { stableId: 'stable-1', role: 'admin', access: 'owner', horseIds: ['horse-1', 'horse-2'], riderRole: 'owner' },
+        { stableId: 'stable-2', role: 'staff', access: 'edit' },
+      ],
       horses: ['Cinder', 'Kanel'],
       location: 'Täby, Stockholm',
       phone: '+46 70-000 00 00',
       responsibilities: ['Foder', 'Kvällspass'],
       defaultPasses: [
-        { weekday: 0, slot: 'Morning' },
-        { weekday: 0, slot: 'Evening' },
+        { weekday: todayWeekday, slot: 'Morning' },
+        { weekday: todayWeekday, slot: 'Evening' },
       ],
       awayNotices: [
-        { id: 'away-1', start: '2025-03-13', end: '2025-03-14', note: 'Träningsläger med Cinder' },
-        { id: 'away-2', start: '2025-03-22', end: '2025-03-22', note: 'Semester' },
+        {
+          id: 'away-1',
+          start: toISODate(addDays(referenceDay, 14)),
+          end: toISODate(addDays(referenceDay, 15)),
+          note: 'Träningsläger med Cinder',
+        },
+        { id: 'away-2', start: toISODate(addDays(referenceDay, 24)), end: toISODate(addDays(referenceDay, 24)), note: 'Semester' },
       ],
       avatar: require('@/assets/images/dummy-avatar.png'),
     },
     'user-karl': {
       id: 'user-karl',
       name: 'Karl Johansson',
+      email: 'karl@example.com',
+      membership: [{ stableId: 'stable-2', role: 'staff' }],
       horses: ['Atlas'],
       location: 'Täby, Stockholm',
       phone: '+46 72-111 11 11',
       responsibilities: ['Lunchpass'],
-      defaultPasses: [{ weekday: 0, slot: 'Lunch' }],
+      defaultPasses: [{ weekday: todayWeekday, slot: 'Lunch' }],
       awayNotices: [],
       avatar: require('@/assets/images/dummy-avatar.png'),
     },
@@ -321,13 +550,14 @@ const initialState: AppDataState = {
       id: 'alert-1',
       message: 'Ingen parkering vid containern idag.',
       type: 'critical',
-      createdAt: '2025-03-08T06:30:00Z',
+      createdAt: new Date().toISOString(),
     },
   ],
   assignments: [
     {
       id: 'assign-1',
-      date: '2025-03-10',
+      stableId: 'stable-1',
+      date: isoDay0,
       label: 'Morgon',
       slot: 'Morning',
       icon: 'sun',
@@ -338,7 +568,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-2',
-      date: '2025-03-10',
+      stableId: 'stable-1',
+      date: isoDay0,
       label: 'Lunch',
       slot: 'Lunch',
       icon: 'clock',
@@ -349,7 +580,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-3',
-      date: '2025-03-10',
+      stableId: 'stable-1',
+      date: isoDay0,
       label: 'Kväll',
       slot: 'Evening',
       icon: 'moon',
@@ -360,7 +592,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-4',
-      date: '2025-03-11',
+      stableId: 'stable-2',
+      date: isoDay1,
       label: 'Morgon',
       slot: 'Morning',
       icon: 'sun',
@@ -371,7 +604,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-5',
-      date: '2025-03-11',
+      stableId: 'stable-2',
+      date: isoDay1,
       label: 'Lunch',
       slot: 'Lunch',
       icon: 'clock',
@@ -381,7 +615,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-6',
-      date: '2025-03-11',
+      stableId: 'stable-2',
+      date: isoDay1,
       label: 'Kväll',
       slot: 'Evening',
       icon: 'moon',
@@ -392,7 +627,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-7',
-      date: '2025-03-12',
+      stableId: 'stable-1',
+      date: isoDay2,
       label: 'Morgon',
       slot: 'Morning',
       icon: 'sun',
@@ -402,7 +638,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-8',
-      date: '2025-03-12',
+      stableId: 'stable-1',
+      date: isoDay2,
       label: 'Lunch',
       slot: 'Lunch',
       icon: 'clock',
@@ -412,7 +649,8 @@ const initialState: AppDataState = {
     },
     {
       id: 'assign-9',
-      date: '2025-03-12',
+      stableId: 'stable-1',
+      date: isoDay2,
       label: 'Kväll',
       slot: 'Evening',
       icon: 'moon',
@@ -534,13 +772,15 @@ const initialState: AppDataState = {
   dayEvents: [
     {
       id: 'day-1',
-      date: '2025-03-11',
+      stableId: 'stable-1',
+      date: isoDay1,
       label: 'Hovslagare bortrest',
       tone: 'farrierAway',
     },
     {
       id: 'day-2',
-      date: '2025-03-12',
+      stableId: 'stable-1',
+      date: isoDay2,
       label: 'Ryttare bortrest',
       tone: 'riderAway',
     },
@@ -549,14 +789,18 @@ const initialState: AppDataState = {
     {
       id: 'paddock-1',
       name: 'Hage 1',
+      stableId: 'stable-1',
       horseNames: ['Cinder', 'Atlas'],
       updatedAt: new Date().toISOString(),
+      season: 'summer',
     },
     {
       id: 'paddock-2',
       name: 'Hage 2',
+      stableId: 'stable-1',
       horseNames: ['Kanel'],
       updatedAt: new Date().toISOString(),
+      season: 'yearRound',
     },
   ],
 };
@@ -678,6 +922,12 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         },
       };
     }
+    case 'USER_SET': {
+      if (!state.users[action.payload.id]) {
+        return state;
+      }
+      return { ...state, currentUserId: action.payload.id };
+    }
     case 'PADDOCK_UPSERT': {
       const existingIndex = state.paddocks.findIndex((paddock) => paddock.id === action.payload.id);
       if (existingIndex >= 0) {
@@ -699,20 +949,109 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         paddocks: state.paddocks.filter((paddock) => paddock.id !== action.payload.id),
       };
     }
+    case 'STATE_HYDRATE': {
+      return {
+        ...state,
+        ...action.payload,
+      };
+    }
+    case 'STABLE_SET': {
+      const target = state.stables.find((stable) => stable.id === action.payload.stableId);
+      if (!target) {
+        return state;
+      }
+      return {
+        ...state,
+        currentStableId: target.id,
+      };
+    }
+    case 'FARM_UPSERT': {
+      const existingIndex = state.farms.findIndex((farm) => farm.id === action.payload.id);
+      const farms = [...state.farms];
+      if (existingIndex >= 0) {
+        farms[existingIndex] = action.payload;
+      } else {
+        farms.push(action.payload);
+      }
+      return { ...state, farms };
+    }
+    case 'FARM_DELETE': {
+      return {
+        ...state,
+        farms: state.farms.filter((farm) => farm.id !== action.payload.id),
+        stables: state.stables.map((stable) =>
+          stable.farmId === action.payload.id ? { ...stable, farmId: undefined } : stable,
+        ),
+      };
+    }
+    case 'STABLE_UPSERT': {
+      const existingIndex = state.stables.findIndex((stable) => stable.id === action.payload.id);
+      let stables = state.stables;
+      if (existingIndex >= 0) {
+        stables = [...state.stables];
+        stables[existingIndex] = action.payload;
+      } else {
+        stables = [...state.stables, action.payload];
+      }
+      return {
+        ...state,
+        stables,
+        currentStableId: action.payload.id,
+      };
+    }
+    case 'STABLE_DELETE': {
+      const stables = state.stables.filter((stable) => stable.id !== action.payload.id);
+      const nextStableId = state.currentStableId === action.payload.id && stables[0] ? stables[0].id : state.currentStableId;
+      return {
+        ...state,
+        stables,
+        currentStableId: nextStableId,
+        assignments: state.assignments.filter((assignment) => assignment.stableId !== action.payload.id),
+        dayEvents: state.dayEvents.filter((event) => event.stableId !== action.payload.id),
+        paddocks: state.paddocks.filter((paddock) => paddock.stableId !== action.payload.id),
+        horses: state.horses.filter((horse) => horse.stableId !== action.payload.id),
+      };
+    }
+    case 'HORSE_UPSERT': {
+      const existingIndex = state.horses.findIndex((horse) => horse.id === action.payload.id);
+      const horses = [...state.horses];
+      if (existingIndex >= 0) {
+        horses[existingIndex] = action.payload;
+      } else {
+        horses.push(action.payload);
+      }
+      return {
+        ...state,
+        horses,
+      };
+    }
+    case 'HORSE_DELETE': {
+      return {
+        ...state,
+        horses: state.horses.filter((horse) => horse.id !== action.payload.id),
+      };
+    }
     default:
       return state;
+    }
   }
-}
 
 function findNextAssignedAssignment(state: AppDataState, userId: string) {
+  const stableId = state.currentStableId;
   return state.assignments
-    .filter((assignment) => assignment.assigneeId === userId && assignment.status === 'assigned')
+    .filter(
+      (assignment) =>
+        assignment.assigneeId === userId &&
+        assignment.status === 'assigned' &&
+        assignment.stableId === stableId,
+    )
     .sort((a, b) => compareAssignmentDateTime(a, b))[0];
 }
 
 function findNextOpenAssignment(state: AppDataState) {
+  const stableId = state.currentStableId;
   return state.assignments
-    .filter((assignment) => assignment.status === 'open')
+    .filter((assignment) => assignment.status === 'open' && assignment.stableId === stableId)
     .sort((a, b) => compareAssignmentDateTime(a, b))[0];
 }
 
@@ -806,8 +1145,91 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     stateRef.current = state;
   }, [state]);
 
+  const ensureAccess = React.useCallback(
+    (stableId: string, minimum: StableMembership['access']): ActionResult => {
+      const current = stateRef.current;
+      const user = current.users[current.currentUserId];
+      const membership = user?.membership.find((m) => m.stableId === stableId);
+      if (!membership) {
+        return { success: false, reason: 'Ingen behörighet till stallet.' };
+      }
+      const level = accessLevel[membership.access ?? 'view'];
+      if (level < accessLevel[minimum]) {
+        return { success: false, reason: 'Behörighet saknas för den här åtgärden.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const loadPersisted = React.useCallback(async () => {
+    // Prefer localStorage on web
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(PERSIST_KEY);
+      if (raw) return raw;
+    }
+    if (secureStoreModule?.getItemAsync) {
+      try {
+        return await secureStoreModule.getItemAsync(PERSIST_KEY);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }, []);
+
+  const savePersisted = React.useCallback(async (value: string) => {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(PERSIST_KEY, value);
+    }
+    if (secureStoreModule?.setItemAsync) {
+      try {
+        await secureStoreModule.setItemAsync(PERSIST_KEY, value);
+      } catch (error) {
+        console.warn('Kunde inte spara data', error);
+      }
+    }
+  }, []);
+
+  // Hydrate from storage
   React.useEffect(() => {
-    const todayIso = new Date().toISOString().split('T')[0];
+    (async () => {
+      try {
+        const raw = await loadPersisted();
+        if (!raw) return;
+        const parsed = JSON.parse(raw) as Partial<AppDataState>;
+        dispatch({
+          type: 'STATE_HYDRATE',
+          payload: parsed,
+        });
+      } catch (error) {
+        console.warn('Kunde inte läsa sparad data', error);
+      }
+    })();
+  }, [loadPersisted]);
+
+  // Persist key slices
+  React.useEffect(() => {
+    const payload: Partial<AppDataState> = {
+      farms: state.farms,
+      stables: state.stables,
+      horses: state.horses,
+      paddocks: state.paddocks,
+      users: state.users,
+      currentStableId: state.currentStableId,
+      currentUserId: state.currentUserId,
+    };
+    (async () => {
+      try {
+        await savePersisted(JSON.stringify(payload));
+      } catch (error) {
+        console.warn('Kunde inte spara data', error);
+      }
+    })();
+  }, [savePersisted, state.farms, state.stables, state.horses, state.paddocks, state.users, state.currentStableId]);
+
+  React.useEffect(() => {
+    const todayIso = toISODate(new Date());
     const users = Object.values(state.users).sort((a, b) => a.id.localeCompare(b.id));
 
     state.assignments.forEach((assignment) => {
@@ -887,22 +1309,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [state.assignments, state.users]);
 
   const derived = React.useMemo(() => {
-    const { assignments, alerts, currentUserId } = state;
-    const completed = assignments.filter((assignment) => assignment.status === 'completed').length;
-    const open = assignments.filter((assignment) => assignment.status === 'open').length;
+    const { assignments, alerts, currentUserId, currentStableId } = state;
+    const membership = state.users[currentUserId]?.membership.find((m) => m.stableId === currentStableId);
+    const currentAccess = membership?.access ?? 'view';
+    const activeAssignments = assignments.filter((assignment) => assignment.stableId === currentStableId);
+    const completed = activeAssignments.filter((assignment) => assignment.status === 'completed').length;
+    const open = activeAssignments.filter((assignment) => assignment.status === 'open').length;
     const summary = {
-      total: assignments.length,
+      total: activeAssignments.length,
       completed,
       open,
       alerts: alerts.length,
-      openSlotLabels: formatSlotList(assignments, 'open'),
-      nextUpdateLabel: formatNextUpdate(assignments),
+      openSlotLabels: formatSlotList(activeAssignments, 'open'),
+      nextUpdateLabel: formatNextUpdate(activeAssignments),
     };
 
     const loggableAssignment = findNextAssignedAssignment(state, currentUserId);
     const claimableAssignment = findNextOpenAssignment(state);
 
-    const upcomingAssignmentsForUser = assignments
+    const upcomingAssignmentsForUser = activeAssignments
       .filter(
         (assignment) =>
           assignment.assigneeId === currentUserId || assignment.status === 'open',
@@ -917,6 +1342,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       upcomingAssignmentsForUser,
       nextAssignmentForUser: loggableAssignment ?? claimableAssignment,
       recentActivities: state.assignmentHistory.slice(0, 5),
+      membership,
+      currentAccess,
     };
   }, [state]);
 
@@ -1020,9 +1447,89 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const declineAssignment = React.useCallback(
+    (assignmentId: string): ActionResult<Assignment> => {
+      const current = stateRef.current;
+      const assignment = current.assignments.find((item) => item.id === assignmentId);
+      if (!assignment) {
+        return { success: false, reason: 'Passet kunde inte hittas.' };
+      }
+
+      if (assignment.status !== 'assigned' || assignment.assigneeId !== current.currentUserId) {
+        return { success: false, reason: 'Du kan bara släppa pass som står på dig.' };
+      }
+
+      const declined = new Set(assignment.declinedByUserIds ?? []);
+      declined.add(current.currentUserId);
+
+      dispatch({
+        type: 'ASSIGNMENT_UPDATE',
+        payload: {
+          id: assignment.id,
+          updates: {
+            status: 'open',
+            assigneeId: undefined,
+            assignedVia: undefined,
+            declinedByUserIds: Array.from(declined),
+          },
+        },
+      });
+
+      return {
+        success: true,
+        data: {
+          ...assignment,
+          status: 'open',
+          assigneeId: undefined,
+          assignedVia: undefined,
+          declinedByUserIds: Array.from(declined),
+        },
+      };
+    },
+    [],
+  );
+
+  const completeAssignment = React.useCallback(
+    (assignmentId: string): ActionResult<Assignment> => {
+      const current = stateRef.current;
+      const assignment = current.assignments.find((item) => item.id === assignmentId);
+      if (!assignment) {
+        return { success: false, reason: 'Passet kunde inte hittas.' };
+      }
+
+      if (assignment.status !== 'assigned' || assignment.assigneeId !== current.currentUserId) {
+        return { success: false, reason: 'Du kan bara markera egna pass som klara.' };
+      }
+
+      const completedAt = new Date().toISOString();
+
+      dispatch({
+        type: 'ASSIGNMENT_UPDATE',
+        payload: {
+          id: assignment.id,
+          updates: {
+            status: 'completed',
+            completedAt,
+          },
+        },
+      });
+
+      return {
+        success: true,
+        data: {
+          ...assignment,
+          status: 'completed',
+          completedAt,
+        },
+      };
+    },
+    [],
+  );
+
   const createAssignment = React.useCallback(
     (input: CreateAssignmentInput): ActionResult<Assignment> => {
       const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
       if (!input.date) {
         return { success: false, reason: 'Datum måste anges.' };
       }
@@ -1036,6 +1543,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const assignment: Assignment = {
         id: `assign-${Date.now()}`,
         date: input.date,
+        stableId,
         label,
         slot,
         icon: slotIcons[slot],
@@ -1069,6 +1577,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       if (input.date && input.date !== existing.date) {
         updates.date = input.date;
+      }
+
+      if (input.stableId && input.stableId !== existing.stableId) {
+        updates.stableId = input.stableId;
       }
 
       if (slotChanged) {
@@ -1227,6 +1739,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     (input: UpsertPaddockInput): ActionResult<Paddock> => {
       const current = stateRef.current;
       const name = input.name.trim();
+      const stableId = input.stableId || current.currentStableId;
+
+      const accessCheck = ensureAccess(stableId, 'edit');
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
 
       if (!name) {
         return { success: false, reason: 'Hagen måste ha ett namn.' };
@@ -1241,13 +1759,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const horseNames = normalizeHorseNames(input.horseNames);
       const image =
         input.image === null ? undefined : input.image ?? existing?.image;
+      const season = input.season ?? existing?.season ?? 'yearRound';
 
       const paddock: Paddock = {
         id,
         name,
+        stableId,
         horseNames,
         image,
         updatedAt,
+        season,
       };
 
       dispatch({ type: 'PADDOCK_UPSERT', payload: paddock });
@@ -1267,6 +1788,244 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return { success: true };
   }, []);
 
+  const setCurrentStable = React.useCallback((stableId: string) => {
+    dispatch({ type: 'STABLE_SET', payload: { stableId } });
+  }, []);
+
+  const upsertFarm = React.useCallback(
+    (input: UpsertFarmInput): ActionResult<Farm> => {
+      const name = input.name.trim();
+      if (!name) {
+        return { success: false, reason: 'Gården måste ha ett namn.' };
+      }
+      const id = input.id ?? `farm-${Date.now()}`;
+      const farm: Farm = {
+        id,
+        name,
+        location: input.location?.trim() || undefined,
+        hasIndoorArena: input.hasIndoorArena,
+        arenaNote: input.arenaNote?.trim() || undefined,
+      };
+      dispatch({ type: 'FARM_UPSERT', payload: farm });
+      return { success: true, data: farm };
+    },
+    [],
+  );
+
+  const deleteFarm = React.useCallback((farmId: string): ActionResult => {
+    const current = stateRef.current;
+    const exists = current.farms.find((farm) => farm.id === farmId);
+    if (!exists) {
+      return { success: false, reason: 'Gården kunde inte hittas.' };
+    }
+    dispatch({ type: 'FARM_DELETE', payload: { id: farmId } });
+    return { success: true };
+  }, []);
+
+  const upsertStable = React.useCallback(
+    (input: UpsertStableInput): ActionResult<Stable> => {
+      if (input.id) {
+        const accessCheck = ensureAccess(input.id, 'owner');
+        if (!accessCheck.success) {
+          return accessCheck;
+        }
+      }
+      const id = input.id ?? `stable-${Date.now()}`;
+      const stable: Stable = {
+        id,
+        name: input.name.trim(),
+        location: input.location?.trim() || undefined,
+        farmId: input.farmId,
+      };
+
+      if (!stable.name) {
+        return { success: false, reason: 'Stallet måste ha ett namn.' };
+      }
+
+      dispatch({ type: 'STABLE_UPSERT', payload: stable });
+
+      // ensure current user is admin of new stable
+      const current = stateRef.current;
+      const user = current.users[current.currentUserId];
+      if (user && !user.membership.some((m) => m.stableId === stable.id)) {
+        dispatch({
+          type: 'USER_UPDATE',
+          payload: {
+            id: user.id,
+            updates: {
+              membership: [...user.membership, { stableId: stable.id, role: 'admin' }],
+            },
+          },
+        });
+      }
+
+      return { success: true, data: stable };
+    },
+    [],
+  );
+
+  const deleteStable = React.useCallback((stableId: string): ActionResult => {
+    const accessCheck = ensureAccess(stableId, 'owner');
+    if (!accessCheck.success) {
+      return accessCheck;
+    }
+    const current = stateRef.current;
+    const exists = current.stables.find((stable) => stable.id === stableId);
+    if (!exists) {
+      return { success: false, reason: 'Stallet kunde inte hittas.' };
+    }
+    dispatch({ type: 'STABLE_DELETE', payload: { id: stableId } });
+    return { success: true };
+  }, []);
+
+  const upsertHorse = React.useCallback(
+    (input: UpsertHorseInput): ActionResult<Horse> => {
+      const accessCheck = ensureAccess(input.stableId, 'edit');
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const name = input.name.trim();
+      if (!name) {
+        return { success: false, reason: 'Hästen måste ha ett namn.' };
+      }
+      const id = input.id ?? `horse-${Date.now()}`;
+      const horse: Horse = {
+        id,
+        name,
+        stableId: input.stableId,
+        ownerUserId: input.ownerUserId,
+        gender: input.gender,
+        age: input.age,
+        note: input.note?.trim() || undefined,
+      };
+      dispatch({ type: 'HORSE_UPSERT', payload: horse });
+      return { success: true, data: horse };
+    },
+    [],
+  );
+
+  const deleteHorse = React.useCallback((horseId: string): ActionResult => {
+    const current = stateRef.current;
+    const existing = current.horses.find((horse) => horse.id === horseId);
+    if (!existing) {
+      return { success: false, reason: 'Hästen kunde inte hittas.' };
+    }
+    const accessCheck = ensureAccess(existing.stableId, 'edit');
+    if (!accessCheck.success) {
+      return accessCheck;
+    }
+    dispatch({ type: 'HORSE_DELETE', payload: { id: horseId } });
+    return { success: true };
+  }, []);
+
+  const addMember = React.useCallback(
+    (input: AddMemberInput): ActionResult<UserProfile> => {
+      const accessCheck = ensureAccess(input.stableId, 'edit');
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const name = input.name.trim();
+      const email = input.email.trim();
+      if (!name) {
+        return { success: false, reason: 'Namn krävs.' };
+      }
+      if (!email) {
+        return { success: false, reason: 'E-post krävs.' };
+      }
+      const id = `user-${Date.now()}`;
+      const membership: StableMembership[] = [
+        {
+          stableId: input.stableId,
+          role: input.role,
+          customRole: input.customRole?.trim() || undefined,
+          access: input.access ?? 'view',
+          horseIds: input.horseIds,
+          riderRole: input.riderRole ?? 'medryttare',
+        },
+      ];
+      const user: UserProfile = {
+        id,
+        name,
+        email,
+        membership,
+        horses: [],
+        location: input.location ?? 'Okänd plats',
+        phone: input.phone ?? '',
+        responsibilities: [],
+        defaultPasses: [],
+        awayNotices: [],
+      };
+      dispatch({ type: 'USER_UPDATE', payload: { id, updates: user } });
+      return { success: true, data: user };
+    },
+    [],
+  );
+
+  const updateMemberRole = React.useCallback(
+    (input: UpdateMemberRoleInput): ActionResult<UserProfile> => {
+      const accessCheck = ensureAccess(input.stableId, 'edit');
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const current = stateRef.current;
+      const user = current.users[input.userId];
+      if (!user) {
+        return { success: false, reason: 'Användaren hittades inte.' };
+      }
+      const membership = user.membership.map((entry) =>
+        entry.stableId === input.stableId
+          ? {
+              ...entry,
+              role: input.role,
+              customRole: input.customRole?.trim() || entry.customRole,
+              access: input.access ?? entry.access,
+              horseIds: input.horseIds ?? entry.horseIds,
+              riderRole: input.riderRole ?? entry.riderRole,
+            }
+          : entry,
+      );
+      dispatch({
+        type: 'USER_UPDATE',
+        payload: {
+          id: user.id,
+          updates: { membership },
+        },
+      });
+      return { success: true, data: { ...user, membership } };
+    },
+    [],
+  );
+
+  const removeMemberFromStable = React.useCallback(
+    (userId: string, stableId: string): ActionResult<UserProfile> => {
+      const accessCheck = ensureAccess(stableId, 'owner');
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const current = stateRef.current;
+      const user = current.users[userId];
+      if (!user) {
+        return { success: false, reason: 'Användaren hittades inte.' };
+      }
+      const membership = user.membership.filter((entry) => entry.stableId !== stableId);
+      dispatch({
+        type: 'USER_UPDATE',
+        payload: { id: userId, updates: { membership } },
+      });
+      return { success: true, data: { ...user, membership } };
+    },
+    [],
+  );
+
+  const setCurrentUser = React.useCallback((userId: string): ActionResult => {
+    const current = stateRef.current;
+    if (!current.users[userId]) {
+      return { success: false, reason: 'Användaren finns inte.' };
+    }
+    dispatch({ type: 'USER_SET', payload: { id: userId } });
+    return { success: true };
+  }, []);
+
   const value = React.useMemo<AppDataContextValue>(
     () => ({
       state,
@@ -1275,6 +2034,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         logNextAssignment,
         claimNextOpenAssignment,
         claimAssignment,
+        declineAssignment,
+        completeAssignment,
         createAssignment,
         updateAssignment,
         deleteAssignment,
@@ -1284,6 +2045,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         deletePaddock,
         markConversationRead,
         sendConversationMessage,
+        setCurrentStable,
+        upsertFarm,
+        deleteFarm,
+        upsertStable,
+        deleteStable,
+        upsertHorse,
+        deleteHorse,
+        addMember,
+        updateMemberRole,
+        removeMemberFromStable,
+        setCurrentUser,
       },
     }),
     [
@@ -1292,6 +2064,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       logNextAssignment,
       claimNextOpenAssignment,
       claimAssignment,
+      declineAssignment,
+      completeAssignment,
       createAssignment,
       updateAssignment,
       deleteAssignment,
@@ -1301,6 +2075,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       deletePaddock,
       markConversationRead,
       sendConversationMessage,
+      setCurrentStable,
+      upsertFarm,
+      deleteFarm,
+      upsertStable,
+      deleteStable,
+      upsertHorse,
+      deleteHorse,
+      addMember,
+      updateMemberRole,
+      removeMemberFromStable,
+      setCurrentUser,
     ],
   );
 

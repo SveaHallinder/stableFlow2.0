@@ -12,18 +12,44 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
-import { color, radius, space } from '@/design/tokens';
+import { color, radius } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card } from '@/components/Primitives';
+import { Card, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
-import type { Assignment, AssignmentStatus, UserProfile } from '@/context/AppDataContext';
+import type {
+  Assignment,
+  AssignmentSlot,
+  AssignmentStatus,
+  DefaultPass,
+  UserProfile,
+  WeekdayIndex,
+} from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 const radii = theme.radii;
 
 const WEEK_DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const DEFAULT_WEEKDAYS: { label: string; value: WeekdayIndex }[] = [
+  { label: 'Mån', value: 0 },
+  { label: 'Tis', value: 1 },
+  { label: 'Ons', value: 2 },
+  { label: 'Tor', value: 3 },
+  { label: 'Fre', value: 4 },
+  { label: 'Lör', value: 5 },
+  { label: 'Sön', value: 6 },
+];
+
+const DEFAULT_SLOTS: { label: string; value: AssignmentSlot }[] = [
+  { label: 'Morgon', value: 'Morning' },
+  { label: 'Lunch', value: 'Lunch' },
+  { label: 'Kväll', value: 'Evening' },
+];
+
+function hasDefaultPass(passes: DefaultPass[], weekday: WeekdayIndex, slot: AssignmentSlot) {
+  return passes.some((entry) => entry.weekday === weekday && entry.slot === slot);
+}
 
 const assignmentStatusStyles: Record<AssignmentStatus, { label: string; background: string; text: string }> = {
   open: { label: 'Ledigt', background: theme.tints.warning, text: theme.colors.warning },
@@ -160,6 +186,46 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          <Card tone="muted" style={styles.defaultPassCard}>
+            <View style={styles.defaultPassHeader}>
+              <Text style={styles.defaultPassTitle}>Standardpass</Text>
+              <Text style={styles.defaultPassSubtitle}>
+                Dessa markeras automatiskt som dina i schemat – tryck “Kan inte” på en dag du inte kan.
+              </Text>
+            </View>
+
+            <View style={styles.defaultPassGrid}>
+              {DEFAULT_SLOTS.map((slot) => (
+                <View key={slot.value} style={styles.defaultPassRow}>
+                  <Text style={styles.defaultPassRowLabel}>{slot.label}</Text>
+                  <View style={styles.defaultPassRowChips}>
+                    {DEFAULT_WEEKDAYS.map((day) => {
+                      const active = hasDefaultPass(currentUser.defaultPasses, day.value, slot.value);
+                      return (
+                        <TouchableOpacity
+                          key={`${slot.value}-${day.value}`}
+                          onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
+                          activeOpacity={0.85}
+                        >
+                          <Pill active={active} style={styles.defaultPassChip}>
+                            <Text
+                              style={[
+                                styles.defaultPassChipText,
+                                active && styles.defaultPassChipTextActive,
+                              ]}
+                            >
+                              {day.label}
+                            </Text>
+                          </Pill>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
+            </View>
+          </Card>
+
           <View style={styles.sectionBlock}>
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleGroup}>
@@ -167,7 +233,7 @@ export default function ProfileScreen() {
                 <View style={styles.sectionDot} />
                 <Text style={styles.sectionCount}>{upcomingAssignments.length}</Text>
               </View>
-              <TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push('/calendar?view=mine')}>
                 <Text style={styles.sectionAction}>Visa schema</Text>
               </TouchableOpacity>
             </View>
@@ -355,7 +421,7 @@ type CalendarMetadata = {
   year: number;
   month: number;
   title: string;
-  days: Array<number | null>;
+  days: (number | null)[];
   today: number | null;
   ridingDays: Set<number>;
   awayDays: Set<number>;
@@ -372,7 +438,7 @@ function buildCalendarMetadata(assignments: Assignment[], user: UserProfile): Ca
   const startDay = new Date(year, month, 1).getDay();
   const startIndex = startDay === 0 ? 6 : startDay - 1; // Monday first
 
-  const days: Array<number | null> = [];
+  const days: (number | null)[] = [];
   for (let i = 0; i < startIndex; i++) {
     days.push(null);
   }
@@ -583,6 +649,56 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     backgroundColor: surfacePresets.section,
     borderRadius: radius.xl,
+  },
+  defaultPassCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    gap: 14,
+    borderWidth: 0,
+    backgroundColor: palette.surfaceTint,
+  },
+  defaultPassHeader: {
+    gap: 6,
+  },
+  defaultPassTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  defaultPassSubtitle: {
+    fontSize: 12,
+    color: palette.secondaryText,
+    lineHeight: 17,
+  },
+  defaultPassGrid: {
+    gap: 12,
+  },
+  defaultPassRow: {
+    gap: 10,
+  },
+  defaultPassRowLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  defaultPassRowChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  defaultPassChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  defaultPassChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  defaultPassChipTextActive: {
+    color: palette.inverseText,
   },
   statsRow: {
     flexDirection: 'row',

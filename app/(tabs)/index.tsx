@@ -11,10 +11,11 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -26,7 +27,7 @@ import BroomIcon from '@/assets/images/broom.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { quickActionVariants, systemPalette } from '@/design/system';
-import { Card } from '@/components/Primitives';
+import { Card, HeaderIconButton, SearchBar } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
@@ -37,6 +38,7 @@ import {
   formatPrimaryDay,
   formatPrimaryDate,
   formatSecondaryLabel,
+  toISODate,
 } from '@/lib/schedule';
 
 const palette = theme.colors;
@@ -62,6 +64,21 @@ type QuickAction = {
   highlight?: boolean;
 };
 
+const tourSteps = [
+  {
+    title: 'Överblick',
+    text: 'Se viktiga aviseringar, dagens läge och snabbåtgärder för pass, lediga pass, händelser och hagar.',
+  },
+  {
+    title: 'Schema & standardpass',
+    text: 'Kolla dina rid-/stallpass, markera “kan inte” eller “klart”, och välj standarddagar så schemat fylls automatiskt.',
+  },
+  {
+    title: 'Hagar & kartor',
+    text: 'Lägg till hagar med bild/karta och skriv ut listor så alla ser var hästarna går – sommar, vinter eller året runt.',
+  },
+];
+
 const quickActionStyles: Record<
   QuickActionTint,
   { gradient: [string, string]; icon: string; accentBorder: string; shadow: string }
@@ -81,13 +98,33 @@ export default function OverviewScreen() {
     posts: postItems,
     currentUserId,
     paddocks,
+    stables,
+    currentStableId,
+    users,
   } = state;
   const toast = useToast();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const currentStable = stables.find((stable) => stable.id === currentStableId);
+  const { tour } = useLocalSearchParams<{ tour?: string }>();
+  const activeAssignments = React.useMemo(
+    () => assignments.filter((assignment) => assignment.stableId === currentStableId),
+    [assignments, currentStableId],
+  );
+  const activePaddocks = React.useMemo(
+    () => paddocks.filter((paddock) => paddock.stableId === currentStableId),
+    [paddocks, currentStableId],
+  );
 
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
   const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
   const [eventText, setEventText] = React.useState('');
+  const [searchText, setSearchText] = React.useState('');
+  const [searchVisible, setSearchVisible] = React.useState(false);
+  const [tourVisible, setTourVisible] = React.useState(tour === 'intro');
+  const [tourStep, setTourStep] = React.useState(0);
+  const [userSwitchVisible, setUserSwitchVisible] = React.useState(false);
 
   React.useEffect(() => {
     if (eventsModalVisible) {
@@ -95,17 +132,59 @@ export default function OverviewScreen() {
     }
   }, [eventsModalVisible]);
 
+  React.useEffect(() => {
+    if (tour === 'intro') {
+      setTourVisible(true);
+    }
+  }, [tour]);
+
+  const currentUser = users[currentUserId];
+  const userMembership = derived.membership;
+  const currentAccess = derived.currentAccess;
+
   const alertBanner = React.useMemo(
     () => alerts.find((alert) => alert.type === 'critical'),
     [alerts],
   );
   const latestEvent = alerts[0];
-  const groupedDays = React.useMemo(() => groupAssignmentsByDay(assignments), [assignments]);
-  const primaryDayGroup = groupedDays[0];
-  const secondaryDayGroups = groupedDays.slice(1, 2);
+  const recentEvents = alerts.slice(0, 3);
+
+  const closeTour = React.useCallback(() => {
+    setTourVisible(false);
+    setTourStep(0);
+    router.replace('/'); // rensa ev. query
+  }, [router]);
+
+  const nextTour = React.useCallback(() => {
+    if (tourStep >= tourSteps.length - 1) {
+      closeTour();
+      return;
+    }
+    setTourStep((prev) => Math.min(tourSteps.length - 1, prev + 1));
+  }, [closeTour, tourStep]);
+  const todayIso = toISODate(new Date());
+  const groupedDays = React.useMemo(
+    () => groupAssignmentsByDay(activeAssignments),
+    [activeAssignments],
+  );
+  const upcomingDayGroups = React.useMemo(
+    () => groupedDays.filter((day) => day.isoDate >= todayIso),
+    [groupedDays, todayIso],
+  );
+  const calendarPreviewGroups = React.useMemo(
+    () => upcomingDayGroups.slice(0, 7),
+    [upcomingDayGroups],
+  );
+  const primaryDayGroup = calendarPreviewGroups[0];
+  const secondaryDayGroups = calendarPreviewGroups.slice(1, 3);
+  const todayDayGroup = React.useMemo(
+    () => groupedDays.find((day) => day.isoDate === todayIso),
+    [groupedDays, todayIso],
+  );
 
   const primaryDayLabel = primaryDayGroup ? formatPrimaryDay(primaryDayGroup.date) : '';
   const primaryDateLabel = primaryDayGroup ? formatPrimaryDate(primaryDayGroup.date) : '';
+  const primaryWeekNumber = primaryDayGroup ? getISOWeekNumber(primaryDayGroup.date) : undefined;
 
   const primaryChips = React.useMemo<StatusChip[]>(() => {
     if (!primaryDayGroup) {
@@ -124,21 +203,37 @@ export default function OverviewScreen() {
     [secondaryDayGroups],
   );
 
-  const myAssignedUpcoming = React.useMemo(
-    () =>
-      derived.upcomingAssignmentsForUser.filter(
-        (assignment) => assignment.assigneeId === currentUserId,
-      ),
-    [derived.upcomingAssignmentsForUser, currentUserId],
-  );
+  const myAssignedUpcoming = React.useMemo(() => {
+    return assignments
+      .filter(
+        (assignment) =>
+          assignment.assigneeId === currentUserId &&
+          assignment.status === 'assigned' &&
+          assignment.date >= todayIso,
+      )
+      .sort(
+        (a, b) =>
+          new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
+      );
+  }, [assignments, currentUserId, todayIso]);
 
   const myNextAssignment = myAssignedUpcoming[0];
+  const openUpcomingCount = React.useMemo(
+    () =>
+      calendarPreviewGroups.reduce(
+        (total, day) =>
+          total +
+          day.assignments.filter((assignment) => assignment.status === 'open').length,
+        0,
+      ),
+    [calendarPreviewGroups],
+  );
 
   const paddockSummary = React.useMemo(() => {
-    const paddockCount = paddocks.length;
-    const horseCount = paddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
+    const paddockCount = activePaddocks.length;
+    const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
     return { paddockCount, horseCount };
-  }, [paddocks]);
+  }, [activePaddocks]);
 
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
@@ -155,18 +250,18 @@ export default function OverviewScreen() {
       {
         id: 'open-passes',
         label: 'Lediga pass',
-        caption: derived.summary.open
-          ? `${derived.summary.open} lediga pass\nÖppna schema`
+        caption: openUpcomingCount
+          ? `${openUpcomingCount} lediga pass`
           : 'Alla pass är bemannade\nÖppna schema',
         icon: 'users',
         tint: 'accent',
-        highlight: derived.summary.open > 0,
+        highlight: openUpcomingCount > 0,
       },
       {
         id: 'events',
         label: 'Händelser',
         caption: latestEvent
-          ? `${truncateText(latestEvent.message, 34)}\nLägg till uppdatering`
+          ? `Lägg till uppdatering`
           : 'Lägg till uppdatering\nSe senaste',
         icon: 'alert-triangle',
         tint: 'warning',
@@ -175,7 +270,7 @@ export default function OverviewScreen() {
         id: 'paddocks',
         label: 'Hagar',
         caption: paddockSummary.paddockCount
-          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar\nÖppna & skriv ut`
+          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
           : 'Lägg in hagar\nSkriv ut haglista',
         icon: 'map',
         tint: 'primary',
@@ -185,14 +280,14 @@ export default function OverviewScreen() {
   }, [
     myNextAssignment,
     myAssignedUpcoming.length,
-    derived.summary.open,
+    openUpcomingCount,
     latestEvent,
     paddockSummary,
   ]);
   const isEventValid = eventText.trim().length >= 3;
 
   const todaySummary = React.useMemo(() => {
-    const assignmentsForDay = primaryDayGroup?.assignments ?? [];
+    const assignmentsForDay = todayDayGroup?.assignments ?? [];
     const total = assignmentsForDay.length;
     const completed = assignmentsForDay.filter((assignment) => assignment.status === 'completed').length;
     const open = assignmentsForDay.filter((assignment) => assignment.status === 'open').length;
@@ -203,7 +298,7 @@ export default function OverviewScreen() {
     ).length;
 
     return { total, completed, open, mine };
-  }, [primaryDayGroup, currentUserId]);
+  }, [todayDayGroup, currentUserId]);
 
   const summaryStats = React.useMemo(
     () => [
@@ -240,6 +335,19 @@ export default function OverviewScreen() {
     setPostsExpanded((prev) => !prev);
   }, []);
 
+  const handleUserSwitch = React.useCallback(
+    (userId: string) => {
+      const result = actions.setCurrentUser(userId);
+      if (result.success) {
+        setUserSwitchVisible(false);
+        toast.showToast('Bytte användare.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
   const handleQuickActionPress = React.useCallback(
     (action: QuickAction) => {
       if (action.id === 'my-passes') {
@@ -264,6 +372,18 @@ export default function OverviewScreen() {
   const handlePrimaryAction = React.useCallback(() => {
     router.push('/calendar');
   }, [router]);
+  const handleSearchSubmit = React.useCallback(() => {
+    const query = searchText.trim();
+    if (!query) {
+      toast.showToast('Sök på namn, häst eller pass.', 'info');
+      return;
+    }
+    toast.showToast(`Sökning: ${query}`, 'success');
+    setSearchVisible(false);
+  }, [searchText, toast]);
+  const handleOpenSearch = React.useCallback(() => {
+    setSearchVisible(true);
+  }, []);
 
   const handleSubmitEvent = React.useCallback(() => {
     const details = eventText.trim();
@@ -286,33 +406,123 @@ export default function OverviewScreen() {
         <ScreenHeader
           style={styles.pageHeader}
           title="Dagens överblick"
-          primaryActionLabel="Öppna schema"
-          onPressPrimaryAction={handlePrimaryAction}
-          primaryActionDisabled={false}
+          primaryAction={
+            <View style={styles.headerRight}>
+              <TouchableOpacity style={styles.userChip} onPress={() => setUserSwitchVisible(true)}>
+                <Feather name="user" size={14} color={palette.primaryText} />
+                <Text style={styles.userChipText}>{currentUser?.name ?? 'Okänd'}</Text>
+                <View style={[styles.accessPill, currentAccess === 'owner' && styles.accessPillOwner]}>
+                  <Text style={[styles.accessPillText, currentAccess === 'owner' && styles.accessPillTextOwner]}>
+                    {currentAccess === 'owner' ? 'Full' : currentAccess === 'edit' ? 'Redigera' : 'Läsa'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+              <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
+                <Feather name="search" size={18} color={palette.primaryText} />
+              </HeaderIconButton>
+            </View>
+          }
         />
+        {searchVisible ? (
+          <SearchBar
+            placeholder="Sök personer, hästar, pass..."
+            value={searchText}
+            onChangeText={setSearchText}
+            onSubmitEditing={handleSearchSubmit}
+            returnKeyType="search"
+            autoFocus
+            style={styles.searchBar}
+          />
+        ) : null}
+        <View style={[styles.stableSwitcher, isDesktopWeb && styles.stableSwitcherDesktop]}>
+          <Text style={styles.stableLabel}>Stall</Text>
+          <View style={styles.stableChips}>
+            {stables.map((stable) => {
+              const active = stable.id === currentStableId;
+              return (
+                <TouchableOpacity
+                  key={stable.id}
+                  style={[styles.stableChip, active && styles.stableChipActive]}
+                  onPress={() => actions.setCurrentStable(stable.id)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={[styles.stableChipText, active && styles.stableChipTextActive]}>
+                    {stable.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          {currentStable?.location ? <Text style={styles.stableLocation}>{currentStable.location}</Text> : null}
+        </View>
         <ScrollView
           style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            isDesktopWeb && styles.scrollContentDesktop,
+          ]}
           showsVerticalScrollIndicator={false}
         >
-          {alertBanner && (
-            <Card tone="muted" style={styles.alertCard}>
-              <View style={styles.alertRow}>
-                <Text style={styles.alertLabel}>OBS!</Text>
-                <Text style={styles.alertText}>{alertBanner.message}</Text>
+          {isDesktopWeb ? (
+            <View style={styles.desktopNav}>
+              {[
+                { label: 'Överblick', route: '/' },
+                { label: 'Schema', route: '/calendar' },
+                { label: 'Meddelanden', route: '/messages' },
+                { label: 'Inlägg', route: '/feed' },
+                { label: 'Stall', route: '/stables' },
+                { label: 'Profil', route: '/profile' },
+              ].map((item) => (
+                <TouchableOpacity
+                  key={item.route}
+                  onPress={() => router.push(item.route as any)}
+                  activeOpacity={0.8}
+                  style={styles.desktopNavItem}
+                >
+                  <Text style={styles.desktopNavLabel}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
+
+          {recentEvents.length ? (
+            <Card tone="muted" style={styles.eventsCard}>
+              <View style={styles.eventsHeader}>
+                <Text style={styles.eventsTitle}>Händelser</Text>
+                <Text style={styles.eventsMeta}>{`${alerts.length} totalt`}</Text>
+              </View>
+              <View style={styles.eventsList}>
+                {recentEvents.map((event) => (
+                  <View key={event.id} style={styles.eventRow}>
+                    <View
+                      style={[
+                        styles.eventDot,
+                        { backgroundColor: event.type === 'critical' ? palette.error : palette.primary },
+                      ]}
+                    />
+                    <View style={styles.eventBody}>
+                      <Text style={styles.eventMessage} numberOfLines={1}>
+                        {event.message}
+                      </Text>
+                      <Text style={styles.eventTime}>{formatEventTime(event.createdAt)}</Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             </Card>
-          )}
+          ) : null}
 
           <View style={styles.quickActionGrid}>
             {quickActions.map((action) => (
               <QuickActionCard
                 key={action.id}
                 action={action}
+                isDesktop={isDesktopWeb}
                 onPress={handleQuickActionPress}
               />
             ))}
           </View>
+
 
           <View style={styles.summarySection}>
             <View style={styles.summaryHeader}>
@@ -325,7 +535,7 @@ export default function OverviewScreen() {
                 <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
               </View>
             </View>
-            <View style={styles.summaryTiles}>
+            <View style={[styles.summaryTiles, isDesktopWeb && styles.summaryTilesDesktop]}>
               {summaryStats.map((item) => (
                 <View key={item.id} style={styles.summaryTile}>
                   <Text style={styles.summaryValue}>{item.value}</Text>
@@ -349,44 +559,6 @@ export default function OverviewScreen() {
           </View>
 
           <WeatherPanel />
-
-          {primaryDayGroup && (
-            <Card elevated tone="muted" style={styles.scheduleCard}>
-              <View style={styles.scheduleHeaderRow}>
-                <Text style={styles.scheduleTitle}>Kommande pass</Text>
-                <Text style={styles.scheduleSubtitle}>Vecka 10</Text>
-              </View>
-              <View style={styles.scheduleBody}>
-                <View style={styles.scheduleLeftColumn}>
-                  <View style={styles.scheduleMainDay}>
-                    <Text style={styles.scheduleMainDayName}>{primaryDayLabel}</Text>
-                    <Text style={styles.scheduleMainDate}>{primaryDateLabel}</Text>
-                  </View>
-                  <View style={styles.scheduleMainEvents}>
-                    {primaryChips.map((chip) => (
-                      <ScheduleChip
-                        key={`${primaryDayGroup.isoDate}-${chip.label}`}
-                        {...chip}
-                      />
-                    ))}
-                  </View>
-                </View>
-
-                <View style={styles.scheduleRightColumn}>
-                  {upcomingDays.map((day) => (
-                    <View key={day.id} style={styles.scheduleSecondaryDay}>
-                      <Text style={styles.scheduleSecondaryDayName}>{day.label}</Text>
-                      <View style={styles.scheduleSecondaryEvents}>
-                        {day.items.map((chip) => (
-                          <ScheduleChip key={`${day.id}-${chip.label}`} {...chip} />
-                        ))}
-                      </View>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            </Card>
-          )}
 
           <View style={styles.sectionBlock}>
             <SectionHeader title="Nya meddelanden" count={messageItems.length} />
@@ -502,8 +674,78 @@ export default function OverviewScreen() {
           placeholderTextColor={palette.secondaryText}
           style={[styles.reportInput, styles.reportInputCompact]}
         />
-        <Text style={styles.reportHint}>Händelsen syns högst upp i överblicken och i schemat.</Text>
+        <Text style={styles.reportHint}>Händelsen hamnar i listan “Händelser” i överblicken.</Text>
       </QuickActionSheet>
+
+      <Modal visible={tourVisible} transparent animationType="fade" onRequestClose={closeTour}>
+        <View style={styles.tourOverlay}>
+          <View style={styles.tourCard}>
+            <View style={styles.tourBadge}>
+              <Text style={styles.tourBadgeText}>Guidad tur</Text>
+            </View>
+            <Text style={styles.tourTitle}>{tourSteps[tourStep].title}</Text>
+            <Text style={styles.tourText}>{tourSteps[tourStep].text}</Text>
+            <View style={styles.tourDots}>
+              {tourSteps.map((_, idx) => (
+                <View key={idx} style={[styles.tourDot, idx === tourStep && styles.tourDotActive]} />
+              ))}
+            </View>
+            <View style={styles.tourActions}>
+              <TouchableOpacity style={styles.tourSecondary} onPress={closeTour} activeOpacity={0.85}>
+                <Text style={styles.tourSecondaryText}>Hoppa över</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.tourPrimary} onPress={nextTour} activeOpacity={0.9}>
+                <Text style={styles.tourPrimaryText}>
+                  {tourStep === tourSteps.length - 1 ? 'Klar' : 'Nästa'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={userSwitchVisible} transparent animationType="fade" onRequestClose={() => setUserSwitchVisible(false)}>
+        <View style={styles.tourOverlay}>
+          <View style={styles.tourCard}>
+            <Text style={styles.tourTitle}>Byt användare</Text>
+            <Text style={styles.tourText}>Välj en användare för att testa roller och behörighet.</Text>
+            <View style={{ gap: 8, width: '100%' }}>
+              {Object.values(users).map((user) => {
+                const membership = user.membership.find((m) => m.stableId === currentStableId);
+                const accessLabel =
+                  membership?.access === 'owner'
+                    ? 'Full'
+                    : membership?.access === 'edit'
+                      ? 'Redigera'
+                      : 'Läsa';
+                const active = user.id === currentUserId;
+                return (
+                  <TouchableOpacity
+                    key={user.id}
+                    style={[styles.userRow, active && styles.userRowActive]}
+                    onPress={() => handleUserSwitch(user.id)}
+                    activeOpacity={0.85}
+                  >
+                    <View>
+                      <Text style={styles.userName}>{user.name}</Text>
+                      <Text style={styles.userMeta}>{membership?.role ?? 'Ingen roll'} · {accessLabel || 'Läs'}</Text>
+                    </View>
+                    {active ? <Feather name="check" size={16} color={palette.primary} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <View style={styles.tourActions}>
+              <TouchableOpacity style={styles.tourSecondary} onPress={() => setUserSwitchVisible(false)} activeOpacity={0.85}>
+                <Text style={styles.tourSecondaryText}>Stäng</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.tourPrimary} onPress={() => setUserSwitchVisible(false)} activeOpacity={0.9}>
+                <Text style={styles.tourPrimaryText}>Klart</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 }
@@ -558,23 +800,26 @@ function WeatherPanel() {
 function QuickActionCard({
   action,
   onPress,
+  isDesktop,
 }: {
   action: QuickAction;
   onPress?: (action: QuickAction) => void;
+  isDesktop?: boolean;
 }) {
   const themeStyles = quickActionStyles[action.tint];
   const badgeColor = themeStyles.icon;
 
   return (
     <Pressable
-      disabled={action.disabled}
-      onPress={() => onPress?.(action)}
-      style={({ pressed }) => [
-        styles.quickActionCard,
-        pressed && !action.disabled && styles.quickActionCardPressed,
-        action.disabled && styles.quickActionCardDisabled,
-      ]}
-    >
+        disabled={action.disabled}
+        onPress={() => onPress?.(action)}
+        style={({ pressed }) => [
+          styles.quickActionCard,
+          isDesktop && styles.quickActionCardDesktop,
+          pressed && !action.disabled && styles.quickActionCardPressed,
+          action.disabled && styles.quickActionCardDisabled,
+        ]}
+      >
       <LinearGradient
         colors={themeStyles.gradient}
         start={{ x: 0, y: 0 }}
@@ -598,7 +843,7 @@ function QuickActionCard({
         <View style={[styles.quickActionIcon, { backgroundColor: `${themeStyles.icon}10` }]}>
           <Feather
             name={action.icon}
-            size={20}
+            size={18}
             color={action.disabled ? `${themeStyles.icon}60` : themeStyles.icon}
           />
         </View>
@@ -831,6 +1076,27 @@ function truncateText(value: string, maxLength: number) {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
+function formatEventTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toLocaleString('sv-SE', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getISOWeekNumber(date: Date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
 const styles = StyleSheet.create({
   background: {
     flex: 1,
@@ -846,10 +1112,87 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 16,
     paddingBottom: 50,
-    gap: 12,
+    gap: 18,
+  },
+  scrollContentDesktop: {
+    maxWidth: 1200,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 28,
   },
   pageHeader: {
     marginBottom: 8,
+  },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  userChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  userChipText: { fontSize: 13, fontWeight: '700', color: palette.primaryText },
+  accessPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+  },
+  accessPillOwner: { backgroundColor: 'rgba(45,108,246,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(45,108,246,0.3)' },
+  accessPillText: { fontSize: 11, fontWeight: '700', color: palette.secondaryText },
+  accessPillTextOwner: { color: palette.primary },
+  searchBar: {
+    marginHorizontal: 20,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  stableSwitcher: {
+    paddingHorizontal: 20,
+    gap: 6,
+    marginBottom: 4,
+  },
+  stableSwitcherDesktop: {
+    paddingHorizontal: 0,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  stableLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
+  stableLocation: {
+    fontSize: 12,
+    color: palette.mutedText,
+  },
+  stableChips: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  stableChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+  },
+  stableChipActive: {
+    backgroundColor: 'rgba(45,108,246,0.12)',
+    borderColor: 'rgba(45,108,246,0.3)',
+  },
+  stableChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  stableChipTextActive: {
+    color: palette.primary,
   },
   alertCard: {
     paddingHorizontal: 18,
@@ -874,7 +1217,56 @@ const styles = StyleSheet.create({
   quickActionGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: space.sm,
+    marginTop: 6,
+    marginBottom: 6,
+  },
+  eventsCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 0,
     gap: 12,
+  },
+  eventsHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  eventsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  eventsMeta: {
+    fontSize: 12,
+    color: palette.secondaryText,
+    fontWeight: '600',
+  },
+  eventsList: {
+    gap: 10,
+  },
+  eventRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  eventDot: {
+    width: 10,
+    height: 10,
+    borderRadius: radius.full,
+  },
+  eventBody: {
+    flex: 1,
+    gap: 2,
+  },
+  eventMessage: {
+    fontSize: 13,
+    color: palette.primaryText,
+    fontWeight: '500',
+  },
+  eventTime: {
+    fontSize: 12,
+    color: palette.secondaryText,
   },
   quickActionCard: {
     flexGrow: 0,
@@ -882,6 +1274,10 @@ const styles = StyleSheet.create({
     minWidth: '48%',
     borderRadius: radii.lg,
     overflow: 'hidden',
+  },
+  quickActionCardDesktop: {
+    flexBasis: '23%',
+    minWidth: 0,
   },
   quickActionCardPressed: {
     transform: [{ scale: 0.98 }],
@@ -891,9 +1287,9 @@ const styles = StyleSheet.create({
   },
   quickActionInner: {
     borderRadius: radii.lg,
-    paddingVertical: 18,
-    paddingHorizontal: 18,
-    gap: 14,
+    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    gap: space.sm,
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: systemPalette.surface,
   },
@@ -902,39 +1298,41 @@ const styles = StyleSheet.create({
   },
   quickActionBadge: {
     position: 'absolute',
-    top: 14,
-    right: 16,
-    width: 10,
-    height: 10,
+    top: 12,
+    right: 12,
+    width: 8,
+    height: 8,
     borderRadius: radius.full,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: color.card,
     backgroundColor: '#0A84FF',
   },
   quickActionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.lg,
+    width: 36,
+    height: 36,
+    borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
   quickActionText: {
-    gap: 4,
+    gap: 3,
   },
   quickActionLabel: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: palette.primaryText,
   },
   quickActionCaption: {
     fontSize: 12,
+    lineHeight: 16,
     color: palette.secondaryText,
   },
   summarySection: {
-    gap: 20,
+    gap: 16,
     paddingVertical: 0,
     backgroundColor: 'transparent',
-    marginTop: 8,
+    marginTop: 0,
+    paddingHorizontal: 2,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -956,7 +1354,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   summaryBadgeText: {
     fontSize: 12,
@@ -965,15 +1363,19 @@ const styles = StyleSheet.create({
   },
   summaryTiles: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
+    gap: 10,
+    marginTop: 10,
+  },
+  summaryTilesDesktop: {
     gap: 14,
   },
   summaryTile: {
     flex: 1,
-    minWidth: 110,
+    minWidth: 0,
     borderRadius: radius.lg,
-    paddingVertical: 18,
-    paddingHorizontal: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     backgroundColor: color.card,
     gap: 8,
     borderWidth: StyleSheet.hairlineWidth,
@@ -985,7 +1387,7 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   summaryValue: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '700',
     color: '#1B1E2F',
   },
@@ -1352,7 +1754,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   sectionBlock: {
-    gap: 14,
+    gap: 10,
+    marginTop: 8,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1363,7 +1766,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   sectionTitle: {
     fontSize: 18,
@@ -1401,12 +1804,12 @@ const styles = StyleSheet.create({
   },
   postCard: {
     gap: 12,
-    paddingHorizontal: 0,
-    paddingVertical: 8,
+    paddingHorizontal: space.md,
+    paddingVertical: space.md,
   },
   messageCard: {
-    paddingHorizontal: 0,
-    paddingVertical: 14,
+    paddingHorizontal: 4,
+    paddingVertical: 10,
   },
   postHeader: {
     flexDirection: 'row',
@@ -1427,6 +1830,7 @@ const styles = StyleSheet.create({
   },
   postContent: {
     flex: 1,
+    gap: 4,
   },
   postMeta: {
     alignItems: 'flex-end',
@@ -1443,7 +1847,28 @@ const styles = StyleSheet.create({
   },
   postFooter: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 12,
+    marginTop: 6,
+  },
+  desktopNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 6,
+    marginBottom: 6,
+  },
+  desktopNavItem: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  desktopNavLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   postStat: {
     flexDirection: 'row',
@@ -1456,7 +1881,7 @@ const styles = StyleSheet.create({
   },
   messageRow: {
     flexDirection: 'row',
-    gap: 14,
+    gap: 12,
     alignItems: 'center',
   },
   groupAvatar: {
@@ -1531,4 +1956,74 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: palette.primaryText,
   },
+  tourOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  tourCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: palette.surface,
+    borderRadius: radius.xl,
+    padding: 20,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
+  },
+  tourBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.surfaceTint,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+  },
+  tourBadgeText: { fontSize: 12, fontWeight: '700', color: palette.primaryText },
+  tourTitle: { fontSize: 18, fontWeight: '800', color: palette.primaryText },
+  tourText: { fontSize: 14, lineHeight: 20, color: palette.secondaryText },
+  tourDots: { flexDirection: 'row', gap: 6 },
+  tourDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: palette.surfaceTint,
+  },
+  tourDotActive: { backgroundColor: palette.primary },
+  tourActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  tourSecondary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    alignItems: 'center',
+  },
+  tourSecondaryText: { fontSize: 14, fontWeight: '700', color: palette.primaryText },
+  tourPrimary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    backgroundColor: palette.primary,
+    alignItems: 'center',
+  },
+  tourPrimaryText: { fontSize: 14, fontWeight: '700', color: palette.inverseText },
+  userRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+  },
+  userRowActive: { borderColor: 'rgba(45,108,246,0.4)', backgroundColor: 'rgba(45,108,246,0.08)' },
+  userName: { fontSize: 15, fontWeight: '700', color: palette.primaryText },
+  userMeta: { fontSize: 12, color: palette.secondaryText, marginTop: 2 },
 });

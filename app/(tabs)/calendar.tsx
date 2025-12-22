@@ -31,14 +31,12 @@ import {
   formatDayNumber,
   generateDateOptions,
   type GroupedAssignmentDay,
-  type DateOption,
   toISODate,
 } from '@/lib/schedule';
 import { NewAssignmentModal } from '@/components/NewAssignmentModal';
 import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
-const radii = theme.radii;
 const statusColors = theme.status;
 const gradients = theme.gradients;
 
@@ -63,6 +61,7 @@ type RegularSlot = {
   note?: string;
   assignedTo?: string;
   isMine: boolean;
+  isDefault: boolean;
   assignedVia?: Assignment['assignedVia'];
   time?: string;
   status: AssignmentStatus;
@@ -78,7 +77,7 @@ type RegularDayView = {
   openSlots: number;
   mineSlots: number;
   openAssignments: Assignment[];
-  events: Array<{ id: string; label: string; color: string }>;
+  events: { id: string; label: string; color: string }[];
 };
 
 const legend = [
@@ -123,9 +122,21 @@ function resolvePassView(raw?: string | string[]): PassView {
   return 'all';
 }
 
+function weekdayIndexFromDate(date: Date) {
+  return (date.getDay() + 6) % 7;
+}
+
+function isDefaultForUser(
+  defaultPasses: { weekday: number; slot: AssignmentSlot }[],
+  weekday: number,
+  slot: AssignmentSlot,
+) {
+  return defaultPasses.some((entry) => entry.weekday === weekday && entry.slot === slot);
+}
+
 export default function CalendarScreen() {
   const { state, actions } = useAppData();
-  const { assignments, users, ridingSchedule, competitionEvents, dayEvents, currentUserId } = state;
+  const { assignments, users, ridingSchedule, competitionEvents, dayEvents, currentUserId, currentStableId } = state;
   const { view } = useLocalSearchParams<{ view?: string | string[] }>();
   const [assignmentModal, setAssignmentModal] = React.useState<{
     visible: boolean;
@@ -141,7 +152,16 @@ export default function CalendarScreen() {
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
   const [categoryIndex, setCategoryIndex] = React.useState(0);
 
-  const groupedDays = React.useMemo(() => groupAssignmentsByDay(assignments), [assignments]);
+  const activeAssignments = React.useMemo(
+    () => assignments.filter((assignment) => assignment.stableId === currentStableId),
+    [assignments, currentStableId],
+  );
+  const activeDayEvents = React.useMemo(
+    () => dayEvents.filter((event) => event.stableId === currentStableId),
+    [dayEvents, currentStableId],
+  );
+
+  const groupedDays = React.useMemo(() => groupAssignmentsByDay(activeAssignments), [activeAssignments]);
 
   React.useEffect(() => {
     setPassView(resolvePassView(view));
@@ -149,14 +169,14 @@ export default function CalendarScreen() {
 
   const dayEventsByDate = React.useMemo(() => {
     const map = new Map<string, DayEvent[]>();
-    dayEvents.forEach((event) => {
+    activeDayEvents.forEach((event) => {
       if (!map.has(event.date)) {
         map.set(event.date, []);
       }
       map.get(event.date)!.push(event);
     });
     return map;
-  }, [dayEvents]);
+  }, [activeDayEvents]);
 
   const weekGroups = React.useMemo(() => {
     const grouped = new Map<string, { start: Date; end: Date; days: GroupedAssignmentDay[] }>();
@@ -192,9 +212,9 @@ export default function CalendarScreen() {
   }, [weekGroups.length]);
 
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
-  const activeDays = activeWeek?.days ?? [];
+  const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
-  const todayIso = React.useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayIso = toISODate(new Date());
   const upcomingDayGroups = React.useMemo(
     () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
     [groupedDays, todayIso],
@@ -206,14 +226,21 @@ export default function CalendarScreen() {
   );
 
   const regularDays = React.useMemo<RegularDayView[]>(() => {
-    return visiblePassDays.map((day, index) => {
+    const defaultPasses = users[currentUserId]?.defaultPasses ?? [];
+    const selectedIso =
+      visiblePassDays.find((day) => day.isoDate === todayIso)?.isoDate ??
+      visiblePassDays[0]?.isoDate;
+
+    return visiblePassDays.map((day) => {
       const sortedAssignments = sortAssignments(day.assignments);
+      const weekdayIndex = weekdayIndexFromDate(day.date);
       const eventsForDay = dayEventsByDate.get(day.isoDate) ?? [];
       const eventLabels = eventsForDay.map((event) => formatPassNote(event.label));
 
       const slots: RegularSlot[] = sortedAssignments.map((assignment) => {
         const formattedNote = formatPassNote(assignment.note, assignment.status);
         const noteHidden = formattedNote && eventLabels.includes(formattedNote);
+        const isMine = assignment.assigneeId === currentUserId;
         return {
           id: assignment.id,
           label: assignment.label,
@@ -225,7 +252,10 @@ export default function CalendarScreen() {
               ? 'Du'
               : users[assignment.assigneeId]?.name ?? undefined
             : undefined,
-          isMine: assignment.assigneeId === currentUserId,
+          isMine,
+          isDefault: isMine
+            ? isDefaultForUser(defaultPasses, weekdayIndex, assignment.slot)
+            : false,
           assignedVia: assignment.assignedVia,
           time: assignment.time,
           status: assignment.status,
@@ -243,7 +273,7 @@ export default function CalendarScreen() {
         id: day.isoDate,
         day: formatShortWeekday(day.date),
         date: formatDayNumber(day.date),
-        selected: index === 0,
+        selected: selectedIso ? day.isoDate === selectedIso : undefined,
         slots,
         openSlots: sortedAssignments.filter((assignment) => assignment.status === 'open').length,
         mineSlots: sortedAssignments.filter(
@@ -253,7 +283,7 @@ export default function CalendarScreen() {
         events: dayEventViews,
       };
     });
-  }, [visiblePassDays, users, dayEventsByDate, currentUserId]);
+  }, [visiblePassDays, users, dayEventsByDate, currentUserId, todayIso]);
 
   const visibleRegularDays = React.useMemo(() => {
     if (passView === 'mine') {
@@ -266,7 +296,6 @@ export default function CalendarScreen() {
   }, [passView, regularDays]);
 
   const selectedCategory = competitionCategories[categoryIndex];
-  const weekHeading = activeWeek ? formatWeekHeading(activeWeek.start, activeWeek.end) : 'Veckoschema';
   const weekRangeLabel = activeWeek ? formatWeekRange(activeWeek.start, activeWeek.end) : '';
   const weekNumber = activeWeek ? getISOWeekNumber(activeWeek.start) : undefined;
   const canGoPreviousWeek = weekIndex > 0;
@@ -598,7 +627,7 @@ export default function CalendarScreen() {
         onClose={() => setAssignmentModal({ visible: false, mode: 'create' })}
         onSubmit={(input) => {
           const fallbackDate =
-            assignmentModal.date ?? dateOptions[0]?.value ?? new Date().toISOString().split('T')[0];
+            assignmentModal.date ?? dateOptions[0]?.value ?? toISODate(new Date());
           const resolvedDate = input.date ?? fallbackDate;
           const resolvedSlot = input.slot ?? assignmentModal.slot ?? 'Morning';
           const resolvedAssign =
@@ -675,7 +704,7 @@ function RegularDayCard({
   openSlots: number;
   mineSlots: number;
   openAssignments: Assignment[];
-  events: Array<{ id: string; label: string; color: string }>;
+  events: { id: string; label: string; color: string }[];
   mode: PassView;
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
   onCreateAssignment?: (defaults: { date: string; slot?: AssignmentSlot }) => void;
@@ -750,6 +779,7 @@ function RegularDayCard({
             note={slot.note}
             assignedTo={slot.assignedTo}
             isMine={slot.isMine}
+            isDefault={slot.isDefault}
             assignedVia={slot.assignedVia}
             time={slot.time}
             isLast={index === visibleSlots.length - 1}
@@ -801,7 +831,7 @@ function RegularDayCard({
                 openSlots > 0 && styles.dayActionLabelPrimary,
               ]}
             >
-              {openSlots > 0 ? 'Ta pass' : 'Visa detaljer'}
+              {openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -817,6 +847,7 @@ function ScheduleIcon({
   note,
   assignedTo,
   isMine,
+  isDefault,
   assignedVia,
   time,
   isLast,
@@ -832,6 +863,7 @@ function ScheduleIcon({
   note?: string;
   assignedTo?: string;
   isMine: boolean;
+  isDefault: boolean;
   assignedVia?: Assignment['assignedVia'];
   time?: string;
   isLast?: boolean;
@@ -844,7 +876,8 @@ function ScheduleIcon({
   const noteColor = note ? resolveNoteColor(note) : undefined;
   const isOpen = status === 'open';
   const isCompleted = status === 'completed';
-  const showDefaultTag = isMine && status === 'assigned' && assignedVia === 'default' && !note;
+  const showDefaultTag =
+    isMine && status === 'assigned' && (assignedVia === 'default' || isDefault);
 
   const renderIcon = () => {
     if (icon === 'sun') {
@@ -885,21 +918,24 @@ function ScheduleIcon({
                   />
                   <Text style={styles.scheduleTagText}>{note}</Text>
                 </View>
-              ) : isOpen ? (
+              ) : null}
+              {!note && isOpen ? (
                 <View style={[styles.scheduleTag, styles.scheduleTagOpen]}>
                   <Feather name="alert-circle" size={12} color={palette.primary} />
                   <Text style={[styles.scheduleTagText, styles.scheduleTagOpenText]}>
                     Ledigt pass
                   </Text>
                 </View>
-              ) : isCompleted ? (
+              ) : null}
+              {isCompleted ? (
                 <View style={[styles.scheduleTag, styles.scheduleTagComplete]}>
                   <Feather name="check" size={12} color={palette.success} />
                   <Text style={[styles.scheduleTagText, styles.scheduleTagCompleteText]}>
                     Klart
                   </Text>
                 </View>
-              ) : showDefaultTag ? (
+              ) : null}
+              {showDefaultTag ? (
                 <View style={[styles.scheduleTag, styles.scheduleTagDefault]}>
                   <Feather name="repeat" size={12} color={palette.secondaryText} />
                   <Text style={styles.scheduleTagText}>Standard</Text>
@@ -1042,11 +1078,6 @@ function formatWeekRange(start: Date, end: Date) {
   return `${startLabel}–${endLabel}`.replace('.', '');
 }
 
-function formatWeekHeading(start: Date, end: Date) {
-  const week = getISOWeekNumber(start);
-  return `Vecka ${week} · ${formatWeekRange(start, end)}`;
-}
-
 function formatPassNote(note?: string, status?: AssignmentStatus) {
   if (!note) {
     return undefined;
@@ -1119,6 +1150,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
+  subFilterRow: {
+    flexDirection: 'row',
+    padding: space.xs,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
   filterChip: {
     flex: 1,
     width: 'auto',
@@ -1126,12 +1165,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 26,
   },
+  subFilterChip: {
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   filterChipText: {
     fontSize: 14,
     fontWeight: '500',
     color: palette.secondaryText,
   },
   filterChipTextActive: {
+    color: palette.inverseText,
+  },
+  subFilterText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
+  subFilterTextActive: {
     color: palette.inverseText,
   },
   legendCard: {
@@ -1166,6 +1218,29 @@ const styles = StyleSheet.create({
     gap: 16,
     paddingVertical: 4,
   },
+  listHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  listHeaderAction: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  listHeaderActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primary,
+  },
   weekButton: {
     width: 36,
     height: 36,
@@ -1194,6 +1269,12 @@ const styles = StyleSheet.create({
   },
   scheduleList: {
     gap: 10,
+  },
+  emptyStateText: {
+    textAlign: 'center',
+    fontSize: 13,
+    color: palette.secondaryText,
+    paddingVertical: 18,
   },
   dayCard: {
     paddingHorizontal: space.lg,
@@ -1341,6 +1422,12 @@ const styles = StyleSheet.create({
   scheduleTagOpen: {
     backgroundColor: 'rgba(10,132,255,0.12)',
   },
+  scheduleTagComplete: {
+    backgroundColor: 'rgba(27,169,122,0.14)',
+  },
+  scheduleTagDefault: {
+    backgroundColor: 'rgba(15,22,34,0.06)',
+  },
   scheduleTagText: {
     fontSize: 12,
     fontWeight: '600',
@@ -1348,6 +1435,9 @@ const styles = StyleSheet.create({
   },
   scheduleTagOpenText: {
     color: palette.primary,
+  },
+  scheduleTagCompleteText: {
+    color: palette.success,
   },
   scheduleAssigneeRow: {
     flexDirection: 'row',
@@ -1369,6 +1459,25 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     backgroundColor: 'rgba(10,132,255,0.08)',
   },
+  scheduleMineActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  scheduleCantButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(15,22,34,0.06)',
+  },
+  scheduleCantLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
   scheduleManageLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -1376,6 +1485,9 @@ const styles = StyleSheet.create({
   },
   scheduleTakeButton: {
     backgroundColor: palette.primary,
+  },
+  scheduleCompleteButton: {
+    backgroundColor: palette.success,
   },
   scheduleTakeLabel: {
     color: palette.inverseText,

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
 
@@ -20,14 +20,17 @@ const palette = theme.colors;
 const radii = theme.radii;
 
 export default function TabLayout() {
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
-        tabBarBackground: () => (
-          <BlurView intensity={12.5} style={styles.blurBackground} />
-        ),
+        tabBarStyle: isDesktopWeb ? [styles.tabBar, styles.tabBarHidden] : styles.tabBar,
+        tabBarBackground: isDesktopWeb
+          ? undefined
+          : () => <BlurView intensity={12.5} style={styles.blurBackground} />,
         tabBarActiveTintColor: palette.icon,
         tabBarInactiveTintColor: palette.secondaryText,
         tabBarItemStyle: styles.tabBarItem,
@@ -130,5 +133,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
+  },
+  tabBarHidden: {
+    display: 'none',
   },
 });
