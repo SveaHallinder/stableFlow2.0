@@ -10,6 +10,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,12 +19,15 @@ import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DesktopNav } from '@/components/DesktopNav';
 import { HeaderIconButton, Card } from '@/components/Primitives';
+import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
-import { useAppData } from '@/context/AppDataContext';
+import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
 import type { Paddock, PaddockImage, UpsertPaddockInput } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { createPaddocksPrintHtml } from '@/lib/paddocksPrint';
+import { toISODate } from '@/lib/schedule';
 
 const palette = theme.colors;
 
@@ -87,11 +91,80 @@ async function openPrintDialog(html: string) {
 export default function PaddocksScreen() {
   const router = useRouter();
   const toast = useToast();
-  const { state, actions } = useAppData();
+  const { state, actions, derived } = useAppData();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const { permissions } = derived;
+  const canManagePaddocks = permissions.canManagePaddocks;
+  const canUpdateHorseStatus = permissions.canUpdateHorseStatus;
+  const [statusDate, setStatusDate] = React.useState(() => new Date());
+  const statusIso = React.useMemo(() => toISODate(statusDate), [statusDate]);
+  const statusLabel = React.useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const target = new Date(statusDate);
+    target.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+    if (diffDays === 0) return 'Idag';
+    if (diffDays === -1) return 'Igår';
+    if (diffDays === 1) return 'Imorgon';
+    return target.toLocaleDateString('sv-SE', { weekday: 'short', day: 'numeric', month: 'short' });
+  }, [statusDate]);
   const paddocks = React.useMemo(
     () => state.paddocks.filter((paddock) => paddock.stableId === state.currentStableId),
     [state.paddocks, state.currentStableId],
   );
+  const currentStable = React.useMemo(
+    () => state.stables.find((stable) => stable.id === state.currentStableId),
+    [state.stables, state.currentStableId],
+  );
+  const stableSettings = React.useMemo(() => resolveStableSettings(currentStable), [currentStable]);
+  const isLoose = stableSettings.dayLogic === 'loose';
+  const activeHorses = React.useMemo(
+    () => state.horses.filter((horse) => horse.stableId === state.currentStableId),
+    [state.horses, state.currentStableId],
+  );
+  const todayStatuses = React.useMemo(
+    () =>
+      state.horseDayStatuses.filter(
+        (status) => status.stableId === state.currentStableId && status.date === statusIso,
+      ),
+    [state.horseDayStatuses, state.currentStableId, statusIso],
+  );
+  const statusByHorseId = React.useMemo(() => {
+    const map = new Map<string, (typeof todayStatuses)[number]>();
+    todayStatuses.forEach((status) => {
+      map.set(status.horseId, status);
+    });
+    return map;
+  }, [todayStatuses]);
+  const paddockNameByHorse = React.useMemo(() => {
+    const map = new Map<string, string>();
+    paddocks.forEach((paddock) => {
+      paddock.horseNames.forEach((name) => {
+        map.set(name.toLowerCase(), paddock.name);
+      });
+    });
+    return map;
+  }, [paddocks]);
+  const horsesByPaddock = React.useMemo(() => {
+    const groups = new Map<string, typeof activeHorses>();
+    activeHorses.forEach((horse) => {
+      const paddockName = paddockNameByHorse.get(horse.name.toLowerCase()) ?? 'Ingen hage';
+      const existing = groups.get(paddockName);
+      if (existing) {
+        existing.push(horse);
+      } else {
+        groups.set(paddockName, [horse]);
+      }
+    });
+    return Array.from(groups.entries()).sort(([a], [b]) => {
+      if (a === 'Ingen hage') return 1;
+      if (b === 'Ingen hage') return -1;
+      return a.localeCompare(b);
+    });
+  }, [activeHorses, paddockNameByHorse]);
 
   const [modalState, setModalState] = React.useState<{ visible: boolean; paddockId?: string }>({
     visible: false,
@@ -111,18 +184,69 @@ export default function PaddocksScreen() {
   }, [modalState.visible, activePaddock]);
 
   const openCreate = React.useCallback(() => {
+    if (!canManagePaddocks) {
+      toast.showToast('Behörighet saknas för att skapa hagar.', 'error');
+      return;
+    }
     setModalState({ visible: true });
-  }, []);
+  }, [canManagePaddocks, toast]);
 
   const openEdit = React.useCallback((paddockId: string) => {
+    if (!canManagePaddocks) {
+      toast.showToast('Behörighet saknas för att redigera hagar.', 'error');
+      return;
+    }
     setModalState({ visible: true, paddockId });
-  }, []);
+  }, [canManagePaddocks, toast]);
 
   const closeModal = React.useCallback(() => {
     setModalState({ visible: false });
   }, []);
 
+  const handleSetInOutStatus = React.useCallback(
+    (horseId: string, field: 'dayStatus' | 'nightStatus', value: 'in' | 'out') => {
+      const current = statusByHorseId.get(horseId)?.[field];
+      const nextValue = current === value ? undefined : value;
+      const result = actions.updateHorseDayStatus({
+        horseId,
+        date: statusIso,
+        updates: { [field]: nextValue },
+      });
+      if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, statusByHorseId, statusIso, toast],
+  );
+
+  const handleToggleLooseFlag = React.useCallback(
+    (horseId: string, field: 'checked' | 'water' | 'hay') => {
+      const current = statusByHorseId.get(horseId)?.[field] ?? false;
+      const result = actions.updateHorseDayStatus({
+        horseId,
+        date: statusIso,
+        updates: { [field]: !current },
+      });
+      if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, statusByHorseId, statusIso, toast],
+  );
+
+  const shiftStatusDate = React.useCallback((amount: number) => {
+    setStatusDate((prev) => {
+      const next = new Date(prev);
+      next.setDate(prev.getDate() + amount);
+      return next;
+    });
+  }, []);
+
   const handleSave = React.useCallback(() => {
+    if (!canManagePaddocks) {
+      toast.showToast('Behörighet saknas för att spara hagar.', 'error');
+      return;
+    }
     const payload: UpsertPaddockInput = {
       id: draft.id,
       name: draft.name,
@@ -141,6 +265,7 @@ export default function PaddocksScreen() {
     }
   }, [
     actions,
+    canManagePaddocks,
     closeModal,
     draft.horsesText,
     draft.id,
@@ -151,6 +276,10 @@ export default function PaddocksScreen() {
   ]);
 
   const handleDelete = React.useCallback(() => {
+    if (!canManagePaddocks) {
+      toast.showToast('Behörighet saknas för att ta bort hagar.', 'error');
+      return;
+    }
     if (!draft.id) {
       return;
     }
@@ -161,7 +290,7 @@ export default function PaddocksScreen() {
     } else if (!result.success) {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, closeModal, draft.id, toast]);
+  }, [actions, canManagePaddocks, closeModal, draft.id, toast]);
 
   const handlePrint = React.useCallback(async () => {
     if (paddocks.length === 0) {
@@ -253,129 +382,298 @@ export default function PaddocksScreen() {
   }, []);
 
   const title = draft.id ? 'Redigera hage' : 'Ny hage';
-  const canSave = draft.name.trim().length > 0;
+  const canSave = canManagePaddocks && draft.name.trim().length > 0;
+  const wrapDesktop = (content: React.ReactNode) => {
+    if (!isDesktopWeb) {
+      return content;
+    }
+    return (
+      <View style={styles.desktopShell}>
+        <View style={styles.desktopSidebar}>
+          <DesktopNav variant="sidebar" />
+        </View>
+        <View style={styles.desktopMain}>{content}</View>
+      </View>
+    );
+  };
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
-        <ScreenHeader
-          title="Hagar"
-          style={styles.pageHeader}
-          left={
-            <HeaderIconButton
-              accessibilityRole="button"
-              accessibilityLabel="Tillbaka"
-              onPress={() => router.back()}
-              style={styles.headerIconButton}
+        {wrapDesktop(
+          <>
+            <ScreenHeader
+              title="Hagar"
+              style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+              left={
+                <HeaderIconButton
+                  accessibilityRole="button"
+                  accessibilityLabel="Tillbaka"
+                  onPress={() => router.back()}
+                  style={styles.headerIconButton}
+                >
+                  <Text style={styles.headerIcon}>‹</Text>
+                </HeaderIconButton>
+              }
+              right={
+                <HeaderIconButton
+                  accessibilityRole="button"
+                  accessibilityLabel="Skriv ut haglista"
+                  onPress={handlePrint}
+                  style={styles.headerIconButton}
+                >
+                  <Feather name="printer" size={18} color={palette.icon} />
+                </HeaderIconButton>
+              }
+              showLogo={false}
+              showSearch={false}
+              subtitle="Hästar i hagar"
+            />
+            {!isDesktopWeb ? <StableSwitcher /> : null}
+
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={[
+                styles.scrollContent,
+                isDesktopWeb && styles.scrollContentDesktop,
+              ]}
+              showsVerticalScrollIndicator={false}
             >
-              <Text style={styles.headerIcon}>‹</Text>
-            </HeaderIconButton>
-          }
-          right={
-            <HeaderIconButton
-              accessibilityRole="button"
-              accessibilityLabel="Skriv ut haglista"
-              onPress={handlePrint}
-              style={styles.headerIconButton}
-            >
-              <Feather name="printer" size={18} color={palette.icon} />
-            </HeaderIconButton>
-          }
-          showLogo={false}
-          showSearch={false}
-          subtitle="Hästar i hagar"
-        />
+              <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
+                <View style={[styles.desktopPanel, isDesktopWeb && styles.desktopPanelDesktop, stickyPanelStyle]}>
+                  <Card tone="muted" style={styles.infoCard}>
+                    <Text style={styles.infoTitle}>Översikt</Text>
+                    <Text style={styles.infoText}>
+                      Lägg in vilka hästar som går i vilka hagar och koppla en bild (t.ex. hagkarta eller
+                      skylt) så kan du skriva ut en tydlig lista.
+                    </Text>
+                  </Card>
 
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <Card tone="muted" style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Översikt</Text>
-            <Text style={styles.infoText}>
-              Lägg in vilka hästar som går i vilka hagar och koppla en bild (t.ex. hagkarta eller
-              skylt) så kan du skriva ut en tydlig lista.
-            </Text>
-          </Card>
+                  {canManagePaddocks ? (
+                    <TouchableOpacity style={styles.addButton} onPress={openCreate} activeOpacity={0.9}>
+                      <Feather name="plus" size={16} color={palette.inverseText} />
+                      <Text style={styles.addButtonLabel}>Lägg till hage</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
 
-          <TouchableOpacity style={styles.addButton} onPress={openCreate} activeOpacity={0.9}>
-            <Feather name="plus" size={16} color={palette.inverseText} />
-            <Text style={styles.addButtonLabel}>Lägg till hage</Text>
-          </TouchableOpacity>
-
-          <View style={styles.list}>
-            {paddocks.map((paddock) => (
-              <TouchableOpacity
-                key={paddock.id}
-                activeOpacity={0.9}
-                onPress={() => openEdit(paddock.id)}
-              >
-                <Card tone="muted" style={styles.paddockCard}>
-                  <View style={styles.paddockRow}>
-                    {paddock.image?.uri ? (
-                      <Image
-                        source={{ uri: paddock.image.uri }}
-                        style={styles.thumbnail}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={styles.thumbnailPlaceholder}>
-                        <Feather name="image" size={16} color={palette.mutedText} />
+                <View style={[styles.desktopList, isDesktopWeb && styles.desktopListDesktop]}>
+                  <Card tone="muted" style={[styles.statusCard, isDesktopWeb && styles.statusCardDesktop]}>
+                    <View style={styles.statusHeaderRow}>
+                      <View>
+                        <Text style={styles.statusTitle}>Hästar per dag</Text>
+                        <Text style={styles.statusSubtitle}>
+                          {isLoose ? 'Lösdrift · kollad + vatten/hö' : 'Boxhästar · inne/ute dag & natt'}
+                        </Text>
                       </View>
-                    )}
-                    <View style={styles.paddockContent}>
-                      <View style={styles.paddockHeaderRow}>
-                        <Text style={styles.paddockName}>{paddock.name}</Text>
-                        <Text style={styles.paddockCount}>{paddock.horseNames.length}</Text>
-                      </View>
-                      <View style={styles.metaRow}>
-                        {paddock.season ? (
-                          <View style={styles.seasonPill}>
-                            <Text style={styles.seasonText}>
-                              {paddock.season === 'summer'
-                                ? 'Sommarhage'
-                                : paddock.season === 'winter'
-                                  ? 'Vinterhage'
-                                  : 'Året runt'}
-                            </Text>
-                          </View>
-                        ) : null}
-                        <Text style={styles.paddockCaption}>{formatPaddockCaption(paddock)}</Text>
+                      <View style={styles.statusDateControl}>
+                        <TouchableOpacity
+                          style={styles.statusDateButton}
+                          onPress={() => shiftStatusDate(-1)}
+                          activeOpacity={0.85}
+                        >
+                          <Feather name="chevron-left" size={16} color={palette.secondaryText} />
+                        </TouchableOpacity>
+                        <View>
+                          <Text style={styles.statusDateLabel}>{statusLabel}</Text>
+                          <Text style={styles.statusDateMeta}>{statusIso}</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.statusDateButton}
+                          onPress={() => shiftStatusDate(1)}
+                          activeOpacity={0.85}
+                        >
+                          <Feather name="chevron-right" size={16} color={palette.secondaryText} />
+                        </TouchableOpacity>
                       </View>
                     </View>
-                    <Feather name="chevron-right" size={16} color={palette.mutedText} />
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            ))}
 
-            {paddocks.length === 0 ? (
-              <Text style={styles.emptyText}>Inga hagar ännu. Skapa en ny hage för att börja.</Text>
-            ) : null}
-          </View>
-        </ScrollView>
+                    {activeHorses.length === 0 ? (
+                      <Text style={styles.emptyText}>Inga hästar registrerade i stallet.</Text>
+                    ) : (
+                      horsesByPaddock.map(([paddockName, group], index) => (
+                        <View
+                          key={paddockName}
+                          style={[styles.statusGroup, index > 0 && styles.statusGroupDivider]}
+                        >
+                          <Text style={styles.statusGroupTitle}>{paddockName}</Text>
+                          {group.map((horse) => {
+                            const status = statusByHorseId.get(horse.id);
+                            return (
+                              <View key={horse.id} style={styles.statusHorseRow}>
+                                <Text style={styles.statusHorseName}>{horse.name}</Text>
+                                {isLoose ? (
+                                  <View style={styles.statusToggleGroup}>
+                                    {([
+                                      { id: 'checked', label: 'Kollad' },
+                                      { id: 'water', label: 'Vatten' },
+                                      { id: 'hay', label: 'Hö' },
+                                    ] as const).map((option) => {
+                                      const active = status?.[option.id];
+                                      return (
+                                        <TouchableOpacity
+                                          key={option.id}
+                                          style={[
+                                            styles.statusChip,
+                                            active && styles.statusChipActive,
+                                            !canUpdateHorseStatus && styles.statusChipDisabled,
+                                          ]}
+                                          onPress={() =>
+                                            canUpdateHorseStatus && handleToggleLooseFlag(horse.id, option.id)
+                                          }
+                                          activeOpacity={0.85}
+                                          disabled={!canUpdateHorseStatus}
+                                        >
+                                          <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                                            {option.label}
+                                          </Text>
+                                        </TouchableOpacity>
+                                      );
+                                    })}
+                                  </View>
+                                ) : (
+                                  <View style={styles.statusToggleGroup}>
+                                    <View style={styles.statusToggleBlock}>
+                                      <Text style={styles.statusToggleLabel}>Dag</Text>
+                                      <View style={styles.statusToggleRow}>
+                                        {(['in', 'out'] as const).map((value) => {
+                                          const active = status?.dayStatus === value;
+                                          return (
+                                            <TouchableOpacity
+                                              key={`day-${value}`}
+                                              style={[
+                                                styles.statusChip,
+                                                active && styles.statusChipActive,
+                                                !canUpdateHorseStatus && styles.statusChipDisabled,
+                                              ]}
+                                              onPress={() =>
+                                                canUpdateHorseStatus &&
+                                                handleSetInOutStatus(horse.id, 'dayStatus', value)
+                                              }
+                                              activeOpacity={0.85}
+                                              disabled={!canUpdateHorseStatus}
+                                            >
+                                              <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                                                {value === 'in' ? 'Inne' : 'Ute'}
+                                              </Text>
+                                            </TouchableOpacity>
+                                          );
+                                        })}
+                                      </View>
+                                    </View>
+                                    <View style={styles.statusToggleBlock}>
+                                      <Text style={styles.statusToggleLabel}>Natt</Text>
+                                      <View style={styles.statusToggleRow}>
+                                        {(['in', 'out'] as const).map((value) => {
+                                          const active = status?.nightStatus === value;
+                                          return (
+                                            <TouchableOpacity
+                                              key={`night-${value}`}
+                                              style={[
+                                                styles.statusChip,
+                                                active && styles.statusChipActive,
+                                                !canUpdateHorseStatus && styles.statusChipDisabled,
+                                              ]}
+                                              onPress={() =>
+                                                canUpdateHorseStatus &&
+                                                handleSetInOutStatus(horse.id, 'nightStatus', value)
+                                              }
+                                              activeOpacity={0.85}
+                                              disabled={!canUpdateHorseStatus}
+                                            >
+                                              <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                                                {value === 'in' ? 'Inne' : 'Ute'}
+                                              </Text>
+                                            </TouchableOpacity>
+                                          );
+                                        })}
+                                      </View>
+                                    </View>
+                                  </View>
+                                )}
+                              </View>
+                            );
+                          })}
+                        </View>
+                      ))
+                    )}
+                  </Card>
+                  <View style={[styles.list, isDesktopWeb && styles.listDesktop]}>
+                    {paddocks.map((paddock) => (
+                      <TouchableOpacity
+                        key={paddock.id}
+                        activeOpacity={0.9}
+                        onPress={canManagePaddocks ? () => openEdit(paddock.id) : undefined}
+                        disabled={!canManagePaddocks}
+                      >
+                        <Card tone="muted" style={[styles.paddockCard, isDesktopWeb && styles.paddockCardDesktop]}>
+                          <View style={styles.paddockRow}>
+                            {paddock.image?.uri ? (
+                              <Image
+                                source={{ uri: paddock.image.uri }}
+                                style={styles.thumbnail}
+                                resizeMode="cover"
+                              />
+                            ) : (
+                              <View style={styles.thumbnailPlaceholder}>
+                                <Feather name="image" size={16} color={palette.mutedText} />
+                              </View>
+                            )}
+                            <View style={styles.paddockContent}>
+                              <View style={styles.paddockHeaderRow}>
+                                <Text style={styles.paddockName}>{paddock.name}</Text>
+                                <Text style={styles.paddockCount}>{paddock.horseNames.length}</Text>
+                              </View>
+                              <View style={styles.metaRow}>
+                                {paddock.season ? (
+                                  <View style={styles.seasonPill}>
+                                    <Text style={styles.seasonText}>
+                                      {paddock.season === 'summer'
+                                        ? 'Sommarhage'
+                                        : paddock.season === 'winter'
+                                          ? 'Vinterhage'
+                                          : 'Året runt'}
+                                    </Text>
+                                  </View>
+                                ) : null}
+                                <Text style={styles.paddockCaption}>{formatPaddockCaption(paddock)}</Text>
+                              </View>
+                            </View>
+                            <Feather name="chevron-right" size={16} color={palette.mutedText} />
+                          </View>
+                        </Card>
+                      </TouchableOpacity>
+                    ))}
+
+                    {paddocks.length === 0 ? (
+                      <Text style={styles.emptyText}>Inga hagar ännu. Skapa en ny hage för att börja.</Text>
+                    ) : null}
+                  </View>
+                </View>
+              </View>
+            </ScrollView>
 
         <Modal visible={modalState.visible} animationType="slide" transparent onRequestClose={closeModal}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalOverlay}
+            style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}
           >
-            <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
-            <View style={styles.modalSheet}>
-              <Text style={styles.modalTitle}>{title}</Text>
+                <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
+                <View style={[styles.modalSheet, isDesktopWeb && styles.modalSheetDesktop]}>
+                  <Text style={styles.modalTitle}>{title}</Text>
 
-              <View style={styles.formSection}>
-                <Text style={styles.formLabel}>Namn</Text>
-                <TextInput
-                  value={draft.name}
-                  onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
-                  placeholder="Ex. Hage 3, Gräshage, Paddock vid ridhuset"
-                  placeholderTextColor={palette.mutedText}
-                  style={styles.textInput}
-                  autoCorrect={false}
-                />
-              </View>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Namn</Text>
+                    <TextInput
+                      value={draft.name}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+                      placeholder="Ex. Hage 3, Gräshage, Paddock vid ridhuset"
+                      placeholderTextColor={palette.mutedText}
+                      style={styles.textInput}
+                      autoCorrect={false}
+                      editable={canManagePaddocks}
+                    />
+                  </View>
 
               <View style={styles.formSection}>
                 <Text style={styles.formLabel}>Hästar</Text>
@@ -388,6 +686,7 @@ export default function PaddocksScreen() {
                   multiline
                   numberOfLines={5}
                   textAlignVertical="top"
+                  editable={canManagePaddocks}
                 />
                 <Text style={styles.formHint}>Tips: Du kan även separera med komma.</Text>
               </View>
@@ -405,8 +704,13 @@ export default function PaddocksScreen() {
                       <TouchableOpacity
                         key={option.id}
                         style={[styles.chip, active && styles.chipActive]}
-                        onPress={() => setDraft((prev) => ({ ...prev, season: option.id }))}
+                        onPress={
+                          canManagePaddocks
+                            ? () => setDraft((prev) => ({ ...prev, season: option.id }))
+                            : undefined
+                        }
                         activeOpacity={0.85}
+                        disabled={!canManagePaddocks}
                       >
                         <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
                       </TouchableOpacity>
@@ -428,26 +732,32 @@ export default function PaddocksScreen() {
 
                 <View style={styles.imageActions}>
                   <TouchableOpacity
-                    style={styles.imageButton}
-                    onPress={handlePickFromLibrary}
+                    style={[styles.imageButton, !canManagePaddocks && styles.imageButtonDisabled]}
+                    onPress={canManagePaddocks ? handlePickFromLibrary : undefined}
                     activeOpacity={0.85}
+                    disabled={!canManagePaddocks}
                   >
                     <Feather name="upload" size={14} color={palette.primaryText} />
                     <Text style={styles.imageButtonLabel}>Välj bild</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.imageButton}
-                    onPress={handleTakePhoto}
+                    style={[styles.imageButton, !canManagePaddocks && styles.imageButtonDisabled]}
+                    onPress={canManagePaddocks ? handleTakePhoto : undefined}
                     activeOpacity={0.85}
+                    disabled={!canManagePaddocks}
                   >
                     <Feather name="camera" size={14} color={palette.primaryText} />
                     <Text style={styles.imageButtonLabel}>Ta foto</Text>
                   </TouchableOpacity>
                   {draft.image ? (
                     <TouchableOpacity
-                      style={styles.imageButtonDanger}
-                      onPress={handleClearImage}
+                      style={[
+                        styles.imageButtonDanger,
+                        !canManagePaddocks && styles.imageButtonDisabled,
+                      ]}
+                      onPress={canManagePaddocks ? handleClearImage : undefined}
                       activeOpacity={0.85}
+                      disabled={!canManagePaddocks}
                     >
                       <Feather name="x" size={14} color={palette.error} />
                       <Text style={styles.imageButtonDangerLabel}>Ta bort</Text>
@@ -456,7 +766,7 @@ export default function PaddocksScreen() {
                 </View>
               </View>
 
-              {draft.id ? (
+              {draft.id && canManagePaddocks ? (
                 <TouchableOpacity style={styles.deleteButton} onPress={handleDelete} activeOpacity={0.85}>
                   <Text style={styles.deleteButtonLabel}>Ta bort hage</Text>
                 </TouchableOpacity>
@@ -467,8 +777,11 @@ export default function PaddocksScreen() {
                   <Text style={styles.secondaryButtonLabel}>Avbryt</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.primaryButton, !canSave && styles.primaryButtonDisabled]}
-                  onPress={handleSave}
+                  style={[
+                    styles.primaryButton,
+                    !canSave && styles.primaryButtonDisabled,
+                  ]}
+                  onPress={canManagePaddocks ? handleSave : undefined}
                   disabled={!canSave}
                   activeOpacity={0.85}
                 >
@@ -478,6 +791,8 @@ export default function PaddocksScreen() {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+          </>
+        )}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -493,6 +808,13 @@ const styles = StyleSheet.create({
   },
   pageHeader: {
     marginBottom: 0,
+  },
+  pageHeaderDesktop: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    marginBottom: 12,
   },
   headerIconButton: {
     borderRadius: radius.full,
@@ -513,6 +835,52 @@ const styles = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 40,
     gap: 12,
+  },
+  scrollContentDesktop: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    paddingTop: 20,
+    gap: 16,
+  },
+  desktopShell: { flex: 1, flexDirection: 'row' },
+  desktopSidebar: {
+    width: 260,
+    paddingHorizontal: 28,
+    paddingTop: 32,
+    paddingBottom: 24,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+    shadowColor: '#121826',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 8, height: 0 },
+    elevation: 2,
+  },
+  desktopMain: { flex: 1, minWidth: 0 },
+  desktopLayout: {
+    gap: 12,
+  },
+  desktopLayoutDesktop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24,
+  },
+  desktopPanel: {
+    gap: 12,
+  },
+  desktopPanelDesktop: {
+    width: 320,
+    flexShrink: 0,
+  },
+  desktopList: {
+    flex: 1,
+    minWidth: 0,
+  },
+  desktopListDesktop: {
+    flex: 1,
   },
   infoCard: {
     paddingHorizontal: 18,
@@ -544,13 +912,96 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.inverseText,
   },
+  statusCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  statusCardDesktop: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  statusHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  statusTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
+  statusSubtitle: { fontSize: 12, color: palette.secondaryText },
+  statusDateControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  statusDateButton: {
+    width: 24,
+    height: 24,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusDateLabel: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
+  statusDateMeta: { fontSize: 10, color: palette.secondaryText },
+  statusGroup: { gap: 10 },
+  statusGroupDivider: {
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  statusGroupTitle: { fontSize: 13, fontWeight: '600', color: palette.primaryText },
+  statusHorseRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  statusHorseName: { fontSize: 14, fontWeight: '600', color: palette.primaryText, minWidth: 88 },
+  statusToggleGroup: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
+  statusToggleBlock: { gap: 4 },
+  statusToggleLabel: { fontSize: 11, color: palette.secondaryText },
+  statusToggleRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  statusChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  statusChipActive: {
+    backgroundColor: 'rgba(45,108,246,0.12)',
+    borderColor: 'rgba(45,108,246,0.3)',
+  },
+  statusChipDisabled: { opacity: 0.5 },
+  statusChipText: { fontSize: 11, fontWeight: '600', color: palette.primaryText },
+  statusChipTextActive: { color: palette.primary },
   list: {
     gap: 10,
+  },
+  listDesktop: {
+    gap: 14,
   },
   paddockCard: {
     borderRadius: radius.lg,
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  paddockCardDesktop: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
   },
   paddockRow: {
     flexDirection: 'row',
@@ -617,6 +1068,10 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(0,0,0,0.25)',
   },
+  modalOverlayDesktop: {
+    justifyContent: 'center',
+    padding: 24,
+  },
   modalBackdrop: {
     flex: 1,
   },
@@ -628,6 +1083,12 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     paddingBottom: space.xl,
     gap: 14,
+  },
+  modalSheetDesktop: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
+    borderRadius: radius.xl,
   },
   modalTitle: {
     fontSize: 20,
@@ -715,6 +1176,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: palette.primaryText,
+  },
+  imageButtonDisabled: {
+    opacity: 0.6,
   },
   imageButtonDanger: {
     flexDirection: 'row',

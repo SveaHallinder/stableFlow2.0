@@ -31,6 +31,7 @@ export const systemStatus = {
   cleaning: '#2D6CF6',
   riderAway: '#E29833',
   farrierAway: '#5AA3FF',
+  vetAway: '#2FA3A9',
   evening: '#5E5CE6',
   neutral: '#1BA97A',
 };

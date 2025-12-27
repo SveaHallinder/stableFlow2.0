@@ -1,11 +1,14 @@
 import React from 'react';
 import {
   Image,
+  Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +19,8 @@ import { color, radius } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, Pill } from '@/components/Primitives';
+import { StableSwitcher } from '@/components/StableSwitcher';
+import { UserSwitchModal } from '@/components/UserSwitchModal';
 import { useAppData } from '@/context/AppDataContext';
 import type {
   Assignment,
@@ -60,11 +65,21 @@ const assignmentStatusStyles: Record<AssignmentStatus, { label: string; backgrou
 export default function ProfileScreen() {
   const router = useRouter();
   const { state, derived, actions } = useAppData();
-  const { currentUserId, users, assignments } = state;
+  const { currentUserId, users, assignments, currentStableId } = state;
   const currentUser = users[currentUserId];
   const toast = useToast();
+  const [userSwitchVisible, setUserSwitchVisible] = React.useState(false);
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
 
   const upcomingAssignments = derived.upcomingAssignmentsForUser.slice(0, 3);
+  const memberCount = React.useMemo(
+    () =>
+      Object.values(users).filter((user) =>
+        user.membership.some((entry) => entry.stableId === currentStableId),
+      ).length,
+    [currentStableId, users],
+  );
 
   const profileStats = React.useMemo(() => {
     const nextAssignment = derived.nextAssignmentForUser;
@@ -107,9 +122,36 @@ export default function ProfileScreen() {
     router.push('/(tabs)/messages');
   }, [router]);
 
-  const handleCall = React.useCallback(() => {
-    toast.showToast('Direktsamtal startar i en kommande version.', 'info');
-  }, [toast]);
+  const handleCall = React.useCallback(async () => {
+    if (!currentUser.phone) {
+      toast.showToast('Telefonnummer saknas för användaren.', 'info');
+      return;
+    }
+    const url = `tel:${currentUser.phone}`;
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        toast.showToast('Kan inte starta samtal på den här enheten.', 'error');
+        return;
+      }
+      await Linking.openURL(url);
+    } catch {
+      toast.showToast('Kunde inte starta samtalet.', 'error');
+    }
+  }, [currentUser.phone, toast]);
+
+  const handleLogout = React.useCallback(() => {
+    const result = actions.signOut();
+    if (result.success) {
+      toast.showToast('Du är utloggad.', 'success');
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, toast]);
+
+  const handleOpenMembers = React.useCallback(() => {
+    router.push('/members');
+  }, [router]);
 
   const handleTakeAssignment = React.useCallback(
     (assignmentId: string) => {
@@ -123,227 +165,317 @@ export default function ProfileScreen() {
     [actions, toast],
   );
 
-  return (
-    <LinearGradient colors={theme.gradients.background} style={styles.background}>
-      <SafeAreaView style={styles.safeArea}>
-        <ScreenHeader
-          style={styles.pageHeader}
-          title={currentUser.name}
-          primaryActionLabel="Skicka meddelande"
-          onPressPrimaryAction={handleMessage}
+  const heroSection = (
+    <View style={[styles.profileHero, isDesktopWeb && styles.profileHeroDesktop]}>
+      <View style={styles.profileHeroContent}>
+        <Image
+          source={currentUser.avatar ?? require('@/assets/images/dummy-avatar.png')}
+          style={styles.avatar}
         />
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.profileHero}>
-            <View style={styles.profileHeroContent}>
-              <Image
-                source={currentUser.avatar ?? require('@/assets/images/dummy-avatar.png')}
-                style={styles.avatar}
-              />
-              <View style={styles.heroTextBlock}>
-                <Text style={styles.heroName}>{currentUser.name}</Text>
-                <Text style={styles.heroRole}>
-                  {currentUser.responsibilities.join(' · ') || 'Stallmedlem'}
-                </Text>
-                <DetailRow icon="map-pin" text={currentUser.location} />
-                <DetailRow icon="phone" text={currentUser.phone} />
-              </View>
-            </View>
-            <View style={styles.heroChips}>
-              {currentUser.horses.map((horse) => (
-                <View key={horse} style={styles.heroChip}>
-                  <Feather name="heart" size={12} color="#2D6CF6" />
-                  <Text style={styles.heroChipText}>{horse}</Text>
-                </View>
-              ))}
-            </View>
-            <View style={styles.profileActionRow}>
-              <TouchableOpacity style={styles.primaryActionButton} onPress={handleCall}>
-                <Feather name="phone-call" size={16} color={palette.inverseText} />
-                <Text style={styles.primaryActionLabel}>Ring</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage}>
-                <Feather name="message-circle" size={16} color="#2D6CF6" />
-                <Text style={styles.secondaryActionLabel}>Chatta</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.moreActionButton}>
-                <Feather name="more-horizontal" size={18} color={palette.icon} />
-              </TouchableOpacity>
-            </View>
+        <View style={styles.heroTextBlock}>
+          <Text style={styles.heroName}>{currentUser.name}</Text>
+          <Text style={styles.heroRole}>
+            {currentUser.responsibilities.join(' · ') || 'Stallmedlem'}
+          </Text>
+          <DetailRow icon="map-pin" text={currentUser.location} />
+          <DetailRow icon="phone" text={currentUser.phone} />
+        </View>
+      </View>
+      <View style={styles.heroChips}>
+        {currentUser.horses.map((horse) => (
+          <View key={horse} style={styles.heroChip}>
+            <Feather name="heart" size={12} color="#2D6CF6" />
+            <Text style={styles.heroChipText}>{horse}</Text>
           </View>
+        ))}
+      </View>
+      <View style={styles.profileActionRow}>
+        <TouchableOpacity style={styles.primaryActionButton} onPress={handleCall}>
+          <Feather name="phone-call" size={16} color={palette.inverseText} />
+          <Text style={styles.primaryActionLabel}>Ring</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage}>
+          <Feather name="message-circle" size={16} color="#2D6CF6" />
+          <Text style={styles.secondaryActionLabel}>Chatta</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.moreActionButton}>
+          <Feather name="more-horizontal" size={18} color={palette.icon} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 
-          <View style={styles.statsSection}>
-            <View style={styles.statsRow}>
-              {profileStats.map((item) => (
-                <View key={item.id} style={styles.statItem}>
-                  <Text style={styles.statLabel}>{item.label}</Text>
-                  <Text style={styles.statValue}>{item.value}</Text>
-                </View>
-              ))}
-            </View>
+  const statsSection = (
+    <View style={[styles.statsSection, isDesktopWeb && styles.statsSectionDesktop]}>
+      <View style={styles.statsRow}>
+        {profileStats.map((item) => (
+          <View key={item.id} style={styles.statItem}>
+            <Text style={styles.statLabel}>{item.label}</Text>
+            <Text style={styles.statValue}>{item.value}</Text>
           </View>
+        ))}
+      </View>
+    </View>
+  );
 
-          <Card tone="muted" style={styles.defaultPassCard}>
-            <View style={styles.defaultPassHeader}>
-              <Text style={styles.defaultPassTitle}>Standardpass</Text>
-              <Text style={styles.defaultPassSubtitle}>
-                Dessa markeras automatiskt som dina i schemat – tryck “Kan inte” på en dag du inte kan.
-              </Text>
-            </View>
+  const accountSection = (
+    <Card tone="muted" style={styles.accountCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleGroup}>
+          <Text style={styles.sectionTitle}>Konto</Text>
+        </View>
+      </View>
+      <TouchableOpacity
+        style={styles.accountRow}
+        onPress={() => setUserSwitchVisible(true)}
+        activeOpacity={0.85}
+      >
+        <Text style={styles.accountRowText}>Byt användare</Text>
+        <Feather name="chevron-right" size={16} color={palette.secondaryText} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[styles.accountRow, styles.accountRowDanger]}
+        onPress={handleLogout}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.accountRowText, styles.accountRowTextDanger]}>Logga ut</Text>
+      </TouchableOpacity>
+    </Card>
+  );
 
-            <View style={styles.defaultPassGrid}>
-              {DEFAULT_SLOTS.map((slot) => (
-                <View key={slot.value} style={styles.defaultPassRow}>
-                  <Text style={styles.defaultPassRowLabel}>{slot.label}</Text>
-                  <View style={styles.defaultPassRowChips}>
-                    {DEFAULT_WEEKDAYS.map((day) => {
-                      const active = hasDefaultPass(currentUser.defaultPasses, day.value, slot.value);
-                      return (
-                        <TouchableOpacity
-                          key={`${slot.value}-${day.value}`}
-                          onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
-                          activeOpacity={0.85}
-                        >
-                          <Pill active={active} style={styles.defaultPassChip}>
-                            <Text
-                              style={[
-                                styles.defaultPassChipText,
-                                active && styles.defaultPassChipTextActive,
-                              ]}
-                            >
-                              {day.label}
-                            </Text>
-                          </Pill>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              ))}
-            </View>
-          </Card>
+  const membersSection = (
+    <Card tone="muted" style={styles.membersCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleGroup}>
+          <Text style={styles.sectionTitle}>Medlemmar</Text>
+          <View style={styles.sectionDot} />
+          <Text style={styles.sectionCount}>{memberCount}</Text>
+        </View>
+        <TouchableOpacity onPress={handleOpenMembers}>
+          <Text style={styles.sectionAction}>Öppna</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.membersHint}>Roller, kontaktuppgifter och hästar för valt stall.</Text>
+    </Card>
+  );
 
-          <View style={styles.sectionBlock}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleGroup}>
-                <Text style={styles.sectionTitle}>Kommande uppgifter</Text>
-                <View style={styles.sectionDot} />
-                <Text style={styles.sectionCount}>{upcomingAssignments.length}</Text>
-              </View>
-              <TouchableOpacity onPress={() => router.push('/calendar?view=mine')}>
-                <Text style={styles.sectionAction}>Visa schema</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.assignmentList}>
-              {upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser }) => (
-                <AssignmentCard
-                  key={assignment.id}
-                  assignment={assignment}
-                  assigneeName={assigneeName}
-                  isCurrentUser={isCurrentUser}
-                  onTakeAssignment={handleTakeAssignment}
-                />
-              ))}
-            </View>
-          </View>
+  const defaultPassSection = (
+    <Card tone="muted" style={styles.defaultPassCard}>
+      <View style={styles.defaultPassHeader}>
+        <Text style={styles.defaultPassTitle}>Standardpass</Text>
+        <Text style={styles.defaultPassSubtitle}>
+          Dessa markeras automatiskt som dina i schemat – tryck “Kan inte” på en dag du inte kan.
+        </Text>
+      </View>
 
-          <Card tone="muted" style={styles.calendarCard}>
-            <View style={styles.calendarHeader}>
-              <TouchableOpacity style={styles.calendarArrow}>
-                <Text style={styles.calendarArrowText}>‹</Text>
-              </TouchableOpacity>
-              <Text style={styles.calendarMonth}>{calendarMetadata.title}</Text>
-              <TouchableOpacity style={styles.calendarArrow}>
-                <Text style={styles.calendarArrowText}>›</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.calendarLegend}>
-              <LegendItem label="Idag" type="today" />
-              <LegendItem label="Mina pass" type="riding" />
-              <LegendItem label="Frånvaro" type="away" />
-            </View>
-
-            <View style={styles.weekRow}>
-              {WEEK_DAYS.map((day) => (
-                <View key={day} style={styles.weekDayContainer}>
-                  <Text style={styles.weekDay}>{day}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.dayGrid}>
-              {calendarMetadata.days.map((day, index) => {
-                if (day === null) {
-                  return <View key={`empty-${index}`} style={styles.dayCell} />;
-                }
-
-                const isToday = day === calendarMetadata.today;
-                const isRidingDay = calendarMetadata.ridingDays.has(day);
-                const isAwayDay = calendarMetadata.awayDays.has(day);
-
+      <View style={styles.defaultPassGrid}>
+        {DEFAULT_SLOTS.map((slot) => (
+          <View key={slot.value} style={styles.defaultPassRow}>
+            <Text style={styles.defaultPassRowLabel}>{slot.label}</Text>
+            <View style={styles.defaultPassRowChips}>
+              {DEFAULT_WEEKDAYS.map((day) => {
+                const active = hasDefaultPass(currentUser.defaultPasses, day.value, slot.value);
                 return (
-                  <View key={index} style={styles.dayCell}>
-                    <View
-                      style={[
-                        styles.dayCircle,
-                        isToday && styles.todayDay,
-                        isRidingDay && styles.ridingDay,
-                        isAwayDay && styles.awayDay,
-                      ]}
-                    >
+                  <TouchableOpacity
+                    key={`${slot.value}-${day.value}`}
+                    onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
+                    activeOpacity={0.85}
+                  >
+                    <Pill active={active} style={styles.defaultPassChip}>
                       <Text
                         style={[
-                          styles.dayLabel,
-                          isToday && styles.todayDayText,
-                          isRidingDay && styles.ridingDayText,
-                          isAwayDay && styles.awayDayText,
+                          styles.defaultPassChipText,
+                          active && styles.defaultPassChipTextActive,
                         ]}
                       >
-                        {day}
+                        {day.label}
                       </Text>
-                    </View>
-                  </View>
+                    </Pill>
+                  </TouchableOpacity>
                 );
               })}
             </View>
-          </Card>
+          </View>
+        ))}
+      </View>
+    </Card>
+  );
 
-          <Card tone="muted" style={styles.awayCard}>
-            <Text style={styles.awayTitle}>Planerad frånvaro</Text>
-            <View style={styles.awayList}>
-              {currentUser.awayNotices.map((notice) => (
-                <View key={notice.id} style={styles.awayItem}>
-                  <Text style={styles.awayRange}>{formatRange(notice.start, notice.end)}</Text>
-                  <Text style={styles.awayNote}>{notice.note}</Text>
-                </View>
-              ))}
-            </View>
-          </Card>
+  const upcomingSection = (
+    <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleGroup}>
+          <Text style={styles.sectionTitle}>Kommande uppgifter</Text>
+          <View style={styles.sectionDot} />
+          <Text style={styles.sectionCount}>{upcomingAssignments.length}</Text>
+        </View>
+        <TouchableOpacity onPress={() => router.push('/calendar?view=mine')}>
+          <Text style={styles.sectionAction}>Visa schema</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.assignmentList}>
+        {upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser }) => (
+          <AssignmentCard
+            key={assignment.id}
+            assignment={assignment}
+            assigneeName={assigneeName}
+            isCurrentUser={isCurrentUser}
+            onTakeAssignment={handleTakeAssignment}
+          />
+        ))}
+      </View>
+    </View>
+  );
 
-          <Card tone="muted" style={styles.recentCard}>
-            <View style={styles.sectionHeader}>
-              <View style={styles.sectionTitleGroup}>
-                <Text style={styles.sectionTitle}>Senaste inlägg</Text>
-                <View style={styles.sectionDot} />
-                <Text style={styles.sectionCount}>{state.posts.length}</Text>
+  const calendarSection = (
+    <Card tone="muted" style={styles.calendarCard}>
+      <View style={styles.calendarHeader}>
+        <TouchableOpacity style={styles.calendarArrow}>
+          <Text style={styles.calendarArrowText}>‹</Text>
+        </TouchableOpacity>
+        <Text style={styles.calendarMonth}>{calendarMetadata.title}</Text>
+        <TouchableOpacity style={styles.calendarArrow}>
+          <Text style={styles.calendarArrowText}>›</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.calendarLegend}>
+        <LegendItem label="Idag" type="today" />
+        <LegendItem label="Mina pass" type="riding" />
+        <LegendItem label="Frånvaro" type="away" />
+      </View>
+
+      <View style={styles.weekRow}>
+        {WEEK_DAYS.map((day) => (
+          <View key={day} style={styles.weekDayContainer}>
+            <Text style={styles.weekDay}>{day}</Text>
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.dayGrid}>
+        {calendarMetadata.days.map((day, index) => {
+          if (day === null) {
+            return <View key={`empty-${index}`} style={styles.dayCell} />;
+          }
+
+          const isToday = day === calendarMetadata.today;
+          const isRidingDay = calendarMetadata.ridingDays.has(day);
+          const isAwayDay = calendarMetadata.awayDays.has(day);
+
+          return (
+            <View key={index} style={styles.dayCell}>
+              <View
+                style={[
+                  styles.dayCircle,
+                  isToday && styles.todayDay,
+                  isRidingDay && styles.ridingDay,
+                  isAwayDay && styles.awayDay,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.dayLabel,
+                    isToday && styles.todayDayText,
+                    isRidingDay && styles.ridingDayText,
+                    isAwayDay && styles.awayDayText,
+                  ]}
+                >
+                  {day}
+                </Text>
               </View>
-              <TouchableOpacity>
-                <Text style={styles.sectionAction}>Visa alla</Text>
-              </TouchableOpacity>
             </View>
-            <Image
-              resizeMode="cover"
-              source={{
-                uri: 'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
-              }}
-              style={styles.recentImage}
-            />
-          </Card>
+          );
+        })}
+      </View>
+    </Card>
+  );
+
+  const awaySection = (
+    <Card tone="muted" style={styles.awayCard}>
+      <Text style={styles.awayTitle}>Planerad frånvaro</Text>
+      <View style={styles.awayList}>
+        {currentUser.awayNotices.map((notice) => (
+          <View key={notice.id} style={styles.awayItem}>
+            <Text style={styles.awayRange}>{formatRange(notice.start, notice.end)}</Text>
+            <Text style={styles.awayNote}>{notice.note}</Text>
+          </View>
+        ))}
+      </View>
+    </Card>
+  );
+
+  const recentSection = (
+    <Card tone="muted" style={styles.recentCard}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleGroup}>
+          <Text style={styles.sectionTitle}>Senaste inlägg</Text>
+          <View style={styles.sectionDot} />
+          <Text style={styles.sectionCount}>{state.posts.length}</Text>
+        </View>
+        <TouchableOpacity>
+          <Text style={styles.sectionAction}>Visa alla</Text>
+        </TouchableOpacity>
+      </View>
+      <Image
+        resizeMode="cover"
+        source={{
+          uri: 'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
+        }}
+        style={styles.recentImage}
+      />
+    </Card>
+  );
+
+  return (
+    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+      <SafeAreaView style={styles.safeArea}>
+      <ScreenHeader
+        style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+        title={currentUser.name}
+        primaryActionLabel="Skicka meddelande"
+        onPressPrimaryAction={handleMessage}
+      />
+      {!isDesktopWeb ? <StableSwitcher /> : null}
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
+        showsVerticalScrollIndicator={false}
+      >
+        {isDesktopWeb ? (
+          <View style={styles.desktopLayout}>
+            <View style={styles.desktopSidebar}>
+              {heroSection}
+              {statsSection}
+              {accountSection}
+              {awaySection}
+            </View>
+            <View style={styles.desktopMain}>
+              {membersSection}
+              {defaultPassSection}
+              {upcomingSection}
+              {calendarSection}
+              {recentSection}
+            </View>
+          </View>
+        ) : (
+          <>
+            {heroSection}
+            {statsSection}
+            {accountSection}
+            {membersSection}
+            {defaultPassSection}
+            {upcomingSection}
+            {calendarSection}
+            {awaySection}
+            {recentSection}
+          </>
+        )}
         </ScrollView>
+        <UserSwitchModal
+          visible={userSwitchVisible}
+          onClose={() => setUserSwitchVisible(false)}
+        />
       </SafeAreaView>
     </LinearGradient>
   );
@@ -537,8 +669,37 @@ const styles = StyleSheet.create({
     gap: 28,
     paddingTop: 12,
   },
+  scrollContentDesktop: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+  },
+  desktopLayout: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24,
+    width: '100%',
+  },
+  desktopSidebar: {
+    width: 340,
+    flexShrink: 0,
+    gap: 18,
+  },
+  desktopMain: {
+    flex: 1,
+    minWidth: 0,
+    gap: 24,
+  },
   pageHeader: {
     marginBottom: 0,
+  },
+  pageHeaderDesktop: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    marginBottom: 12,
   },
   profileHero: {
     gap: 18,
@@ -546,6 +707,10 @@ const styles = StyleSheet.create({
     paddingVertical: 22,
     borderRadius: radius.xl,
     backgroundColor: surfacePresets.hero,
+  },
+  profileHeroDesktop: {
+    paddingHorizontal: 24,
+    paddingVertical: 24,
   },
   profileHeroContent: {
     flexDirection: 'row',
@@ -650,6 +815,10 @@ const styles = StyleSheet.create({
     backgroundColor: surfacePresets.section,
     borderRadius: radius.xl,
   },
+  statsSectionDesktop: {
+    paddingHorizontal: 24,
+    paddingVertical: 22,
+  },
   defaultPassCard: {
     paddingHorizontal: 18,
     paddingVertical: 18,
@@ -722,6 +891,13 @@ const styles = StyleSheet.create({
   },
   sectionBlock: {
     gap: 14,
+  },
+  sectionBlockDesktop: {
+    padding: 16,
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
   },
   assignmentList: {
     gap: 12,
@@ -944,6 +1120,44 @@ const styles = StyleSheet.create({
   awayNote: {
     fontSize: 12,
     color: palette.secondaryText,
+  },
+  accountCard: {
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: 0,
+    backgroundColor: palette.surfaceTint,
+  },
+  accountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border,
+  },
+  accountRowText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  accountRowDanger: {
+    borderBottomWidth: 0,
+  },
+  accountRowTextDanger: {
+    color: palette.error,
+  },
+  membersCard: {
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: 0,
+    backgroundColor: palette.surfaceTint,
+  },
+  membersHint: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    lineHeight: 18,
   },
   recentCard: {
     gap: 14,

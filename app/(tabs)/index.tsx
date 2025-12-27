@@ -29,6 +29,8 @@ import { theme } from '@/components/theme';
 import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card, HeaderIconButton, SearchBar } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { StableSwitcher } from '@/components/StableSwitcher';
+import { UserSwitchModal } from '@/components/UserSwitchModal';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
@@ -40,6 +42,7 @@ import {
   formatSecondaryLabel,
   toISODate,
 } from '@/lib/schedule';
+import { formatShortDate, formatTimeAgo } from '@/lib/time';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -98,14 +101,12 @@ export default function OverviewScreen() {
     posts: postItems,
     currentUserId,
     paddocks,
-    stables,
     currentStableId,
     users,
   } = state;
   const toast = useToast();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
-  const currentStable = stables.find((stable) => stable.id === currentStableId);
   const { tour } = useLocalSearchParams<{ tour?: string }>();
   const activeAssignments = React.useMemo(
     () => assignments.filter((assignment) => assignment.stableId === currentStableId),
@@ -139,8 +140,18 @@ export default function OverviewScreen() {
   }, [tour]);
 
   const currentUser = users[currentUserId];
-  const userMembership = derived.membership;
   const currentAccess = derived.currentAccess;
+  const { permissions } = derived;
+  const canManageDayEvents = permissions.canManageDayEvents;
+
+  const activeMessages = React.useMemo(
+    () => messageItems.filter((item) => !item.stableId || item.stableId === currentStableId),
+    [messageItems, currentStableId],
+  );
+  const activePosts = React.useMemo(
+    () => postItems.filter((post) => !post.stableId || post.stableId === currentStableId),
+    [postItems, currentStableId],
+  );
 
   const alertBanner = React.useMemo(
     () => alerts.find((alert) => alert.type === 'critical'),
@@ -260,11 +271,14 @@ export default function OverviewScreen() {
       {
         id: 'events',
         label: 'Händelser',
-        caption: latestEvent
-          ? `Lägg till uppdatering`
-          : 'Lägg till uppdatering\nSe senaste',
+        caption: canManageDayEvents
+          ? latestEvent
+            ? 'Lägg till uppdatering'
+            : 'Lägg till uppdatering\nSe senaste'
+          : 'Se senaste händelser',
         icon: 'alert-triangle',
         tint: 'warning',
+        disabled: !canManageDayEvents,
       },
       {
         id: 'paddocks',
@@ -278,6 +292,7 @@ export default function OverviewScreen() {
       },
     ];
   }, [
+    canManageDayEvents,
     myNextAssignment,
     myAssignedUpcoming.length,
     openUpcomingCount,
@@ -324,8 +339,8 @@ export default function OverviewScreen() {
     [todaySummary],
   );
 
-  const visibleMessages = messagesExpanded ? messageItems : messageItems.slice(0, 1);
-  const visiblePosts = postsExpanded ? postItems : postItems.slice(0, 1);
+  const visibleMessages = messagesExpanded ? activeMessages : activeMessages.slice(0, 1);
+  const visiblePosts = postsExpanded ? activePosts : activePosts.slice(0, 1);
 
   const handleMessagePress = React.useCallback(() => {
     setMessagesExpanded((prev) => !prev);
@@ -334,19 +349,6 @@ export default function OverviewScreen() {
   const handlePostPress = React.useCallback(() => {
     setPostsExpanded((prev) => !prev);
   }, []);
-
-  const handleUserSwitch = React.useCallback(
-    (userId: string) => {
-      const result = actions.setCurrentUser(userId);
-      if (result.success) {
-        setUserSwitchVisible(false);
-        toast.showToast('Bytte användare.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
-    },
-    [actions, toast],
-  );
 
   const handleQuickActionPress = React.useCallback(
     (action: QuickAction) => {
@@ -363,10 +365,14 @@ export default function OverviewScreen() {
         return;
       }
       if (action.id === 'events') {
+        if (!canManageDayEvents) {
+          toast.showToast('Du kan läsa händelser men inte lägga till nya.', 'error');
+          return;
+        }
         setEventsModalVisible(true);
       }
     },
-    [router],
+    [canManageDayEvents, router, toast],
   );
 
   const handlePrimaryAction = React.useCallback(() => {
@@ -378,14 +384,18 @@ export default function OverviewScreen() {
       toast.showToast('Sök på namn, häst eller pass.', 'info');
       return;
     }
-    toast.showToast(`Sökning: ${query}`, 'success');
     setSearchVisible(false);
-  }, [searchText, toast]);
+    router.push({ pathname: '/members', params: { q: query } });
+  }, [router, searchText, toast]);
   const handleOpenSearch = React.useCallback(() => {
     setSearchVisible(true);
   }, []);
 
   const handleSubmitEvent = React.useCallback(() => {
+    if (!canManageDayEvents) {
+      toast.showToast('Behörighet saknas för att lägga till händelser.', 'error');
+      return;
+    }
     const details = eventText.trim();
     if (!details) {
       toast.showToast('Skriv en kort uppdatering.', 'error');
@@ -398,13 +408,224 @@ export default function OverviewScreen() {
     } else {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, eventText, toast]);
+  }, [actions, canManageDayEvents, eventText, toast]);
+
+  const eventsSection = recentEvents.length ? (
+    <Card
+      tone="muted"
+      elevated={!isDesktopWeb}
+      style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile]}
+    >
+      <View style={styles.eventsHeader}>
+        <Text style={[styles.eventsTitle, !isDesktopWeb && styles.eventsTitleMobile]}>
+          Händelser
+        </Text>
+        <Text style={[styles.eventsMeta, !isDesktopWeb && styles.eventsMetaMobile]}>
+          {`${alerts.length} totalt`}
+        </Text>
+      </View>
+      <View style={styles.eventsList}>
+        {recentEvents.map((event) => (
+          <View key={event.id} style={styles.eventRow}>
+            <View
+              style={[
+                styles.eventDot,
+                { backgroundColor: event.type === 'critical' ? palette.error : palette.primary },
+              ]}
+            />
+            <View style={styles.eventBody}>
+              <Text
+                style={[styles.eventMessage, !isDesktopWeb && styles.eventMessageMobile]}
+                numberOfLines={1}
+              >
+                {event.message}
+              </Text>
+              <Text style={styles.eventTime}>{formatEventTime(event.createdAt)}</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+    </Card>
+  ) : null;
+
+  const quickActionsSection = (
+    <View style={styles.quickActionGrid}>
+      {quickActions.map((action) => (
+        <QuickActionCard
+          key={action.id}
+          action={action}
+          isDesktop={isDesktopWeb}
+          onPress={handleQuickActionPress}
+        />
+      ))}
+    </View>
+  );
+
+  const summaryContent = (
+    <View style={styles.summarySection}>
+      <View style={styles.summaryHeader}>
+        <View>
+          <Text style={[styles.summaryTitle, !isDesktopWeb && styles.summaryTitleMobile]}>
+            Idag
+          </Text>
+          <Text style={[styles.summarySubtitle, !isDesktopWeb && styles.summarySubtitleMobile]}>
+            Status för dagens pass
+          </Text>
+        </View>
+        <View style={[styles.summaryBadge, !isDesktopWeb && styles.summaryBadgeMobile]}>
+          <Feather name="clock" size={14} color={palette.primary} />
+          <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
+        </View>
+      </View>
+      <View style={[styles.summaryTiles, isDesktopWeb && styles.summaryTilesDesktop]}>
+        {summaryStats.map((item) => (
+          <View
+            key={item.id}
+            style={[styles.summaryTile, !isDesktopWeb && styles.summaryTileMobile]}
+          >
+            <Text style={styles.summaryValue}>{item.value}</Text>
+            <Text style={[styles.summaryLabel, !isDesktopWeb && styles.summaryLabelMobile]}>
+              {item.label}
+            </Text>
+            {item.meta ? (
+              <Text style={[styles.summaryMeta, !isDesktopWeb && styles.summaryMetaMobile]}>
+                {item.meta}
+              </Text>
+            ) : null}
+          </View>
+        ))}
+      </View>
+      {derived.recentActivities.length > 0 ? (
+        <View style={styles.activityColumn}>
+          <Text style={styles.activityTitle}>Senaste aktivitet</Text>
+          <View style={styles.activityRow}>
+            {derived.recentActivities.slice(0, 3).map((activity) => (
+              <View key={activity.id} style={styles.activityChip}>
+                <Text style={styles.activityChipText}>{activity.label}</Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const summarySection = isDesktopWeb ? (
+    <Card tone="muted" style={styles.summaryCard}>
+      {summaryContent}
+    </Card>
+  ) : (
+    summaryContent
+  );
+
+  const messagesSection = (
+    <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
+      <SectionHeader title="Nya meddelanden" count={activeMessages.length} />
+      {visibleMessages.map((message, index) => {
+        const isPrimaryCard = index === 0;
+        const stacked = isPrimaryCard && !messagesExpanded;
+
+        return (
+          <StackedCard
+            key={message.id}
+            offset={stacked ? [6, 16] : undefined}
+            stacked={stacked}
+            onPress={isPrimaryCard ? handleMessagePress : undefined}
+            cardStyle={styles.messageCard}
+          >
+            <View style={styles.messageRow}>
+              {message.group ? (
+                <View style={styles.groupAvatar}>
+                  <UserGroupsIcon width={28} height={28} />
+                </View>
+              ) : (
+                <Image
+                  source={message.avatar ?? require('@/assets/images/dummy-avatar.png')}
+                  style={styles.messageAvatar}
+                />
+              )}
+              <View style={styles.messageContent}>
+                <View style={styles.messageHeader}>
+                  <View style={styles.messageTitleBlock}>
+                    <Text style={styles.messageTitle}>{message.title}</Text>
+                    {message.unreadCount ? (
+                      <View style={styles.messageBadge}>
+                        <Text style={styles.messageBadgeText}>{message.unreadCount}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={styles.messageTime}>{message.timeAgo}</Text>
+                </View>
+                <Text style={styles.messageAuthor}>{message.subtitle}</Text>
+                <Text numberOfLines={1} style={styles.messagePreview}>
+                  {message.description}
+                </Text>
+              </View>
+            </View>
+          </StackedCard>
+        );
+      })}
+      {messagesExpanded && (
+        <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
+          <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const postsSection = (
+    <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
+      <SectionHeader title="Senaste inlägg" count={activePosts.length} />
+      {visiblePosts.map((post, index) => {
+        const isPrimaryCard = index === 0;
+        const stacked = isPrimaryCard && !postsExpanded;
+        const postTimeAgo = post.createdAt ? formatTimeAgo(post.createdAt) : post.timeAgo;
+        const postDateLabel = post.createdAt ? formatShortDate(post.createdAt) : 'Idag';
+
+        return (
+          <StackedCard
+            key={post.id}
+            offset={stacked ? [8, 20] : undefined}
+            stacked={stacked}
+            onPress={isPrimaryCard ? handlePostPress : undefined}
+            cardStyle={styles.postCard}
+          >
+            <View style={styles.postHeader}>
+              <View style={styles.postContent}>
+                <Text style={styles.postAuthor}>{post.author}</Text>
+                {post.content ? <Text style={styles.postBody}>{post.content}</Text> : null}
+              </View>
+              <View style={styles.postMeta}>
+                <Text style={styles.postMetaDay}>{postDateLabel}</Text>
+                <Text style={styles.postMetaTime}>{postTimeAgo}</Text>
+              </View>
+            </View>
+            <View style={styles.postFooter}>
+              <View style={styles.postStat}>
+                <HeartIcon width={16} height={16} />
+                <Text style={styles.postStatText}>{post.likes}</Text>
+              </View>
+              <View style={styles.postStat}>
+                <SpeechBubbleIcon width={16} height={16} />
+                <Text style={styles.postStatText}>{post.comments}</Text>
+              </View>
+            </View>
+          </StackedCard>
+        );
+      })}
+      {postsExpanded && (
+        <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
+          <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
-          style={styles.pageHeader}
+          style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
           title="Dagens överblick"
           primaryAction={
             <View style={styles.headerRight}>
@@ -424,37 +645,19 @@ export default function OverviewScreen() {
           }
         />
         {searchVisible ? (
-          <SearchBar
-            placeholder="Sök personer, hästar, pass..."
-            value={searchText}
-            onChangeText={setSearchText}
-            onSubmitEditing={handleSearchSubmit}
-            returnKeyType="search"
-            autoFocus
-            style={styles.searchBar}
-          />
-        ) : null}
-        <View style={[styles.stableSwitcher, isDesktopWeb && styles.stableSwitcherDesktop]}>
-          <Text style={styles.stableLabel}>Stall</Text>
-          <View style={styles.stableChips}>
-            {stables.map((stable) => {
-              const active = stable.id === currentStableId;
-              return (
-                <TouchableOpacity
-                  key={stable.id}
-                  style={[styles.stableChip, active && styles.stableChipActive]}
-                  onPress={() => actions.setCurrentStable(stable.id)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.stableChipText, active && styles.stableChipTextActive]}>
-                    {stable.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+          <View style={isDesktopWeb ? styles.desktopClamp : undefined}>
+            <SearchBar
+              placeholder="Sök personer, hästar, pass..."
+              value={searchText}
+              onChangeText={setSearchText}
+              onSubmitEditing={handleSearchSubmit}
+              returnKeyType="search"
+              autoFocus
+              style={[styles.searchBar, isDesktopWeb && styles.searchBarDesktop]}
+            />
           </View>
-          {currentStable?.location ? <Text style={styles.stableLocation}>{currentStable.location}</Text> : null}
-        </View>
+        ) : null}
+        {!isDesktopWeb ? <StableSwitcher showAccess /> : null}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={[
@@ -464,198 +667,28 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
         >
           {isDesktopWeb ? (
-            <View style={styles.desktopNav}>
-              {[
-                { label: 'Överblick', route: '/' },
-                { label: 'Schema', route: '/calendar' },
-                { label: 'Meddelanden', route: '/messages' },
-                { label: 'Inlägg', route: '/feed' },
-                { label: 'Stall', route: '/stables' },
-                { label: 'Profil', route: '/profile' },
-              ].map((item) => (
-                <TouchableOpacity
-                  key={item.route}
-                  onPress={() => router.push(item.route as any)}
-                  activeOpacity={0.8}
-                  style={styles.desktopNavItem}
-                >
-                  <Text style={styles.desktopNavLabel}>{item.label}</Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.desktopDashboard}>
+            <View style={[styles.desktopColumn, styles.desktopColumnPrimary]}>
+              {eventsSection}
+              {quickActionsSection}
+              {summarySection}
+              <WeatherPanel />
             </View>
-          ) : null}
-
-          {recentEvents.length ? (
-            <Card tone="muted" style={styles.eventsCard}>
-              <View style={styles.eventsHeader}>
-                <Text style={styles.eventsTitle}>Händelser</Text>
-                <Text style={styles.eventsMeta}>{`${alerts.length} totalt`}</Text>
-              </View>
-              <View style={styles.eventsList}>
-                {recentEvents.map((event) => (
-                  <View key={event.id} style={styles.eventRow}>
-                    <View
-                      style={[
-                        styles.eventDot,
-                        { backgroundColor: event.type === 'critical' ? palette.error : palette.primary },
-                      ]}
-                    />
-                    <View style={styles.eventBody}>
-                      <Text style={styles.eventMessage} numberOfLines={1}>
-                        {event.message}
-                      </Text>
-                      <Text style={styles.eventTime}>{formatEventTime(event.createdAt)}</Text>
-                    </View>
-                  </View>
-                ))}
-              </View>
-            </Card>
-          ) : null}
-
-          <View style={styles.quickActionGrid}>
-            {quickActions.map((action) => (
-              <QuickActionCard
-                key={action.id}
-                action={action}
-                isDesktop={isDesktopWeb}
-                onPress={handleQuickActionPress}
-              />
-            ))}
-          </View>
-
-
-          <View style={styles.summarySection}>
-            <View style={styles.summaryHeader}>
-              <View>
-                <Text style={styles.summaryTitle}>Idag</Text>
-                <Text style={styles.summarySubtitle}>Status för dagens pass</Text>
-              </View>
-              <View style={styles.summaryBadge}>
-                <Feather name="clock" size={14} color={palette.primary} />
-                <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
-              </View>
+            <View style={[styles.desktopColumn, styles.desktopColumnSecondary]}>
+              {messagesSection}
+              {postsSection}
             </View>
-            <View style={[styles.summaryTiles, isDesktopWeb && styles.summaryTilesDesktop]}>
-              {summaryStats.map((item) => (
-                <View key={item.id} style={styles.summaryTile}>
-                  <Text style={styles.summaryValue}>{item.value}</Text>
-                  <Text style={styles.summaryLabel}>{item.label}</Text>
-                  {item.meta ? <Text style={styles.summaryMeta}>{item.meta}</Text> : null}
-                </View>
-              ))}
             </View>
-            {derived.recentActivities.length > 0 ? (
-              <View style={styles.activityColumn}>
-                <Text style={styles.activityTitle}>Senaste aktivitet</Text>
-                <View style={styles.activityRow}>
-                  {derived.recentActivities.slice(0, 3).map((activity) => (
-                    <View key={activity.id} style={styles.activityChip}>
-                      <Text style={styles.activityChipText}>{activity.label}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-          </View>
-
-          <WeatherPanel />
-
-          <View style={styles.sectionBlock}>
-            <SectionHeader title="Nya meddelanden" count={messageItems.length} />
-            {visibleMessages.map((message, index) => {
-              const isPrimaryCard = index === 0;
-              const stacked = isPrimaryCard && !messagesExpanded;
-
-              return (
-                <StackedCard
-                  key={message.id}
-                  offset={stacked ? [6, 16] : undefined}
-                  stacked={stacked}
-                  onPress={isPrimaryCard ? handleMessagePress : undefined}
-                  cardStyle={styles.messageCard}
-                >
-                  <View style={styles.messageRow}>
-                    {message.group ? (
-                      <View style={styles.groupAvatar}>
-                        <UserGroupsIcon width={28} height={28} />
-                      </View>
-                    ) : (
-                      <Image
-                        source={message.avatar ?? require('@/assets/images/dummy-avatar.png')}
-                        style={styles.messageAvatar}
-                      />
-                    )}
-                    <View style={styles.messageContent}>
-                      <View style={styles.messageHeader}>
-                        <View style={styles.messageTitleBlock}>
-                          <Text style={styles.messageTitle}>{message.title}</Text>
-                          {message.unreadCount ? (
-                            <View style={styles.messageBadge}>
-                              <Text style={styles.messageBadgeText}>{message.unreadCount}</Text>
-                            </View>
-                          ) : null}
-                        </View>
-                        <Text style={styles.messageTime}>{message.timeAgo}</Text>
-                      </View>
-                      <Text style={styles.messageAuthor}>{message.subtitle}</Text>
-                      <Text numberOfLines={1} style={styles.messagePreview}>
-                        {message.description}
-                      </Text>
-                    </View>
-                  </View>
-                </StackedCard>
-              );
-            })}
-            {messagesExpanded && (
-              <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
-                <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.sectionBlock}>
-            <SectionHeader title="Senaste inlägg" count={postItems.length} />
-            {visiblePosts.map((post, index) => {
-              const isPrimaryCard = index === 0;
-              const stacked = isPrimaryCard && !postsExpanded;
-
-              return (
-                <StackedCard
-                  key={post.id}
-                  offset={stacked ? [8, 20] : undefined}
-                  stacked={stacked}
-                  onPress={isPrimaryCard ? handlePostPress : undefined}
-                  cardStyle={styles.postCard}
-                >
-                  <View style={styles.postHeader}>
-                    <View style={styles.postContent}>
-                      <Text style={styles.postAuthor}>{post.author}</Text>
-                      {post.content ? <Text style={styles.postBody}>{post.content}</Text> : null}
-                    </View>
-                    <View style={styles.postMeta}>
-                      <Text style={styles.postMetaDay}>Nu</Text>
-                      <Text style={styles.postMetaTime}>{post.timeAgo}</Text>
-                    </View>
-                  </View>
-                  <View style={styles.postFooter}>
-                    <View style={styles.postStat}>
-                      <HeartIcon width={16} height={16} />
-                      <Text style={styles.postStatText}>{post.likes}</Text>
-                    </View>
-                    <View style={styles.postStat}>
-                      <SpeechBubbleIcon width={16} height={16} />
-                      <Text style={styles.postStatText}>{post.comments}</Text>
-                    </View>
-                  </View>
-                </StackedCard>
-              );
-            })}
-            {postsExpanded && (
-              <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
-                <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          ) : (
+            <>
+              {eventsSection}
+              {quickActionsSection}
+              {summarySection}
+              <WeatherPanel />
+              {messagesSection}
+              {postsSection}
+            </>
+          )}
       </ScrollView>
     </SafeAreaView>
       <QuickActionSheet
@@ -704,48 +737,7 @@ export default function OverviewScreen() {
         </View>
       </Modal>
 
-      <Modal visible={userSwitchVisible} transparent animationType="fade" onRequestClose={() => setUserSwitchVisible(false)}>
-        <View style={styles.tourOverlay}>
-          <View style={styles.tourCard}>
-            <Text style={styles.tourTitle}>Byt användare</Text>
-            <Text style={styles.tourText}>Välj en användare för att testa roller och behörighet.</Text>
-            <View style={{ gap: 8, width: '100%' }}>
-              {Object.values(users).map((user) => {
-                const membership = user.membership.find((m) => m.stableId === currentStableId);
-                const accessLabel =
-                  membership?.access === 'owner'
-                    ? 'Full'
-                    : membership?.access === 'edit'
-                      ? 'Redigera'
-                      : 'Läsa';
-                const active = user.id === currentUserId;
-                return (
-                  <TouchableOpacity
-                    key={user.id}
-                    style={[styles.userRow, active && styles.userRowActive]}
-                    onPress={() => handleUserSwitch(user.id)}
-                    activeOpacity={0.85}
-                  >
-                    <View>
-                      <Text style={styles.userName}>{user.name}</Text>
-                      <Text style={styles.userMeta}>{membership?.role ?? 'Ingen roll'} · {accessLabel || 'Läs'}</Text>
-                    </View>
-                    {active ? <Feather name="check" size={16} color={palette.primary} /> : null}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            <View style={styles.tourActions}>
-              <TouchableOpacity style={styles.tourSecondary} onPress={() => setUserSwitchVisible(false)} activeOpacity={0.85}>
-                <Text style={styles.tourSecondaryText}>Stäng</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.tourPrimary} onPress={() => setUserSwitchVisible(false)} activeOpacity={0.9}>
-                <Text style={styles.tourPrimaryText}>Klart</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <UserSwitchModal visible={userSwitchVisible} onClose={() => setUserSwitchVisible(false)} />
     </LinearGradient>
   );
 }
@@ -826,12 +818,13 @@ function QuickActionCard({
         end={{ x: 1, y: 1 }}
         style={[
           styles.quickActionInner,
+          !isDesktop && styles.quickActionInnerMobile,
           {
             borderColor: themeStyles.accentBorder,
             shadowColor: themeStyles.shadow,
-            shadowOpacity: 0.2,
-            shadowRadius: 14,
-            shadowOffset: { width: 0, height: 8 },
+            shadowOpacity: isDesktop ? 0.2 : 0.12,
+            shadowRadius: isDesktop ? 14 : 10,
+            shadowOffset: { width: 0, height: isDesktop ? 8 : 5 },
             elevation: 2,
           },
           action.disabled && styles.quickActionInnerDisabled,
@@ -848,10 +841,16 @@ function QuickActionCard({
           />
         </View>
         <View style={styles.quickActionText}>
-          <Text numberOfLines={1} style={styles.quickActionLabel}>
+          <Text
+            numberOfLines={1}
+            style={[styles.quickActionLabel, !isDesktop && styles.quickActionLabelMobile]}
+          >
             {action.label}
           </Text>
-          <Text numberOfLines={2} style={styles.quickActionCaption}>
+          <Text
+            numberOfLines={2}
+            style={[styles.quickActionCaption, !isDesktop && styles.quickActionCaptionMobile]}
+          >
             {action.caption}
           </Text>
         </View>
@@ -1115,13 +1114,43 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   scrollContentDesktop: {
-    maxWidth: 1200,
+    maxWidth: 1120,
     width: '100%',
-    alignSelf: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+  },
+  desktopDashboard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 24,
+    width: '100%',
+  },
+  desktopColumn: {
+    flex: 1,
+    minWidth: 0,
+    gap: 18,
+  },
+  desktopColumnPrimary: {
+    flex: 1.15,
+  },
+  desktopColumnSecondary: {
+    flex: 0.85,
+  },
+  desktopClamp: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
     paddingHorizontal: 28,
   },
   pageHeader: {
     marginBottom: 8,
+  },
+  pageHeaderDesktop: {
+    maxWidth: 1120,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    marginBottom: 12,
   },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   userChip: {
@@ -1150,49 +1179,11 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
   },
-  stableSwitcher: {
-    paddingHorizontal: 20,
-    gap: 6,
-    marginBottom: 4,
-  },
-  stableSwitcherDesktop: {
-    paddingHorizontal: 0,
-    alignSelf: 'center',
+  searchBarDesktop: {
+    marginHorizontal: 0,
+    marginTop: 6,
+    marginBottom: 12,
     width: '100%',
-  },
-  stableLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.secondaryText,
-  },
-  stableLocation: {
-    fontSize: 12,
-    color: palette.mutedText,
-  },
-  stableChips: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  stableChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    backgroundColor: palette.surfaceTint,
-  },
-  stableChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.12)',
-    borderColor: 'rgba(45,108,246,0.3)',
-  },
-  stableChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.primaryText,
-  },
-  stableChipTextActive: {
-    color: palette.primary,
   },
   alertCard: {
     paddingHorizontal: 18,
@@ -1227,6 +1218,11 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     gap: 12,
   },
+  eventsCardMobile: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.08)',
+    backgroundColor: palette.surface,
+  },
   eventsHeader: {
     flexDirection: 'row',
     alignItems: 'baseline',
@@ -1237,10 +1233,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.primaryText,
   },
+  eventsTitleMobile: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
   eventsMeta: {
     fontSize: 12,
     color: palette.secondaryText,
     fontWeight: '600',
+  },
+  eventsMetaMobile: {
+    fontSize: 11,
   },
   eventsList: {
     gap: 10,
@@ -1263,6 +1266,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: palette.primaryText,
     fontWeight: '500',
+  },
+  eventMessageMobile: {
+    fontSize: 14,
+    lineHeight: 18,
   },
   eventTime: {
     fontSize: 12,
@@ -1293,6 +1300,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: systemPalette.surface,
   },
+  quickActionInnerMobile: {
+    borderColor: 'rgba(15,22,34,0.08)',
+  },
   quickActionInnerDisabled: {
     opacity: 0.7,
   },
@@ -1322,10 +1332,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.primaryText,
   },
+  quickActionLabelMobile: {
+    fontSize: 14,
+    letterSpacing: -0.2,
+    fontWeight: '700',
+  },
   quickActionCaption: {
     fontSize: 12,
     lineHeight: 16,
     color: palette.secondaryText,
+  },
+  quickActionCaptionMobile: {
+    fontSize: 11,
+    lineHeight: 15,
+    color: palette.mutedText,
   },
   summarySection: {
     gap: 16,
@@ -1333,6 +1353,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     marginTop: 0,
     paddingHorizontal: 2,
+  },
+  summaryCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 0,
+    gap: 12,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -1345,16 +1371,31 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: palette.primaryText,
   },
+  summaryTitleMobile: {
+    fontSize: 17,
+    fontWeight: '600',
+    letterSpacing: -0.2,
+  },
   summarySubtitle: {
     marginTop: 4,
     fontSize: 13,
     color: palette.secondaryText,
+  },
+  summarySubtitleMobile: {
+    fontSize: 12,
+    color: palette.mutedText,
   },
   summaryBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingVertical: 8,
+  },
+  summaryBadgeMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(45,108,246,0.1)',
   },
   summaryBadgeText: {
     fontSize: 12,
@@ -1386,6 +1427,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 },
     elevation: 1,
   },
+  summaryTileMobile: {
+    borderColor: 'rgba(15,22,34,0.08)',
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
   summaryValue: {
     fontSize: 24,
     fontWeight: '700',
@@ -1398,9 +1445,15 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     color: '#5F6473',
   },
+  summaryLabelMobile: {
+    letterSpacing: 0.4,
+  },
   summaryMeta: {
     fontSize: 12,
     color: palette.mutedText,
+  },
+  summaryMetaMobile: {
+    fontSize: 11,
   },
   activityColumn: {
     gap: 8,
@@ -1757,6 +1810,13 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 8,
   },
+  sectionBlockDesktop: {
+    padding: 16,
+    borderRadius: radius.xl,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1849,26 +1909,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
     marginTop: 6,
-  },
-  desktopNav: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 6,
-    marginBottom: 6,
-  },
-  desktopNavItem: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-  },
-  desktopNavLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.primaryText,
   },
   postStat: {
     flexDirection: 'row',

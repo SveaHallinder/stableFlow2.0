@@ -1,8 +1,10 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import { View, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
+import { DesktopNav } from '@/components/DesktopNav';
+import { useAppData } from '@/context/AppDataContext';
 
 // SVG imports
 import DashOutlineIcon from '@/assets/images/tabbar-outl-dash.svg';
@@ -20,10 +22,15 @@ const palette = theme.colors;
 const radii = theme.radii;
 
 export default function TabLayout() {
+  const { state } = useAppData();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
 
-  return (
+  if (!state.sessionUserId) {
+    return <Redirect href="/(auth)" />;
+  }
+
+  const tabs = (
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -98,6 +105,19 @@ export default function TabLayout() {
       />
     </Tabs>
   );
+
+  if (!isDesktopWeb) {
+    return tabs;
+  }
+
+  return (
+    <View style={styles.desktopShell}>
+      <View style={styles.desktopSidebar}>
+        <DesktopNav variant="sidebar" />
+      </View>
+      <View style={styles.desktopMain}>{tabs}</View>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -136,5 +156,28 @@ const styles = StyleSheet.create({
   },
   tabBarHidden: {
     display: 'none',
+  },
+  desktopShell: {
+    flex: 1,
+    flexDirection: 'row',
+    backgroundColor: palette.background,
+  },
+  desktopSidebar: {
+    width: 260,
+    paddingHorizontal: 28,
+    paddingTop: 32,
+    paddingBottom: 24,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+    shadowColor: '#121826',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 8, height: 0 },
+    elevation: 2,
+  },
+  desktopMain: {
+    flex: 1,
+    minWidth: 0,
   },
 });

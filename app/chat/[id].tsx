@@ -1,12 +1,14 @@
 import React from 'react';
 import {
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import type { ImageSourcePropType } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +18,7 @@ import { theme } from '@/components/theme';
 import { radius, space } from '@/design/tokens';
 import { HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import type { ConversationMessage, MessagePreview } from '@/context/AppDataContext';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
@@ -28,6 +31,8 @@ export default function ChatScreen() {
   const { state, actions } = useAppData();
   const { id: rawId, name } = useLocalSearchParams<{ id?: string; name?: string }>();
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
   const conversationPreview = state.messages.find(
     (message: MessagePreview) => message.id === conversationId,
   );
@@ -56,123 +61,143 @@ export default function ChatScreen() {
     }
   };
 
+  const wrapDesktop = (content: React.ReactNode) => {
+    if (!isDesktopWeb) {
+      return content;
+    }
+    return (
+      <View style={styles.desktopShell}>
+        <View style={styles.desktopSidebar}>
+          <DesktopNav variant="sidebar" />
+        </View>
+        <View style={styles.desktopMain}>{content}</View>
+      </View>
+    );
+  };
+
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
-          <ScreenHeader
-            style={styles.pageHeader}
-            title=""
-            left={
-              <HeaderIconButton
-                accessibilityRole="button"
-                accessibilityLabel="Tillbaka"
-                onPress={() => router.back()}
-                style={styles.backButton}
-              >
-                <Text style={styles.backIcon}>‹</Text>
-              </HeaderIconButton>
-            }
-            showLogo={false}
-            showSearch={false}
-          >
-            <View style={styles.headerProfile}>
-              {isGroup ? (
-                <View style={styles.headerGroupAvatar}>
-                  <UserGroupsIcon width={20} height={20} />
-                </View>
-              ) : (
-                <Image
-                  source={
-                    conversationPreview?.avatar ?? require('@/assets/images/dummy-avatar.png')
-                  }
-                  style={styles.headerAvatar}
-                />
-              )}
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {displayName}
-              </Text>
-            </View>
-          </ScreenHeader>
-
-          <ScrollView
-            style={styles.scroll}
-            contentContainerStyle={styles.messagesContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {messages.map((message, index) => {
-              const isMe = message.authorId === state.currentUserId;
-              const isLast = index === messages.length - 1;
-              const avatarSource = !isMe
-                ? getAvatarForAuthor(message, conversationPreview)
-                : undefined;
-
-              return (
-                <View
-                  key={message.id}
-                  style={[styles.messageGroup, isLast && styles.messageGroupLast]}
+        {wrapDesktop(
+          <View style={styles.container}>
+            <ScreenHeader
+              style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+              title=""
+              left={
+                <HeaderIconButton
+                  accessibilityRole="button"
+                  accessibilityLabel="Tillbaka"
+                  onPress={() => router.back()}
+                  style={styles.backButton}
                 >
-                  <View
-                    style={[
-                      styles.messageRow,
-                      isMe ? styles.messageRowMe : styles.messageRowOther,
-                    ]}
-                  >
-                    {!isMe && avatarSource && (
-                      <Image source={avatarSource} style={styles.messageAvatar} />
-                    )}
+                  <Text style={styles.backIcon}>‹</Text>
+                </HeaderIconButton>
+              }
+              showLogo={false}
+              showSearch={false}
+            >
+              <View style={styles.headerProfile}>
+                {isGroup ? (
+                  <View style={styles.headerGroupAvatar}>
+                    <UserGroupsIcon width={20} height={20} />
+                  </View>
+                ) : (
+                  <Image
+                    source={
+                      conversationPreview?.avatar ?? require('@/assets/images/dummy-avatar.png')
+                    }
+                    style={styles.headerAvatar}
+                  />
+                )}
+                <Text style={[styles.headerTitle, isDesktopWeb && styles.headerTitleDesktop]} numberOfLines={1}>
+                  {displayName}
+                </Text>
+              </View>
+            </ScreenHeader>
 
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={[
+                styles.messagesContent,
+                isDesktopWeb && styles.messagesContentDesktop,
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
+              {messages.map((message, index) => {
+                const isMe = message.authorId === state.currentUserId;
+                const isLast = index === messages.length - 1;
+                const avatarSource = !isMe
+                  ? getAvatarForAuthor(message, conversationPreview)
+                  : undefined;
+
+                return (
+                  <View
+                    key={message.id}
+                    style={[styles.messageGroup, isLast && styles.messageGroupLast]}
+                  >
                     <View
                       style={[
-                        styles.messageBubble,
-                        isMe && styles.messageBubbleMe,
+                        styles.messageRow,
+                        isMe ? styles.messageRowMe : styles.messageRowOther,
                       ]}
                     >
-                      <Text style={[styles.messageText, isMe && styles.messageTextMe]}>
-                        {message.text}
-                      </Text>
+                      {!isMe && avatarSource && (
+                        <Image source={avatarSource} style={styles.messageAvatar} />
+                      )}
+
+                      <View
+                        style={[
+                          styles.messageBubble,
+                          isDesktopWeb && styles.messageBubbleDesktop,
+                          isMe && styles.messageBubbleMe,
+                        ]}
+                      >
+                        <Text style={[styles.messageText, isMe && styles.messageTextMe]}>
+                          {message.text}
+                        </Text>
+                      </View>
                     </View>
+
+                    {message.status ? (
+                      <Text
+                        style={[
+                          styles.statusText,
+                          isMe ? styles.statusTextMe : styles.statusTextOther,
+                        ]}
+                      >
+                        {message.status}
+                      </Text>
+                    ) : null}
                   </View>
+                );
+              })}
 
-                  {message.status ? (
-                    <Text
-                      style={[
-                        styles.statusText,
-                        isMe ? styles.statusTextMe : styles.statusTextOther,
-                      ]}
-                    >
-                      {message.status}
-                    </Text>
-                  ) : null}
-                </View>
-              );
-            })}
+              <View style={styles.bottomSpacer} />
+            </ScrollView>
 
-            <View style={styles.bottomSpacer} />
-          </ScrollView>
+            <View style={[styles.composerContainer, isDesktopWeb && styles.composerContainerDesktop]}>
+              <View style={[styles.composer, isDesktopWeb && styles.composerDesktop]}>
+                <TouchableOpacity style={styles.composerAction}>
+                  <Text style={styles.composerActionIcon}>+</Text>
+                </TouchableOpacity>
 
-          <View style={styles.composerContainer}>
-            <View style={styles.composer}>
-              <TouchableOpacity style={styles.composerAction}>
-                <Text style={styles.composerActionIcon}>+</Text>
+                <TextInput
+                  placeholder="Skriv ditt meddelande..."
+                  placeholderTextColor={palette.mutedText}
+                  style={styles.composerInput}
+                  value={composerText}
+                  onChangeText={setComposerText}
+                  onSubmitEditing={handleSend}
+                  returnKeyType="send"
+                />
+              </View>
+
+              <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+                <Text style={styles.sendButtonIcon}>↑</Text>
               </TouchableOpacity>
-
-              <TextInput
-                placeholder="Skriv ditt meddelande..."
-                placeholderTextColor={palette.mutedText}
-                style={styles.composerInput}
-                value={composerText}
-                onChangeText={setComposerText}
-                onSubmitEditing={handleSend}
-                returnKeyType="send"
-              />
             </View>
-
-            <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-              <Text style={styles.sendButtonIcon}>↑</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+          </View>,
+        )}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -206,8 +231,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  desktopShell: { flex: 1, flexDirection: 'row' },
+  desktopSidebar: {
+    width: 260,
+    paddingHorizontal: 28,
+    paddingTop: 32,
+    paddingBottom: 24,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+    shadowColor: '#121826',
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    shadowOffset: { width: 8, height: 0 },
+    elevation: 2,
+  },
+  desktopMain: { flex: 1, minWidth: 0 },
   pageHeader: {
     marginBottom: 0,
+  },
+  pageHeaderDesktop: {
+    maxWidth: 960,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    marginBottom: 10,
   },
   backButton: {
     borderRadius: radius.full,
@@ -248,6 +296,9 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
     maxWidth: 220,
   },
+  headerTitleDesktop: {
+    maxWidth: 420,
+  },
   scroll: {
     flex: 1,
   },
@@ -255,6 +306,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 24,
     paddingBottom: 30,
+  },
+  messagesContentDesktop: {
+    maxWidth: 960,
+    width: '100%',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 28,
+    paddingTop: 28,
   },
   messageGroup: {
     marginBottom: 22,
@@ -287,6 +345,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: palette.surfaceTint,
+  },
+  messageBubbleDesktop: {
+    maxWidth: '60%',
   },
   messageBubbleMe: {
     backgroundColor: palette.primary,
@@ -322,6 +383,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: space.md,
   },
+  composerContainerDesktop: {
+    maxWidth: 960,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: 28,
+  },
   composer: {
     flex: 1,
     flexDirection: 'row',
@@ -332,6 +399,9 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     paddingHorizontal: 18,
     paddingVertical: 8,
+  },
+  composerDesktop: {
+    paddingVertical: 10,
   },
   composerAction: {
     width: 32,

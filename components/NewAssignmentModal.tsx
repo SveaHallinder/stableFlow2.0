@@ -23,6 +23,8 @@ export type AssignmentModalSubmit = {
   note?: string;
   assignToCurrentUser?: boolean;
   noteProvided: boolean;
+  labelOverride?: string;
+  time?: string;
 };
 
 type NewAssignmentModalProps = {
@@ -33,6 +35,8 @@ type NewAssignmentModalProps = {
   initialDate?: string;
   initialSlot?: AssignmentSlot;
   initialNote?: string;
+  initialLabel?: string;
+  initialTime?: string;
   initialAssignToMe?: boolean;
   mode?: 'create' | 'edit';
   onDelete?: () => void;
@@ -52,6 +56,8 @@ export function NewAssignmentModal({
   initialDate,
   initialSlot,
   initialNote,
+  initialLabel,
+  initialTime,
   initialAssignToMe,
   mode = 'create',
   onDelete,
@@ -59,11 +65,17 @@ export function NewAssignmentModal({
   const defaultDate = initialDate ?? dateOptions[0]?.value ?? '';
   const defaultSlot = initialSlot ?? 'Morning';
   const defaultNote = initialNote ?? '';
+  const defaultLabel = initialLabel ?? '';
+  const defaultTime = initialTime ?? '';
 
   const [selectedDate, setSelectedDate] = React.useState<string>(() => defaultDate);
   const [selectedSlot, setSelectedSlot] = React.useState<AssignmentSlot>(() => defaultSlot);
   const [note, setNote] = React.useState(defaultNote);
+  const [label, setLabel] = React.useState(defaultLabel);
+  const [time, setTime] = React.useState(defaultTime);
   const [assignToMe, setAssignToMe] = React.useState(initialAssignToMe ?? false);
+  const [labelTouched, setLabelTouched] = React.useState(false);
+  const [timeTouched, setTimeTouched] = React.useState(false);
 
   const title = mode === 'edit' ? 'Redigera pass' : 'Nytt pass';
   const primaryLabel = mode === 'edit' ? 'Spara ändringar' : 'Skapa pass';
@@ -74,13 +86,28 @@ export function NewAssignmentModal({
       const nextDate = initialDate ?? dateOptions[0]?.value ?? '';
       const nextSlot = initialSlot ?? 'Morning';
       const nextNote = initialNote ?? '';
+      const nextLabel = initialLabel ?? '';
+      const nextTime = initialTime ?? '';
 
       setSelectedDate(nextDate);
       setSelectedSlot(nextSlot);
       setNote(nextNote);
+      setLabel(nextLabel);
+      setTime(nextTime);
       setAssignToMe(initialAssignToMe ?? false);
+      setLabelTouched(false);
+      setTimeTouched(false);
     }
-  }, [visible, dateOptions, initialDate, initialSlot, initialNote, initialAssignToMe]);
+  }, [
+    visible,
+    dateOptions,
+    initialDate,
+    initialSlot,
+    initialNote,
+    initialAssignToMe,
+    initialLabel,
+    initialTime,
+  ]);
 
   const handleSubmit = () => {
     if (!selectedDate) {
@@ -97,6 +124,8 @@ export function NewAssignmentModal({
       note: cleanedNote,
       assignToCurrentUser: assignToMe,
       noteProvided: noteChanged,
+      labelOverride: labelTouched ? label.trim() : undefined,
+      time: timeTouched ? time.trim() : undefined,
     });
     onClose();
   };
@@ -153,6 +182,35 @@ export function NewAssignmentModal({
                 );
               })}
             </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Benämning</Text>
+            <TextInput
+              value={label}
+              onChangeText={(value) => {
+                setLabel(value);
+                setLabelTouched(true);
+              }}
+              placeholder="Ex. Mockning, Harva ridhus"
+              placeholderTextColor={color.textMuted}
+              style={styles.compactInput}
+            />
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Tid</Text>
+            <TextInput
+              value={time}
+              onChangeText={(value) => {
+                setTime(value);
+                setTimeTouched(true);
+              }}
+              placeholder="07:00"
+              placeholderTextColor={color.textMuted}
+              style={styles.compactInput}
+              keyboardType="numbers-and-punctuation"
+            />
           </View>
 
           <View style={styles.section}>
@@ -261,6 +319,15 @@ const styles = StyleSheet.create({
     color: color.text,
     minHeight: 90,
     textAlignVertical: 'top',
+  },
+  compactInput: {
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(15,22,34,0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: color.text,
   },
   assignToggle: {
     borderRadius: radius.full,
