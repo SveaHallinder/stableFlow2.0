@@ -40,6 +40,8 @@ export default function FeedScreen() {
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
   const toast = useToast();
+  const scrollRef = React.useRef<ScrollView>(null);
+  const composerInputRef = React.useRef<TextInput>(null);
   const {
     state: { posts, currentStableId, stables, horses, users, currentUserId, groups },
     derived,
@@ -51,6 +53,7 @@ export default function FeedScreen() {
   const [selectedGroups, setSelectedGroups] = React.useState<string[]>([]);
   const [postImage, setPostImage] = React.useState<string | null>(null);
   const [newGroupName, setNewGroupName] = React.useState('');
+  const [focusComposerTick, setFocusComposerTick] = React.useState(0);
 
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarmId = currentStable?.farmId;
@@ -150,7 +153,7 @@ export default function FeedScreen() {
       }
       return groups.some((groupId) => accessibleGroups.has(groupId));
     });
-  }, [currentFarmId, currentStableId, getPostGroups, posts]);
+  }, [currentFarmId, currentStableId, getPostGroups, groups, posts, stableGroupIdValue]);
 
   const filteredPosts = React.useMemo(() => {
     if (groupFilter === 'all') {
@@ -177,7 +180,6 @@ export default function FeedScreen() {
   }, [
     accessiblePosts,
     currentFarmId,
-    currentStableId,
     customFilterId,
     getPostGroups,
     groupFilter,
@@ -309,6 +311,23 @@ export default function FeedScreen() {
     setPostImage(null);
   }, []);
 
+  const handleFocusComposer = React.useCallback(() => {
+    setFocusComposerTick((prev) => prev + 1);
+  }, []);
+
+  React.useEffect(() => {
+    if (!focusComposerTick) {
+      return;
+    }
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+    requestAnimationFrame(() => composerInputRef.current?.focus());
+  }, [focusComposerTick]);
+
+  const handleResetFilters = React.useCallback(() => {
+    setGroupFilter('all');
+    setCustomFilterId('');
+  }, []);
+
   const handleCreateGroup = React.useCallback(() => {
     if (!canEditGroups) {
       toast.showToast('Du saknar behörighet att skapa grupper.', 'error');
@@ -424,6 +443,7 @@ export default function FeedScreen() {
         </View>
       </View>
       <TextInput
+        ref={composerInputRef}
         value={postContent}
         onChangeText={setPostContent}
         placeholder="Vad behöver alla veta idag?"
@@ -572,6 +592,65 @@ export default function FeedScreen() {
     </Card>
   ) : null;
 
+  const hasActiveFilter = groupFilter !== 'all' || Boolean(customFilterId);
+  const emptyStateActions = [
+    ...(canPublishPost
+      ? [{ label: 'Skriv uppdatering', onPress: handleFocusComposer, variant: 'primary' as const }]
+      : []),
+    ...(hasActiveFilter
+      ? [
+          {
+            label: 'Rensa filter',
+            onPress: handleResetFilters,
+            variant: (canPublishPost ? 'secondary' : 'primary') as const,
+          },
+        ]
+      : []),
+  ];
+  const emptyState = (
+    <Card tone="muted" style={styles.emptyCard}>
+      <Text style={styles.emptyTitle}>
+        {hasActiveFilter ? 'Inga inlägg för valt filter' : 'Inga inlägg ännu'}
+      </Text>
+      <Text style={styles.emptyText}>
+        {canPublishPost
+          ? hasActiveFilter
+            ? 'Rensa filter eller skriv första uppdateringen.'
+            : 'Skriv första uppdateringen till stallet.'
+          : hasActiveFilter
+            ? 'Rensa filter eller vänta på nya inlägg.'
+            : 'Det finns inga inlägg ännu i det här stallet.'}
+      </Text>
+      {emptyStateActions.length ? (
+        <View style={styles.emptyActions}>
+          {emptyStateActions.map((action) => {
+            const isPrimary = action.variant === 'primary';
+            return (
+              <TouchableOpacity
+                key={action.label}
+                style={[
+                  styles.emptyAction,
+                  isPrimary ? styles.emptyActionPrimary : styles.emptyActionSecondary,
+                ]}
+                onPress={action.onPress}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.emptyActionText,
+                    isPrimary ? styles.emptyActionPrimaryText : styles.emptyActionSecondaryText,
+                  ]}
+                >
+                  {action.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
+    </Card>
+  );
+
   const renderFilterChips = (variant: 'panel' | 'inline') => (
     <View
       style={[
@@ -680,6 +759,7 @@ export default function FeedScreen() {
           <View style={styles.customFilterWrap}>{renderCustomGroupFilters('inline')}</View>
         ) : null}
         <ScrollView
+          ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
           showsVerticalScrollIndicator={false}
@@ -704,7 +784,7 @@ export default function FeedScreen() {
                   {readOnlyCard}
                   {composerCard}
                   {postCards.length === 0 ? (
-                    <Text style={styles.emptyText}>Inga inlägg för valt filter.</Text>
+                    emptyState
                   ) : (
                     postCards.map((post) => (
                       <PostCard
@@ -725,7 +805,7 @@ export default function FeedScreen() {
               {readOnlyCard}
               {composerCard}
               {postCards.length === 0 ? (
-                <Text style={styles.emptyText}>Inga inlägg för valt filter.</Text>
+                emptyState
               ) : (
                 postCards.map((post) => (
                   <PostCard
@@ -1098,8 +1178,54 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     color: palette.secondaryText,
   },
+  emptyCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    borderWidth: 0,
+    gap: 10,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  emptyActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  emptyAction: {
+    flexGrow: 1,
+    minWidth: 140,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyActionPrimary: {
+    backgroundColor: palette.primary,
+  },
+  emptyActionPrimaryText: {
+    color: palette.inverseText,
+    fontWeight: '700',
+  },
+  emptyActionSecondary: {
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  emptyActionSecondaryText: {
+    color: palette.primaryText,
+  },
   emptyText: {
     fontSize: 13,
     color: palette.secondaryText,
+    lineHeight: 18,
   },
 });

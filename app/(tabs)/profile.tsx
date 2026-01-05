@@ -18,9 +18,8 @@ import { theme } from '@/components/theme';
 import { color, radius } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card, Pill } from '@/components/Primitives';
+import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
-import { UserSwitchModal } from '@/components/UserSwitchModal';
 import { useAppData } from '@/context/AppDataContext';
 import type {
   Assignment,
@@ -28,6 +27,7 @@ import type {
   AssignmentStatus,
   DefaultPass,
   UserProfile,
+  UserRole,
   WeekdayIndex,
 } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
@@ -52,6 +52,30 @@ const DEFAULT_SLOTS: { label: string; value: AssignmentSlot }[] = [
   { label: 'Kväll', value: 'Evening' },
 ];
 
+const roleLabels: Record<UserRole, string> = {
+  admin: 'Admin',
+  staff: 'Personal',
+  rider: 'Medryttare',
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  trainer: 'Tränare',
+  therapist: 'Massör',
+  guest: 'Gäst',
+};
+
+const EMPTY_USER: UserProfile = {
+  id: '',
+  name: '',
+  membership: [],
+  horses: [],
+  location: '',
+  phone: '',
+  responsibilities: [],
+  defaultPasses: [],
+  awayNotices: [],
+  onboardingDismissed: false,
+};
+
 function hasDefaultPass(passes: DefaultPass[], weekday: WeekdayIndex, slot: AssignmentSlot) {
   return passes.some((entry) => entry.weekday === weekday && entry.slot === slot);
 }
@@ -67,10 +91,27 @@ export default function ProfileScreen() {
   const { state, derived, actions } = useAppData();
   const { currentUserId, users, assignments, currentStableId } = state;
   const currentUser = users[currentUserId];
+  const safeUser = currentUser ?? EMPTY_USER;
   const toast = useToast();
-  const [userSwitchVisible, setUserSwitchVisible] = React.useState(false);
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const currentStable = state.stables.find((stable) => stable.id === currentStableId);
+  const primaryMembership = currentUser?.membership.find(
+    (entry) => entry.stableId === currentStableId,
+  ) ?? currentUser?.membership[0];
+  const membershipRoleLabel = primaryMembership
+    ? primaryMembership.customRole?.trim() || roleLabels[primaryMembership.role]
+    : undefined;
+  const stableLabel = currentStable?.name ?? 'Inget stall valt';
+  const roleLabel = membershipRoleLabel ?? 'Ingen roll';
+  const accessLabel =
+    primaryMembership?.access === 'owner'
+      ? 'Full'
+      : primaryMembership?.access === 'edit'
+        ? 'Redigera'
+        : primaryMembership?.access === 'view'
+          ? 'Läsa'
+          : '';
 
   const upcomingAssignments = derived.upcomingAssignmentsForUser.slice(0, 3);
   const memberCount = React.useMemo(
@@ -83,13 +124,17 @@ export default function ProfileScreen() {
 
   const profileStats = React.useMemo(() => {
     const nextAssignment = derived.nextAssignmentForUser;
-    const formattedResponsibilities = currentUser.responsibilities.join(' · ') || 'Ingen roll angiven';
+    const formattedResponsibilities =
+      membershipRoleLabel ||
+      (safeUser.responsibilities.length
+        ? safeUser.responsibilities.join(' · ')
+        : 'Ingen roll angiven');
     const nextPassValue = nextAssignment
       ? `${formatAssignmentTitle(nextAssignment)} · ${formatDateLabel(
           nextAssignment.date,
         )} · ${nextAssignment.time}`
       : 'Inga pass planerade';
-    const nextAway = currentUser.awayNotices[0];
+    const nextAway = safeUser.awayNotices[0];
     const nextAwayLabel = nextAway
       ? formatRange(nextAway.start, nextAway.end)
       : 'Ej planerat';
@@ -99,11 +144,11 @@ export default function ProfileScreen() {
       { id: 'responsibility', label: 'Ansvar', value: formattedResponsibilities },
       { id: 'time-off', label: 'Planerad frånvaro', value: nextAwayLabel },
     ];
-  }, [currentUser, derived.nextAssignmentForUser]);
+  }, [derived.nextAssignmentForUser, membershipRoleLabel, safeUser]);
 
-  const calendarMetadata = React.useMemo(() => buildCalendarMetadata(assignments, currentUser), [
+  const calendarMetadata = React.useMemo(() => buildCalendarMetadata(assignments, safeUser), [
     assignments,
-    currentUser,
+    safeUser,
   ]);
 
   const upcomingAssignmentsView = React.useMemo(
@@ -122,12 +167,13 @@ export default function ProfileScreen() {
     router.push('/(tabs)/messages');
   }, [router]);
 
+  const currentUserPhone = currentUser?.phone ?? '';
   const handleCall = React.useCallback(async () => {
-    if (!currentUser.phone) {
+    if (!currentUserPhone) {
       toast.showToast('Telefonnummer saknas för användaren.', 'info');
       return;
     }
-    const url = `tel:${currentUser.phone}`;
+    const url = `tel:${currentUserPhone}`;
     try {
       const supported = await Linking.canOpenURL(url);
       if (!supported) {
@@ -138,19 +184,13 @@ export default function ProfileScreen() {
     } catch {
       toast.showToast('Kunde inte starta samtalet.', 'error');
     }
-  }, [currentUser.phone, toast]);
-
-  const handleLogout = React.useCallback(() => {
-    const result = actions.signOut();
-    if (result.success) {
-      toast.showToast('Du är utloggad.', 'success');
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
-  }, [actions, toast]);
+  }, [currentUserPhone, toast]);
 
   const handleOpenMembers = React.useCallback(() => {
     router.push('/members');
+  }, [router]);
+  const handleOpenSettings = React.useCallback(() => {
+    router.push('/settings');
   }, [router]);
 
   const handleTakeAssignment = React.useCallback(
@@ -165,6 +205,25 @@ export default function ProfileScreen() {
     [actions, toast],
   );
 
+  if (!currentUser) {
+    return (
+      <LinearGradient colors={theme.gradients.background} style={styles.background}>
+        <SafeAreaView style={styles.safeArea}>
+          <ScreenHeader
+            style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+            title="Profil"
+            showSearch={false}
+            showLogo={false}
+          />
+          <View style={styles.loadingState}>
+            <Text style={styles.loadingTitle}>Laddar profil...</Text>
+            <Text style={styles.loadingSubtitle}>Kontrollerar dina uppgifter.</Text>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
+
   const heroSection = (
     <View style={[styles.profileHero, isDesktopWeb && styles.profileHeroDesktop]}>
       <View style={styles.profileHeroContent}>
@@ -174,9 +233,11 @@ export default function ProfileScreen() {
         />
         <View style={styles.heroTextBlock}>
           <Text style={styles.heroName}>{currentUser.name}</Text>
-          <Text style={styles.heroRole}>
-            {currentUser.responsibilities.join(' · ') || 'Stallmedlem'}
-          </Text>
+          <Text style={styles.heroRole}>Stall: {stableLabel}</Text>
+          <DetailRow icon="user" text={`Roll: ${roleLabel}`} />
+          {accessLabel ? (
+            <DetailRow icon="shield" text={`Behörighet: ${accessLabel}`} />
+          ) : null}
           <DetailRow icon="map-pin" text={currentUser.location} />
           <DetailRow icon="phone" text={currentUser.phone} />
         </View>
@@ -218,28 +279,25 @@ export default function ProfileScreen() {
     </View>
   );
 
-  const accountSection = (
-    <Card tone="muted" style={styles.accountCard}>
+  const settingsSection = (
+    <Card tone="muted" style={styles.settingsCard}>
       <View style={styles.sectionHeader}>
         <View style={styles.sectionTitleGroup}>
-          <Text style={styles.sectionTitle}>Konto</Text>
+          <Text style={styles.sectionTitle}>Inställningar</Text>
         </View>
       </View>
       <TouchableOpacity
-        style={styles.accountRow}
-        onPress={() => setUserSwitchVisible(true)}
+        style={styles.settingsRow}
+        onPress={handleOpenSettings}
         activeOpacity={0.85}
       >
-        <Text style={styles.accountRowText}>Byt användare</Text>
+        <View style={styles.settingsRowLeft}>
+          <Feather name="settings" size={16} color={palette.primaryText} />
+          <Text style={styles.settingsRowText}>Kontoinställningar</Text>
+        </View>
         <Feather name="chevron-right" size={16} color={palette.secondaryText} />
       </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.accountRow, styles.accountRowDanger]}
-        onPress={handleLogout}
-        activeOpacity={0.85}
-      >
-        <Text style={[styles.accountRowText, styles.accountRowTextDanger]}>Logga ut</Text>
-      </TouchableOpacity>
+      <Text style={styles.settingsHint}>Byt uppgifter, hantera konto och logga ut.</Text>
     </Card>
   );
 
@@ -433,8 +491,15 @@ export default function ProfileScreen() {
       <ScreenHeader
         style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
         title={currentUser.name}
-        primaryActionLabel="Skicka meddelande"
-        onPressPrimaryAction={handleMessage}
+        showSearch={false}
+        right={
+          <HeaderIconButton
+            accessibilityLabel="Inställningar"
+            onPress={handleOpenSettings}
+          >
+            <Feather name="settings" size={18} color={palette.primaryText} />
+          </HeaderIconButton>
+        }
       />
       {!isDesktopWeb ? <StableSwitcher /> : null}
       <ScrollView
@@ -443,13 +508,13 @@ export default function ProfileScreen() {
         showsVerticalScrollIndicator={false}
       >
         {isDesktopWeb ? (
-          <View style={styles.desktopLayout}>
-            <View style={styles.desktopSidebar}>
-              {heroSection}
-              {statsSection}
-              {accountSection}
-              {awaySection}
-            </View>
+            <View style={styles.desktopLayout}>
+              <View style={styles.desktopSidebar}>
+                {heroSection}
+                {statsSection}
+                {settingsSection}
+                {awaySection}
+              </View>
             <View style={styles.desktopMain}>
               {membersSection}
               {defaultPassSection}
@@ -462,7 +527,7 @@ export default function ProfileScreen() {
           <>
             {heroSection}
             {statsSection}
-            {accountSection}
+            {settingsSection}
             {membersSection}
             {defaultPassSection}
             {upcomingSection}
@@ -472,16 +537,15 @@ export default function ProfileScreen() {
           </>
         )}
         </ScrollView>
-        <UserSwitchModal
-          visible={userSwitchVisible}
-          onClose={() => setUserSwitchVisible(false)}
-        />
       </SafeAreaView>
     </LinearGradient>
   );
 }
 
 function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text: string }) {
+  if (!text || text.trim().length === 0) {
+    return null;
+  }
   return (
     <View style={styles.detailRow}>
       <Feather name={icon} size={14} color={palette.icon} />
@@ -675,6 +739,23 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     paddingHorizontal: 28,
   },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+  },
+  loadingTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  loadingSubtitle: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    textAlign: 'center',
+  },
   desktopLayout: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -734,9 +815,8 @@ const styles = StyleSheet.create({
   heroRole: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#4E5A76',
-    letterSpacing: 0.3,
-    textTransform: 'uppercase',
+    color: palette.secondaryText,
+    letterSpacing: 0.2,
   },
   heroChips: {
     flexDirection: 'row',
@@ -1121,31 +1201,33 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: palette.secondaryText,
   },
-  accountCard: {
+  settingsCard: {
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
     borderWidth: 0,
     backgroundColor: palette.surfaceTint,
   },
-  accountRow: {
+  settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.border,
+    paddingVertical: 6,
   },
-  accountRowText: {
+  settingsRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  settingsRowText: {
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
   },
-  accountRowDanger: {
-    borderBottomWidth: 0,
-  },
-  accountRowTextDanger: {
-    color: palette.error,
+  settingsHint: {
+    fontSize: 12,
+    color: palette.secondaryText,
+    lineHeight: 18,
   },
   membersCard: {
     gap: 12,

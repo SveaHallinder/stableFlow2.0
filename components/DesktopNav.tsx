@@ -6,7 +6,6 @@ import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
-import { UserSwitchModal } from '@/components/UserSwitchModal';
 
 const palette = theme.colors;
 
@@ -15,7 +14,8 @@ const navItems = [
   { label: 'Schema', route: '/calendar' },
   { label: 'Meddelanden', route: '/messages' },
   { label: 'Inlägg', route: '/feed' },
-  { label: 'Stall', route: '/stables' },
+  { label: 'Admin', route: '/admin', adminOnly: true },
+  { label: 'Stall', route: '/stables', adminOnly: true },
   { label: 'Medlemmar', route: '/members' },
   { label: 'Profil', route: '/profile' },
 ];
@@ -30,15 +30,13 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const router = useRouter();
   const pathname = usePathname();
   const isSidebar = variant === 'sidebar';
-  const [userSwitchVisible, setUserSwitchVisible] = React.useState(false);
-  const { state, actions } = useAppData();
+  const { state, actions, derived } = useAppData();
   const { stables, currentStableId } = state;
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarm = state.farms.find((farm) => farm.id === currentStable?.farmId);
   const currentUser = state.users[state.currentUserId];
-  const canManageOnboarding = currentUser?.membership.some(
-    (entry) => entry.role === 'admin' && (entry.access ?? 'view') === 'owner',
-  );
+  const isFirstTimeOnboarding = derived.isFirstTimeOnboarding;
+  const canManageOnboarding = derived.canManageOnboardingAny;
   const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));
   const stablesToShow = visibleStables.length ? visibleStables : stables;
@@ -137,20 +135,10 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
               <Text style={styles.profileMeta}>{metaLabel}</Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.profileActionButton}
-            onPress={() => setUserSwitchVisible(true)}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.profileActionText}>Byt användare</Text>
-          </TouchableOpacity>
         </View>
       ) : null}
-      {showSidebarHeader ? (
-        <UserSwitchModal visible={userSwitchVisible} onClose={() => setUserSwitchVisible(false)} />
-      ) : null}
       {navItems
-        .filter((item) => item.route !== '/stables' || canManageOnboarding)
+        .filter((item) => !item.adminOnly || canManageOnboarding)
         .map((item) => {
         const isActive = item.route === '/' ? pathname === '/' : pathname.startsWith(item.route);
         return (

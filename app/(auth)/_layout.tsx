@@ -1,12 +1,12 @@
 import React from 'react';
-import { Redirect, Stack } from 'expo-router';
-import { useAppData } from '@/context/AppDataContext';
+import { Stack } from 'expo-router';
+import { useAuth } from '@/context/AuthContext';
 
 export default function AuthLayout() {
-  const { state } = useAppData();
+  const { session, loading } = useAuth();
 
-  if (state.sessionUserId) {
-    return <Redirect href="/(tabs)" />;
+  if (loading) {
+    return null;
   }
 
   return <Stack screenOptions={{ headerShown: false }} />;

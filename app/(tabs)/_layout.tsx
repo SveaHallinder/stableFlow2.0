@@ -1,10 +1,10 @@
 import React from 'react';
-import { Redirect, Tabs } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { View, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
-import { useAppData } from '@/context/AppDataContext';
+import { useAuth } from '@/context/AuthContext';
 
 // SVG imports
 import DashOutlineIcon from '@/assets/images/tabbar-outl-dash.svg';
@@ -22,12 +22,16 @@ const palette = theme.colors;
 const radii = theme.radii;
 
 export default function TabLayout() {
-  const { state } = useAppData();
+  const { session, loading } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
 
-  if (!state.sessionUserId) {
-    return <Redirect href="/(auth)" />;
+  if (loading) {
+    return null;
+  }
+
+  if (!session) {
+    return null;
   }
 
   const tabs = (

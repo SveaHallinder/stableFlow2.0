@@ -77,6 +77,13 @@ export default function MemberProfileScreen() {
 
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/members');
+  }, [router]);
 
   const currentUser = state.users[state.currentUserId];
   const currentMembership = currentUser?.membership.find((entry) => entry.stableId === stableId);
@@ -183,9 +190,9 @@ export default function MemberProfileScreen() {
       toast.showToast(result.reason, 'error');
     } else {
       toast.showToast('Medlem borttagen.', 'success');
-      router.back();
+      handleBack();
     }
-  }, [actions, member, router, stableId, toast]);
+  }, [actions, handleBack, member, stableId, toast]);
 
   const wrapDesktop = (content: React.ReactNode) => {
     if (!isDesktopWeb) {
@@ -213,7 +220,7 @@ export default function MemberProfileScreen() {
               <HeaderIconButton
                 accessibilityRole="button"
                 accessibilityLabel="Tillbaka"
-                onPress={() => router.back()}
+                onPress={handleBack}
                 style={styles.backButton}
               >
                 <Text style={styles.backIcon}>‹</Text>
@@ -427,7 +434,7 @@ export default function MemberProfileScreen() {
                 <HeaderIconButton
                   accessibilityRole="button"
                   accessibilityLabel="Tillbaka"
-                  onPress={() => router.back()}
+                  onPress={handleBack}
                   style={styles.backButton}
                 >
                   <Text style={styles.backIcon}>‹</Text>

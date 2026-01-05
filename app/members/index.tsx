@@ -17,7 +17,7 @@ import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DesktopNav } from '@/components/DesktopNav';
 import { StableSwitcher } from '@/components/StableSwitcher';
-import { Card, Pill } from '@/components/Primitives';
+import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
@@ -50,6 +50,14 @@ export default function MembersScreen() {
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const handleExit = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    const fallbackRoute = Platform.OS === 'web' ? '/admin' : '/(tabs)';
+    router.replace(fallbackRoute);
+  }, [router]);
 
   const currentUser = state.users[state.currentUserId];
   const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
@@ -269,7 +277,18 @@ export default function MembersScreen() {
             <ScreenHeader
               style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
               title="Medlemmar"
+              left={
+                <HeaderIconButton
+                  accessibilityRole="button"
+                  accessibilityLabel="Till admin"
+                  onPress={handleExit}
+                  style={styles.headerIconButton}
+                >
+                  <Text style={styles.headerIcon}>‹</Text>
+                </HeaderIconButton>
+              }
               showSearch={false}
+              showLogo={false}
             />
             {!isDesktopWeb ? <StableSwitcher /> : null}
             <ScrollView
@@ -558,6 +577,17 @@ const styles = StyleSheet.create({
   },
   listTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
   listCount: { fontSize: 12, color: palette.secondaryText },
+  headerIconButton: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  headerIcon: { fontSize: 18, color: palette.secondaryText },
   memberList: { gap: 12 },
   memberRow: {
     flexDirection: 'row',

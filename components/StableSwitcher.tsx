@@ -26,6 +26,9 @@ export function StableSwitcher({
   const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));
   const stablesToShow = visibleStables.length ? visibleStables : stables;
+  if (stablesToShow.length === 0) {
+    return null;
+  }
   const currentStable =
     stablesToShow.find((stable) => stable.id === currentStableId) ??
     stables.find((stable) => stable.id === currentStableId);
@@ -66,9 +69,6 @@ export function StableSwitcher({
             </TouchableOpacity>
           );
         })}
-        {stablesToShow.length === 0 ? (
-          <Text style={styles.emptyText}>Inga stall än</Text>
-        ) : null}
       </ScrollView>
       {showLocation && currentStable?.location ? (
         <Text style={styles.location}>{currentStable.location}</Text>
@@ -139,10 +139,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: palette.secondaryText,
-  },
-  emptyText: {
-    fontSize: 12,
-    color: palette.secondaryText,
-    alignSelf: 'center',
   },
 });

@@ -396,6 +396,14 @@ export default function PaddocksScreen() {
       </View>
     );
   };
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    const fallbackRoute = Platform.OS === 'web' ? '/admin' : '/(tabs)';
+    router.replace(fallbackRoute);
+  }, [router]);
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -409,7 +417,7 @@ export default function PaddocksScreen() {
                 <HeaderIconButton
                   accessibilityRole="button"
                   accessibilityLabel="Tillbaka"
-                  onPress={() => router.back()}
+                  onPress={handleBack}
                   style={styles.headerIconButton}
                 >
                   <Text style={styles.headerIcon}>‹</Text>

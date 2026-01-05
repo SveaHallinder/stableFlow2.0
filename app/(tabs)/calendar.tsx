@@ -14,7 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
 import { Card, Pill } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -54,6 +54,18 @@ const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling'] as const;
 type Filter = (typeof filters)[number];
 
 type PassView = 'all' | 'mine' | 'open';
+
+type EmptyStateAction = {
+  label: string;
+  onPress: () => void;
+  variant?: 'primary' | 'secondary';
+};
+
+type EmptyStateConfig = {
+  title: string;
+  body: string;
+  actions?: EmptyStateAction[];
+};
 
 const WEEKDAY_LABELS = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
 
@@ -169,6 +181,23 @@ function resolvePassView(raw?: string | string[]): PassView {
   return 'all';
 }
 
+function resolveFilterFromSection(raw?: string | string[]): Filter | undefined {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value === 'riding') {
+    return 'Riddagar';
+  }
+  if (value === 'arena') {
+    return 'Ridhus';
+  }
+  if (value === 'competition') {
+    return 'Tävling';
+  }
+  if (value === 'pass') {
+    return 'Pass';
+  }
+  return undefined;
+}
+
 function weekdayIndexFromDate(date: Date) {
   return (date.getDay() + 6) % 7;
 }
@@ -183,6 +212,7 @@ function isDefaultForUser(
 
 export default function CalendarScreen() {
   const { state, actions, derived } = useAppData();
+  const router = useRouter();
   const {
     assignments,
     users,
@@ -197,10 +227,16 @@ export default function CalendarScreen() {
     currentUserId,
     currentStableId,
   } = state;
-  const { view } = useLocalSearchParams<{ view?: string | string[] }>();
+  const { view, date, section } = useLocalSearchParams<{
+    view?: string | string[];
+    date?: string | string[];
+    section?: string | string[];
+  }>();
   const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isWeb = Platform.OS === 'web';
+  const isDesktopWeb = isWeb && width >= 1024;
   const { permissions } = derived;
+  const canManageOnboarding = permissions.canManageOnboarding;
   const canManageAssignments = permissions.canManageAssignments;
   const canClaimAssignments = permissions.canClaimAssignments;
   const canCompleteAssignments = permissions.canCompleteAssignments;
@@ -220,7 +256,20 @@ export default function CalendarScreen() {
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
   const toast = useToast();
-  const [activeFilter, setActiveFilter] = React.useState<Filter>('Pass');
+  const focusDate = React.useMemo(() => {
+    const raw = Array.isArray(date) ? date[0] : date;
+    if (!raw) {
+      return undefined;
+    }
+    const parsed = new Date(`${raw}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      return undefined;
+    }
+    return toISODate(parsed);
+  }, [date]);
+
+  const resolvedFilter = React.useMemo(() => resolveFilterFromSection(section), [section]);
+  const [activeFilter, setActiveFilter] = React.useState<Filter>(resolvedFilter ?? 'Pass');
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
   const [categoryIndex, setCategoryIndex] = React.useState(0);
   const [monthCursor, setMonthCursor] = React.useState(() => startOfMonth(new Date()));
@@ -252,6 +301,12 @@ export default function CalendarScreen() {
     note: '',
   }));
 
+  React.useEffect(() => {
+    if (resolvedFilter && resolvedFilter !== activeFilter) {
+      setActiveFilter(resolvedFilter);
+    }
+  }, [activeFilter, resolvedFilter]);
+
   const activeAssignments = React.useMemo(
     () => assignments.filter((assignment) => assignment.stableId === currentStableId),
     [assignments, currentStableId],
@@ -282,6 +337,8 @@ export default function CalendarScreen() {
     () => horses.filter((horse) => horse.stableId === currentStableId),
     [horses, currentStableId],
   );
+  const canRegisterRide =
+    canManageRideLogs && activeRideTypes.length > 0 && activeHorses.length > 0;
   const activeRidingSchedule = React.useMemo(
     () =>
       ridingSchedule.filter(
@@ -356,11 +413,48 @@ export default function CalendarScreen() {
   const monthWeeks = React.useMemo(() => buildMonthWeeks(monthCursor), [monthCursor]);
   const monthLabel = React.useMemo(() => formatMonthLabel(monthCursor), [monthCursor]);
 
-  const groupedDays = React.useMemo(() => groupAssignmentsByDay(activeAssignments), [activeAssignments]);
+  const groupedDays = React.useMemo(() => {
+    const base = groupAssignmentsByDay(activeAssignments);
+    if (!focusDate) {
+      return base;
+    }
+    if (base.some((day) => day.isoDate === focusDate)) {
+      return base;
+    }
+    const parsed = new Date(`${focusDate}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      return base;
+    }
+    return [...base, { isoDate: focusDate, date: parsed, assignments: [] }].sort(
+      (a, b) => a.date.getTime() - b.date.getTime(),
+    );
+  }, [activeAssignments, focusDate]);
 
   React.useEffect(() => {
+    if (focusDate) {
+      setPassView('all');
+      return;
+    }
     setPassView(resolvePassView(view));
-  }, [view]);
+  }, [focusDate, view]);
+
+  React.useEffect(() => {
+    if (!focusDate) {
+      return;
+    }
+    setActiveFilter('Pass');
+  }, [focusDate]);
+
+  React.useEffect(() => {
+    if (!focusDate) {
+      return;
+    }
+    const parsed = new Date(`${focusDate}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      return;
+    }
+    setMonthCursor(startOfMonth(parsed));
+  }, [focusDate]);
 
   React.useEffect(() => {
     if (visibleDayEventToneOptions.some((option) => option.id === dayEventForm.tone)) {
@@ -496,6 +590,23 @@ export default function CalendarScreen() {
     setWeekIndex((prev) => Math.min(prev, weekGroups.length - 1));
   }, [weekGroups.length]);
 
+  React.useEffect(() => {
+    if (!focusDate || weekGroups.length === 0) {
+      return;
+    }
+    const parsed = new Date(`${focusDate}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      return;
+    }
+    const targetTime = parsed.getTime();
+    const index = weekGroups.findIndex(
+      (group) => targetTime >= group.start.getTime() && targetTime <= group.end.getTime(),
+    );
+    if (index >= 0) {
+      setWeekIndex(index);
+    }
+  }, [focusDate, weekGroups]);
+
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
@@ -513,8 +624,10 @@ export default function CalendarScreen() {
   const regularDays = React.useMemo<RegularDayView[]>(() => {
     const defaultPasses = users[currentUserId]?.defaultPasses ?? [];
     const selectedIso =
-      visiblePassDays.find((day) => day.isoDate === todayIso)?.isoDate ??
-      visiblePassDays[0]?.isoDate;
+      focusDate && visiblePassDays.some((day) => day.isoDate === focusDate)
+        ? focusDate
+        : visiblePassDays.find((day) => day.isoDate === todayIso)?.isoDate ??
+          visiblePassDays[0]?.isoDate;
 
     return visiblePassDays.map((day) => {
       const sortedAssignments = sortAssignments(day.assignments);
@@ -600,6 +713,7 @@ export default function CalendarScreen() {
     dayEventsByDate,
     currentUserId,
     todayIso,
+    focusDate,
     arenaBookingsByDateMap,
     arenaStatusByDateMap,
   ]);
@@ -672,6 +786,14 @@ export default function CalendarScreen() {
   const handleCreateSlot = React.useCallback(() => {
     setAssignmentModal({ visible: true, mode: 'create' });
   }, []);
+
+  const handleOpenProfile = React.useCallback(() => {
+    router.push('/(tabs)/profile');
+  }, [router]);
+
+  const handleOpenRideTypes = React.useCallback(() => {
+    router.push('/(onboarding)/ride-types');
+  }, [router]);
 
   const handleCategoryToggle = React.useCallback(() => {
     setCategoryIndex((prev) => (prev + 1) % competitionCategories.length);
@@ -815,6 +937,48 @@ export default function CalendarScreen() {
     },
     [actions, toast],
   );
+
+  const passEmptyState = React.useMemo<EmptyStateConfig>(() => {
+    if (passView === 'mine') {
+      return {
+        title: 'Inga pass på dig ännu',
+        body: canManageAssignments
+          ? 'Skapa pass eller sätt standardpass så schemat fylls automatiskt.'
+          : 'Sätt standardpass i profilen så schemat fylls automatiskt.',
+        actions: [
+          canManageAssignments
+            ? { label: 'Skapa pass', onPress: handleCreateSlot, variant: 'primary' }
+            : { label: 'Ställ in standardpass', onPress: handleOpenProfile, variant: 'primary' },
+          { label: 'Se lediga pass', onPress: () => setPassView('open'), variant: 'secondary' },
+        ],
+      };
+    }
+
+    if (passView === 'open') {
+      return {
+        title: 'Inga lediga pass',
+        body: canManageAssignments
+          ? 'Skapa nya pass eller gör pass lediga för bemanning.'
+          : 'Inga lediga pass just nu. Kolla hela schemat för att planera.',
+        actions: canManageAssignments
+          ? [
+              { label: 'Skapa pass', onPress: handleCreateSlot, variant: 'primary' },
+              { label: 'Visa hela schemat', onPress: () => setPassView('all'), variant: 'secondary' },
+            ]
+          : [{ label: 'Visa hela schemat', onPress: () => setPassView('all'), variant: 'primary' }],
+      };
+    }
+
+    return {
+      title: 'Schemat är tomt',
+      body: canManageAssignments
+        ? 'Skapa första passet för att komma igång.'
+        : 'Stalladmin behöver lägga upp schemat. Under tiden kan du ställa in standardpass.',
+      actions: canManageAssignments
+        ? [{ label: 'Skapa pass', onPress: handleCreateSlot, variant: 'primary' }]
+        : [{ label: 'Ställ in standardpass', onPress: handleOpenProfile, variant: 'primary' }],
+    };
+  }, [canManageAssignments, handleCreateSlot, handleOpenProfile, passView, setPassView]);
 
   const handleCreateArenaBooking = React.useCallback(() => {
     const result = actions.addArenaBooking({
@@ -1244,13 +1408,11 @@ export default function CalendarScreen() {
                 />
               ))}
               {visibleRegularDays.length === 0 ? (
-                <Text style={styles.emptyStateText}>
-                  {passView === 'mine'
-                    ? 'Du har inga pass på dig kommande dagar.'
-                    : passView === 'open'
-                      ? 'Inga lediga pass kommande dagar.'
-                      : 'Inga pass att visa.'}
-                </Text>
+                <EmptyStateCard
+                  title={passEmptyState.title}
+                  body={passEmptyState.body}
+                  actions={passEmptyState.actions}
+                />
               ) : null}
             </View>
           )}
@@ -1271,7 +1433,25 @@ export default function CalendarScreen() {
                   />
                 ))}
                 {activeRidingSchedule.length === 0 ? (
-                  <Text style={styles.emptyStateText}>Inga ridpass planerade.</Text>
+                  <EmptyStateCard
+                    title="Ridschemat saknas"
+                    body={
+                      canManageOnboarding
+                        ? 'Ridschemat är tomt just nu. När det läggs in syns det här.'
+                        : 'Ridschemat läggs in av stalladmin. När det finns data syns det här.'
+                    }
+                    actions={
+                      canRegisterRide
+                        ? [
+                            {
+                              label: 'Registrera ridpass',
+                              onPress: openRideLogModal,
+                              variant: 'primary',
+                            },
+                          ]
+                        : undefined
+                    }
+                  />
                 ) : null}
               </View>
 
@@ -1285,7 +1465,25 @@ export default function CalendarScreen() {
                 ) : null}
               </View>
               {activeRideTypes.length === 0 ? (
-                <Text style={styles.emptyStateText}>Lägg till ridpass-typer i onboarding först.</Text>
+                <EmptyStateCard
+                  title="Inga ridpass-typer"
+                  body={
+                    canManageOnboarding
+                      ? 'Lägg till ridpass-typer i uppstarten för att kunna registrera ridpass.'
+                      : 'Ridpass-typer saknas. Be stalladmin lägga till dem.'
+                  }
+                  actions={
+                    canManageOnboarding
+                      ? [
+                          {
+                            label: 'Lägg till ridpass-typer',
+                            onPress: handleOpenRideTypes,
+                            variant: 'primary',
+                          },
+                        ]
+                      : undefined
+                  }
+                />
               ) : rideLogsByDate.length > 0 ? (
                 <View style={styles.rideLogGroups}>
                   {rideLogsByDate.map((group) => (
@@ -1326,7 +1524,25 @@ export default function CalendarScreen() {
                   ))}
                 </View>
               ) : (
-                <Text style={styles.emptyStateText}>Ingen ridlogg ännu.</Text>
+                <EmptyStateCard
+                  title="Ingen ridlogg ännu"
+                  body={
+                    canManageRideLogs
+                      ? 'Registrera första ridpasset så syns det här.'
+                      : 'Ridloggen fylls av de som får registrera ridpass.'
+                  }
+                  actions={
+                    canManageRideLogs
+                      ? [
+                          {
+                            label: 'Registrera ridpass',
+                            onPress: openRideLogModal,
+                            variant: 'primary',
+                          },
+                        ]
+                      : undefined
+                  }
+                />
               )}
             </View>
           )}
@@ -1441,15 +1657,15 @@ export default function CalendarScreen() {
 
           {activeFilter === 'Ridhus' && (
             <View style={styles.ridingSection}>
-            <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Ridhus-bokningar</Text>
-              {canManageArenaBookings ? (
-                <TouchableOpacity style={styles.sectionActionButton} onPress={openArenaModal}>
-                  <Feather name="plus" size={14} color={palette.inverseText} />
-                  <Text style={styles.sectionActionText}>Ny bokning</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>Ridhus-bokningar</Text>
+                {canManageArenaBookings ? (
+                  <TouchableOpacity style={styles.sectionActionButton} onPress={openArenaModal}>
+                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Text style={styles.sectionActionText}>Ny bokning</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
               {arenaBookingsByDate.length > 0 ? (
                 <View style={styles.bookingGroups}>
                   {arenaBookingsByDate.map((group) => (
@@ -1488,7 +1704,19 @@ export default function CalendarScreen() {
                   ))}
                 </View>
               ) : (
-                <Text style={styles.emptyStateText}>Inga bokningar ännu.</Text>
+                <EmptyStateCard
+                  title="Inga bokningar ännu"
+                  body={
+                    canManageArenaBookings
+                      ? 'Boka första passet i ridhuset så syns det här.'
+                      : 'Bokningar syns här när stalladmin lägger in dem.'
+                  }
+                  actions={
+                    canManageArenaBookings
+                      ? [{ label: 'Ny bokning', onPress: openArenaModal, variant: 'primary' }]
+                      : undefined
+                  }
+                />
               )}
 
               <View style={styles.sectionHeaderRow}>
@@ -1551,7 +1779,25 @@ export default function CalendarScreen() {
                   ))}
                 </View>
               ) : (
-                <Text style={styles.emptyStateText}>Ingen status markerad.</Text>
+                <EmptyStateCard
+                  title="Ingen status markerad"
+                  body={
+                    canManageArenaStatus
+                      ? 'Markera dagens status så alla vet vad som gäller.'
+                      : 'Statusen syns här när den markeras.'
+                  }
+                  actions={
+                    canManageArenaStatus
+                      ? [
+                          {
+                            label: 'Markera status',
+                            onPress: () => openArenaStatusModal('Harvat'),
+                            variant: 'primary',
+                          },
+                        ]
+                      : undefined
+                  }
+                />
               )}
 
               <View style={styles.sectionHeaderRow}>
@@ -1593,7 +1839,19 @@ export default function CalendarScreen() {
                   ))}
                 </View>
               ) : (
-                <Text style={styles.emptyStateText}>Inga händelser registrerade.</Text>
+                <EmptyStateCard
+                  title="Inga dagshändelser"
+                  body={
+                    canManageDayEvents
+                      ? 'Lägg till händelser så alla ser vad som händer i stallet.'
+                      : 'Dagshändelser syns här när de läggs in.'
+                  }
+                  actions={
+                    canManageDayEvents
+                      ? [{ label: 'Lägg till', onPress: openDayEventModal, variant: 'primary' }]
+                      : undefined
+                  }
+                />
               )}
             </View>
           )}
@@ -1605,9 +1863,14 @@ export default function CalendarScreen() {
                 <Feather name="chevron-down" size={14} color={palette.icon} />
               </TouchableOpacity>
               <View style={styles.competitionList}>
-                {competitionEvents.map((event) => (
-                  <CompetitionCard key={event.id} event={event} />
-                ))}
+                {competitionEvents.length > 0 ? (
+                  competitionEvents.map((event) => <CompetitionCard key={event.id} event={event} />)
+                ) : (
+                  <EmptyStateCard
+                    title="Inga tävlingar planerade"
+                    body="När tävlingar läggs in syns de här."
+                  />
+                )}
               </View>
             </View>
           )}
@@ -2371,6 +2634,51 @@ function CompetitionCard({ event }: { event: CompetitionEvent }) {
   );
 }
 
+function EmptyStateCard({
+  title,
+  body,
+  actions,
+}: {
+  title: string;
+  body: string;
+  actions?: EmptyStateAction[];
+}) {
+  return (
+    <Card tone="muted" style={styles.emptyStateCard}>
+      <Text style={styles.emptyStateTitle}>{title}</Text>
+      <Text style={styles.emptyStateBody}>{body}</Text>
+      {actions?.length ? (
+        <View style={styles.emptyStateActions}>
+          {actions.map((action) => {
+            const variant = action.variant ?? 'primary';
+            const isPrimary = variant === 'primary';
+            return (
+              <TouchableOpacity
+                key={action.label}
+                style={[
+                  styles.emptyStateAction,
+                  isPrimary ? styles.emptyStatePrimary : styles.emptyStateSecondary,
+                ]}
+                onPress={action.onPress}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.emptyStateActionText,
+                    isPrimary ? styles.emptyStatePrimaryText : styles.emptyStateSecondaryText,
+                  ]}
+                >
+                  {action.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
+    </Card>
+  );
+}
+
 function sortAssignments(assignments: Assignment[]) {
   return [...assignments].sort(
     (a, b) =>
@@ -2866,11 +3174,53 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'flex-start',
   },
-  emptyStateText: {
-    textAlign: 'center',
+  emptyStateCard: {
+    padding: space.lg,
+    gap: 10,
+  },
+  emptyStateTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  emptyStateBody: {
     fontSize: 13,
     color: palette.secondaryText,
-    paddingVertical: 18,
+    lineHeight: 18,
+  },
+  emptyStateActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  emptyStateAction: {
+    flexGrow: 1,
+    minWidth: 140,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyStateActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyStatePrimary: {
+    backgroundColor: palette.primary,
+  },
+  emptyStatePrimaryText: {
+    color: palette.inverseText,
+    fontWeight: '700',
+  },
+  emptyStateSecondary: {
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  emptyStateSecondaryText: {
+    color: palette.primaryText,
   },
   dayCard: {
     paddingHorizontal: space.lg,

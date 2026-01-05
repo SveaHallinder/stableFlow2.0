@@ -10,7 +10,6 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import type { ImageSourcePropType } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,7 +19,7 @@ import { HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
-import type { ConversationMessage, MessagePreview } from '@/context/AppDataContext';
+import type { MessagePreview } from '@/context/AppDataContext';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { useToast } from '@/components/ToastProvider';
 
@@ -126,8 +125,11 @@ export default function ChatScreen() {
               {messages.map((message, index) => {
                 const isMe = message.authorId === state.currentUserId;
                 const isLast = index === messages.length - 1;
+                const authorProfile = state.users[message.authorId];
                 const avatarSource = !isMe
-                  ? getAvatarForAuthor(message, conversationPreview)
+                  ? authorProfile?.avatar ??
+                    conversationPreview?.avatar ??
+                    require('@/assets/images/dummy-avatar.png')
                   : undefined;
 
                 return (
@@ -201,22 +203,6 @@ export default function ChatScreen() {
       </SafeAreaView>
     </LinearGradient>
   );
-}
-
-function getAvatarForAuthor(
-  message: ConversationMessage,
-  preview?: MessagePreview,
-): ImageSourcePropType | undefined {
-  if (preview?.group) {
-    return require('@/assets/images/dummy-avatar.png');
-  }
-  if (message.authorId === 'user-karl') {
-    return require('@/assets/images/dummy-avatar.png');
-  }
-  if (preview?.avatar) {
-    return preview.avatar;
-  }
-  return require('@/assets/images/dummy-avatar.png');
 }
 
 const styles = StyleSheet.create({

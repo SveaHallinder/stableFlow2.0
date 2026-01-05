@@ -1,8 +1,6 @@
 import React from 'react';
 import {
-  Animated,
   Image,
-  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -15,7 +13,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -52,50 +50,22 @@ const eventVisibilityOptions = [
 
 export default function StablesScreen() {
   const router = useRouter();
+  const { q } = useLocalSearchParams<{ q?: string | string[] }>();
   const toast = useToast();
-  const { state, actions } = useAppData();
+  const { state, actions, derived } = useAppData();
   const { stables, currentStableId, users, horses, currentUserId, farms } = state;
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
   const currentUser = users[currentUserId];
-  const [hasFarm, setHasFarm] = React.useState<boolean | null>(null);
-  const hasFarmTouchedRef = React.useRef(false);
-  const steps = React.useMemo(() => {
-    if (hasFarm === null) return [];
-    const baseSteps = [
-      {
-        id: 'stable',
-        title: 'Stall',
-        description: hasFarm
-          ? 'Lägg till stall och bjud in stallansvariga.'
-          : 'Lägg till ditt stall.',
-      },
-      {
-        id: 'settings',
-        title: 'Stallinställningar',
-        description: 'Välj dygnslogik och vilka händelser som syns.',
-      },
-      {
-        id: 'rideTypes',
-        title: 'Ridpass-typer',
-        description: 'Lägg in koder/benämningar för ridpass i stallet.',
-      },
-      { id: 'paddock', title: 'Hagar', description: 'Numrera hagar och koppla karta.' },
-      { id: 'horse', title: 'Hästar & medlemmar', description: 'Lägg till hästar och bjud in folk.' },
-    ];
-    if (hasFarm) {
-      baseSteps.unshift({ id: 'farm', title: 'Gård', description: 'Skapa gård och ridhusinfo.' });
-    }
-    return baseSteps.map((step, index) => ({ ...step, title: `${index + 1}. ${step.title}` }));
-  }, [hasFarm]);
-  const totalSteps = steps.length;
+  const { permissions } = derived;
+  const showFarmSection = stables.length > 1;
 
   const [stableDraft, setStableDraft] = React.useState<{ id?: string; name: string; location: string; farmId?: string }>({
     id: undefined,
     name: '',
     location: '',
-    farmId: farms[0]?.id,
+    farmId: undefined,
   });
   const [horseDraft, setHorseDraft] = React.useState<{
     id?: string;
@@ -172,7 +142,8 @@ export default function StablesScreen() {
     season: 'yearRound',
     image: null,
   });
-  const [horseSearch, setHorseSearch] = React.useState('');
+  const initialQuery = React.useMemo(() => (Array.isArray(q) ? q[0] : q) ?? '', [q]);
+  const [horseSearch, setHorseSearch] = React.useState(initialQuery);
   const [rideTypeDraft, setRideTypeDraft] = React.useState<{
     id?: string;
     code: string;
@@ -185,10 +156,6 @@ export default function StablesScreen() {
     description: '',
   });
   const [settingsDraft, setSettingsDraft] = React.useState<StableSettings>(() => resolveStableSettings());
-  const [currentStep, setCurrentStep] = React.useState(0);
-  const [showComplete, setShowComplete] = React.useState(false);
-  const celebrate = React.useRef(new Animated.Value(0)).current;
-  const currentStepId = steps[currentStep]?.id;
 
   const roleLabels: Record<UserRole, string> = {
     admin: 'Admin',
@@ -216,45 +183,23 @@ export default function StablesScreen() {
     guest: { access: 'view' },
   };
 
-  const setHasFarmValue = React.useCallback((value: boolean | null) => {
-    hasFarmTouchedRef.current = true;
-    setHasFarm(value);
-  }, []);
-
   React.useEffect(() => {
-    if (hasFarmTouchedRef.current) return;
-    if (hasFarm !== null) return;
-    if (farms.length > 0) {
-      setHasFarm(true);
-      return;
-    }
-    if (stables.length > 1) {
-      setHasFarm(true);
-      return;
-    }
-    if (stables.length > 0) {
-      setHasFarm(false);
-    }
-  }, [farms.length, hasFarm, stables.length]);
-
-  React.useEffect(() => {
-    if (hasFarm === null) return;
-    setCurrentStep(0);
-  }, [hasFarm]);
-
-
-  React.useEffect(() => {
-    if (hasFarm === null) return;
     setStableDraft((prev) => {
-      if (!hasFarm) {
+      if (!showFarmSection) {
         return prev.farmId ? { ...prev, farmId: undefined } : prev;
       }
-      if (!prev.farmId && farms[0]?.id) {
-        return { ...prev, farmId: farms[0].id };
+      if (prev.farmId && !farms.some((farm) => farm.id === prev.farmId)) {
+        return { ...prev, farmId: undefined };
       }
       return prev;
     });
-  }, [farms, hasFarm]);
+  }, [farms, showFarmSection]);
+
+  React.useEffect(() => {
+    if (initialQuery) {
+      setHorseSearch(initialQuery);
+    }
+  }, [initialQuery]);
 
   const activeHorses = React.useMemo(
     () => horses.filter((horse) => horse.stableId === currentStableId),
@@ -308,13 +253,18 @@ export default function StablesScreen() {
       );
     });
   }, [activeHorses, horseSearch, userNameById]);
-  const membership = currentUser.membership.find((m) => m.stableId === currentStableId);
-  const isAdmin = membership?.role === 'admin';
-  const isAdminAny = currentUser.membership.some((m) => m.role === 'admin');
-  const canEdit = isAdmin;
+  const isFirstTimeOnboarding = derived.isFirstTimeOnboarding;
+  const isAdmin = permissions.canManageOnboarding || isFirstTimeOnboarding;
+  const isAdminAny = derived.canManageOnboardingAny;
   const isOwner = isAdmin;
-  const canSaveStable = isAdmin && (hasFarm === false || (hasFarm === true && farms.length > 0));
-  const canDelegate = isAdmin && stables.length > 0;
+  const canManageMembers = permissions.canManageMembers;
+  const canManagePaddocks = permissions.canManagePaddocks;
+  const canManageHorses = permissions.canManageHorses;
+  const canSaveStable = isAdmin;
+  const canDelegate = canManageMembers && stables.length > 0;
+  const canEditPaddocks = canManagePaddocks;
+  const canEditHorses = canManageHorses;
+  const canEditMembers = canManageMembers;
 
   const paddocks = React.useMemo(
     () => state.paddocks.filter((p) => p.stableId === currentStableId),
@@ -451,27 +401,15 @@ export default function StablesScreen() {
   };
 
   const handleCreateStable = React.useCallback(() => {
-    if (hasFarm === null) {
-      toast.showToast('Välj först om ni har en gård.', 'error');
-      return;
-    }
     if (!stableDraft.name.trim()) {
       toast.showToast('Namn krävs.', 'error');
-      return;
-    }
-    if (!stableDraft.id && !hasFarm && stables.length > 0) {
-      toast.showToast('Fler stall kräver gård. Välj “Ja” och registrera en gård först.', 'error');
-      return;
-    }
-    if (hasFarm && !stableDraft.farmId) {
-      toast.showToast('Välj vilken gård stallet tillhör.', 'error');
       return;
     }
     const result = actions.upsertStable({
       id: stableDraft.id,
       name: stableDraft.name,
       location: stableDraft.location,
-      farmId: hasFarm ? stableDraft.farmId : undefined,
+      farmId: stableDraft.farmId,
     });
     if (result.success) {
       toast.showToast(stableDraft.id ? 'Stall uppdaterat.' : 'Stall skapat.', 'success');
@@ -479,20 +417,18 @@ export default function StablesScreen() {
         id: undefined,
         name: '',
         location: '',
-        farmId: hasFarm ? farms[0]?.id : undefined,
+        farmId: showFarmSection ? stableDraft.farmId : undefined,
       });
     } else {
       toast.showToast(result.reason, 'error');
     }
   }, [
     actions,
-    farms,
-    hasFarm,
     stableDraft.farmId,
     stableDraft.id,
     stableDraft.location,
     stableDraft.name,
-    stables.length,
+    showFarmSection,
     toast,
   ]);
 
@@ -511,7 +447,7 @@ export default function StablesScreen() {
     if (result.success) {
       toast.showToast(farmDraft.id ? 'Gård uppdaterad.' : 'Gård skapad.', 'success');
       setFarmDraft({ id: undefined, name: '', location: '', hasIndoorArena: false, arenaNote: '' });
-      if (result.data && hasFarm) {
+      if (result.data && showFarmSection) {
         setStableDraft((prev) => ({ ...prev, farmId: result.data?.id ?? prev.farmId }));
       }
     } else {
@@ -524,7 +460,7 @@ export default function StablesScreen() {
     farmDraft.id,
     farmDraft.location,
     farmDraft.name,
-    hasFarm,
+    showFarmSection,
     toast,
   ]);
 
@@ -860,28 +796,6 @@ export default function StablesScreen() {
     }
   }, [actions, currentStable, settingsDraft, toast]);
 
-  const progress = totalSteps > 0 ? ((currentStep + 1) / totalSteps) * 100 : 0;
-  const canContinue = currentStepId
-    ? currentStepId === 'farm'
-      ? farms.length > 0
-      : currentStepId === 'stable'
-        ? stables.length > 0
-        : currentStepId === 'settings'
-          ? stables.length > 0
-        : currentStepId === 'rideTypes'
-          ? currentRideTypes.length > 0
-        : currentStepId === 'paddock'
-          ? paddocks.length > 0
-          : true
-    : false;
-
-  React.useEffect(() => {
-    if (showComplete) {
-      celebrate.setValue(0);
-      Animated.spring(celebrate, { toValue: 1, useNativeDriver: true, bounciness: 12 }).start();
-    }
-  }, [celebrate, showComplete]);
-
   const wrapDesktop = (content: React.ReactNode) => {
     if (!isDesktopWeb) {
       return content;
@@ -895,6 +809,14 @@ export default function StablesScreen() {
       </View>
     );
   };
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    const fallbackRoute = Platform.OS === 'web' ? '/admin' : '/(tabs)';
+    router.replace(fallbackRoute);
+  }, [router]);
 
   if (!isAdminAny) {
     const restrictedContent = (
@@ -903,7 +825,7 @@ export default function StablesScreen() {
           title="Stall och hästar"
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
           left={
-            <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
               <Text style={styles.backIcon}>‹</Text>
             </TouchableOpacity>
           }
@@ -914,7 +836,7 @@ export default function StablesScreen() {
           <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.restrictedCard]}>
             <Text style={styles.sectionTitle}>Admin krävs</Text>
             <Text style={styles.restrictedText}>
-              Endast gårds- eller stalladmin kan se och redigera onboarding.
+              Endast gårds- eller stalladmin kan se och redigera inställningar här.
             </Text>
           </Card>
         </View>
@@ -939,7 +861,7 @@ export default function StablesScreen() {
               title="Stall och hästar"
               style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
               left={
-                <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+                <TouchableOpacity style={styles.backButton} onPress={handleBack}>
                   <Text style={styles.backIcon}>‹</Text>
                 </TouchableOpacity>
               }
@@ -953,104 +875,41 @@ export default function StablesScreen() {
             >
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
                 <View style={[styles.stepHeader, isDesktopWeb && styles.stepHeaderDesktop, stickyPanelStyle]}>
-                <Text style={styles.sectionTitle}>Onboarding</Text>
-                {hasFarm === null ? (
-                  <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop, styles.branchCard]}>
-                    <Text style={styles.branchTitle}>Har ni en gård?</Text>
+                  <Text style={styles.sectionTitle}>Snabbstart</Text>
+                  <Card
+                    tone="muted"
+                    style={[
+                      styles.card,
+                      isDesktopWeb && styles.cardDesktop,
+                      styles.stepCard,
+                      isDesktopWeb && styles.stepCardDesktop,
+                      styles.branchCard,
+                    ]}
+                  >
+                    <Text style={styles.branchTitle}>Grunderna först</Text>
                     <Text style={styles.branchText}>
-                      Om ni har flera stall på samma gård behöver ni registrera gården först.
+                      Skapa ett stall och bjud in medlemmar. Ridpass-typer, hagar och inställningar kan fixas senare.
                     </Text>
-                    {farms.length > 0 || stables.length > 0 ? (
+                    {showFarmSection ? (
                       <Text style={styles.branchHint}>
-                        Det finns redan sparad data. Ditt val styr bara onboarding-flödet just nu.
+                        Gård är valfritt och visas nu eftersom du har flera stall.
                       </Text>
                     ) : null}
-                    <View style={[styles.branchRow, isDesktopWeb && styles.branchRowDesktop]}>
-                      <TouchableOpacity
-                        style={[styles.branchOption, isDesktopWeb && styles.branchOptionDesktop, !isOwner && styles.primaryButtonDisabled]}
-                        onPress={() => isOwner && setHasFarmValue(true)}
-                        activeOpacity={0.85}
-                        disabled={!isOwner}
-                      >
-                        <Text style={styles.branchOptionTitle}>Ja, vi har gård</Text>
-                        <Text style={styles.branchOptionCaption}>Skapa gård och koppla flera stall</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.branchOption, isDesktopWeb && styles.branchOptionDesktop, !isOwner && styles.primaryButtonDisabled]}
-                        onPress={() => isOwner && setHasFarmValue(false)}
-                        activeOpacity={0.85}
-                        disabled={!isOwner}
-                      >
-                        <Text style={styles.branchOptionTitle}>Nej, bara ett stall</Text>
-                        <Text style={styles.branchOptionCaption}>Hoppa över gård och börja med stallet</Text>
-                      </TouchableOpacity>
-                    </View>
                   </Card>
-                ) : (
-                  <View style={styles.branchSummary}>
-                    <Text style={styles.branchSummaryText}>Gård: {hasFarm ? 'Ja' : 'Nej'}</Text>
-                    <TouchableOpacity
-                      style={styles.branchChange}
-                      onPress={() => isOwner && setHasFarmValue(null)}
-                      activeOpacity={0.85}
-                      disabled={!isOwner}
-                    >
-                      <Text style={styles.branchChangeText}>Ändra</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {!isAdmin ? (
-                  <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.restrictedCard]}>
-                    <Text style={styles.sectionTitle}>Behörighet saknas</Text>
-                    <Text style={styles.restrictedText}>
-                      Du är inte admin för valt stall. Byt stall för att fortsätta onboarding.
-                    </Text>
-                  </Card>
-                ) : null}
-                {hasFarm !== null ? (
-                  <>
-                    <Text style={styles.stepHint}>Steg {currentStep + 1} av {totalSteps}</Text>
-                    <View style={styles.progressTrack}>
-                      <View style={[styles.progressFill, { width: `${progress}%` }]} />
-                    </View>
-                    <View style={[styles.stepper, isDesktopWeb && styles.stepperDesktop]}>
-                      {steps.map((step, index) => {
-                        const active = index === currentStep;
-                        const done = index < currentStep;
-                        const locked =
-                          (step.id === 'stable' && hasFarm && farms.length === 0) ||
-                          (step.id === 'settings' && stables.length === 0) ||
-                          (step.id === 'rideTypes' && stables.length === 0) ||
-                          (step.id === 'paddock' &&
-                            (stables.length === 0 || currentRideTypes.length === 0)) ||
-                          (step.id === 'horse' && paddocks.length === 0);
-                        return (
-                          <TouchableOpacity
-                            key={step.id}
-                            style={[styles.stepItem, isDesktopWeb && styles.stepItemDesktop, active && isDesktopWeb && styles.stepItemActive, locked && styles.stepItemDisabled]}
-                            onPress={() => !locked && setCurrentStep(index)}
-                            disabled={locked}
-                            activeOpacity={0.85}
-                          >
-                            <View style={[styles.stepDot, active && styles.stepDotActive, done && styles.stepDotDone]}>
-                              {done ? <Feather name="check" size={12} color={palette.inverseText} /> : null}
-                            </View>
-                            <View style={styles.stepLabelWrap}>
-                              <Text style={[styles.stepLabel, active && styles.stepLabelActive]}>{step.title}</Text>
-                              <Text style={styles.stepDesc}>{step.description}</Text>
-                            </View>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                  </>
-                ) : null}
+                  {!isAdmin ? (
+                    <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.restrictedCard]}>
+                      <Text style={styles.sectionTitle}>Behörighet saknas</Text>
+                      <Text style={styles.restrictedText}>
+                        Du är inte admin för valt stall. Byt stall för att fortsätta här.
+                      </Text>
+                    </Card>
+                  ) : null}
                 </View>
 
                 <View style={[styles.stepBody, isDesktopWeb && styles.stepBodyDesktop]}>
-          {currentStepId === 'farm' ? (
+          {showFarmSection ? (
             <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
-              <Text style={styles.sectionTitle}>Gårdar</Text>
+              <Text style={styles.sectionTitle}>Gårdar (valfritt)</Text>
               <View style={[styles.splitRow, isDesktopWeb && styles.splitRowDesktop]}>
                 <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnNarrow]}>
                   <View style={styles.farmList}>
@@ -1131,9 +990,8 @@ export default function StablesScreen() {
             </Card>
           ) : null}
 
-          {currentStepId === 'stable' ? (
-            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
-              <Text style={styles.sectionTitle}>Dina stall</Text>
+          <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            <Text style={styles.sectionTitle}>Dina stall</Text>
               <View style={[styles.splitRow, isDesktopWeb && styles.splitRowDesktop]}>
                 <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnNarrow]}>
                   <View style={styles.stableList}>
@@ -1183,7 +1041,7 @@ export default function StablesScreen() {
                         style={styles.input}
                         editable={isOwner}
                       />
-                      {hasFarm ? (
+                      {showFarmSection ? (
                         <>
                           <Text style={styles.formLabel}>Tillhör gård</Text>
                           <View style={styles.chipRow}>
@@ -1201,14 +1059,12 @@ export default function StablesScreen() {
                                 </TouchableOpacity>
                               );
                             })}
-                            {farms.length === 0 ? <Text style={styles.emptyText}>Lägg till en gård först.</Text> : null}
+                            {farms.length === 0 ? (
+                              <Text style={styles.emptyText}>Lägg till en gård om du vill koppla stallen.</Text>
+                            ) : null}
                           </View>
                         </>
-                      ) : (
-                        <Text style={styles.formHint}>
-                          Inget gårdskopplat läge aktivt. För flera stall, välj “Ja” på gård.
-                        </Text>
-                      )}
+                      ) : null}
                       <TouchableOpacity
                         style={[styles.primaryButton, !canSaveStable && styles.primaryButtonDisabled]}
                         onPress={handleCreateStable}
@@ -1222,7 +1078,7 @@ export default function StablesScreen() {
                     <View style={styles.stableForm}>
                       <Text style={styles.formLabel}>Delegiera stallansvarig</Text>
                       <Text style={styles.formHint}>
-                        Bjud in en admin som kan fortsätta onboarding för {currentStable?.name ?? 'valt stall'}.
+                        Bjud in en admin som kan hjälpa till med inställningarna för {currentStable?.name ?? 'valt stall'}.
                       </Text>
                       {stables.length === 0 ? <Text style={styles.emptyText}>Skapa ett stall först.</Text> : null}
                       <TextInput
@@ -1264,12 +1120,10 @@ export default function StablesScreen() {
                   </View>
                 </View>
               </View>
-            </Card>
-          ) : null}
+          </Card>
 
-          {currentStepId === 'settings' ? (
-            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
-              <Text style={styles.sectionTitle}>Stallinställningar</Text>
+          <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            <Text style={styles.sectionTitle}>Stallinställningar (valfritt)</Text>
               <Text style={styles.formHint}>
                 Styr vilka händelser som syns i schemat och hur dygnslogiken ser ut.
               </Text>
@@ -1338,12 +1192,10 @@ export default function StablesScreen() {
               >
                 <Text style={styles.primaryButtonText}>Spara inställningar</Text>
               </TouchableOpacity>
-            </Card>
-          ) : null}
+          </Card>
 
-          {currentStepId === 'rideTypes' ? (
-            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
-              <Text style={styles.sectionTitle}>Ridpass-typer</Text>
+          <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            <Text style={styles.sectionTitle}>Ridpass-typer (valfritt)</Text>
               <Text style={styles.formHint}>
                 Ange de koder/benämningar som används i stallet (t.ex. K, K+, M, Dressyr).
               </Text>
@@ -1382,7 +1234,7 @@ export default function StablesScreen() {
                       </View>
                     ))}
                     {currentRideTypes.length === 0 ? (
-                      <Text style={styles.emptyText}>Lägg till minst en ridpass-typ.</Text>
+                      <Text style={styles.emptyText}>Lägg till en ridpass-typ när du är redo.</Text>
                     ) : null}
                   </View>
                 </View>
@@ -1439,13 +1291,13 @@ export default function StablesScreen() {
                   </View>
                 </View>
               </View>
-            </Card>
-          ) : null}
+          </Card>
 
-          {currentStepId === 'paddock' ? (
-            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
-              <View style={styles.rowBetween}>
-                <Text style={styles.sectionTitle}>Hagar i {currentStable?.name ?? 'valt stall'}</Text>
+          <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.sectionTitle}>
+                Hagar i {currentStable?.name ?? 'valt stall'} (valfritt)
+              </Text>
                 <Text style={styles.countText}>{paddocks.length}</Text>
               </View>
               <View style={[styles.splitRow, isDesktopWeb && styles.splitRowDesktop]}>
@@ -1453,7 +1305,12 @@ export default function StablesScreen() {
                   <View style={styles.paddockList}>
                     {paddocks.map((paddock) => (
                       <View key={paddock.id} style={styles.paddockRow}>
-                        <TouchableOpacity style={styles.paddockMain} activeOpacity={0.85} onPress={() => handleEditPaddock(paddock.id)}>
+                        <TouchableOpacity
+                          style={styles.paddockMain}
+                          activeOpacity={0.85}
+                          onPress={() => handleEditPaddock(paddock.id)}
+                          disabled={!canEditPaddocks}
+                        >
                           {paddock.image?.uri ? (
                             <Image source={{ uri: paddock.image.uri }} style={styles.paddockThumb} />
                           ) : (
@@ -1480,9 +1337,14 @@ export default function StablesScreen() {
                             </View>
                           </View>
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.removeButton} onPress={() => handleDeletePaddock(paddock.id)}>
-                          <Feather name="trash-2" size={14} color={palette.error} />
-                        </TouchableOpacity>
+                        {canEditPaddocks ? (
+                          <TouchableOpacity
+                            style={styles.removeButton}
+                            onPress={() => handleDeletePaddock(paddock.id)}
+                          >
+                            <Feather name="trash-2" size={14} color={palette.error} />
+                          </TouchableOpacity>
+                        ) : null}
                       </View>
                     ))}
                     {paddocks.length === 0 ? <Text style={styles.emptyText}>Inga hagar ännu.</Text> : null}
@@ -1497,7 +1359,7 @@ export default function StablesScreen() {
                       value={paddockDraft.name}
                       onChangeText={(text) => setPaddockDraft((prev) => ({ ...prev, name: text }))}
                       style={styles.input}
-                      editable={canEdit}
+                      editable={canEditPaddocks}
                     />
                     <Text style={styles.formLabel}>Säsong</Text>
                     <View style={styles.chipRow}>
@@ -1511,9 +1373,11 @@ export default function StablesScreen() {
                           <TouchableOpacity
                             key={option.id}
                             style={[styles.accessChip, active && styles.accessChipActive]}
-                            onPress={() => canEdit && setPaddockDraft((prev) => ({ ...prev, season: option.id }))}
+                            onPress={() =>
+                              canEditPaddocks && setPaddockDraft((prev) => ({ ...prev, season: option.id }))
+                            }
                             activeOpacity={0.85}
-                            disabled={!canEdit}
+                            disabled={!canEditPaddocks}
                           >
                             <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{option.label}</Text>
                           </TouchableOpacity>
@@ -1526,22 +1390,23 @@ export default function StablesScreen() {
                         <TouchableOpacity
                           style={[
                             styles.inlineActionButton,
-                            (!canEdit || activeHorses.length === 0) && styles.inlineActionButtonDisabled,
+                            (!canEditPaddocks || activeHorses.length === 0) && styles.inlineActionButtonDisabled,
                           ]}
                           onPress={fillPaddockHorses}
                           activeOpacity={0.85}
-                          disabled={!canEdit || activeHorses.length === 0}
+                          disabled={!canEditPaddocks || activeHorses.length === 0}
                         >
                           <Text style={styles.inlineActionText}>Fyll alla</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
                             styles.inlineActionButton,
-                            (!canEdit || paddockDraft.horsesText.trim().length === 0) && styles.inlineActionButtonDisabled,
+                            (!canEditPaddocks || paddockDraft.horsesText.trim().length === 0) &&
+                              styles.inlineActionButtonDisabled,
                           ]}
                           onPress={clearPaddockHorses}
                           activeOpacity={0.85}
-                          disabled={!canEdit || paddockDraft.horsesText.trim().length === 0}
+                          disabled={!canEditPaddocks || paddockDraft.horsesText.trim().length === 0}
                         >
                           <Text style={styles.inlineActionText}>Rensa</Text>
                         </TouchableOpacity>
@@ -1557,7 +1422,7 @@ export default function StablesScreen() {
                               group.horseNames.every((name) =>
                                 paddockHorseSet.has(name.toLowerCase()),
                               );
-                            const disabled = group.horseNames.length === 0 || !canEdit;
+                            const disabled = group.horseNames.length === 0 || !canEditPaddocks;
                             return (
                               <TouchableOpacity
                                 key={group.id}
@@ -1566,7 +1431,7 @@ export default function StablesScreen() {
                                   allSelected && styles.accessChipActive,
                                   disabled && styles.accessChipDisabled,
                                 ]}
-                                onPress={() => canEdit && togglePaddockHorseGroup(group.horseNames)}
+                                onPress={() => canEditPaddocks && togglePaddockHorseGroup(group.horseNames)}
                                 activeOpacity={0.85}
                                 disabled={disabled}
                               >
@@ -1592,9 +1457,9 @@ export default function StablesScreen() {
                             <TouchableOpacity
                               key={horse.id}
                               style={[styles.accessChip, active && styles.accessChipActive]}
-                              onPress={() => canEdit && togglePaddockHorse(horse.name)}
+                              onPress={() => canEditPaddocks && togglePaddockHorse(horse.name)}
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditPaddocks}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
                                 {horse.name}
@@ -1612,7 +1477,7 @@ export default function StablesScreen() {
                       value={paddockDraft.horsesText}
                       onChangeText={(text) => setPaddockDraft((prev) => ({ ...prev, horsesText: text }))}
                       style={[styles.input, { minHeight: 70 }]}
-                      editable={canEdit}
+                      editable={canEditPaddocks}
                       multiline
                     />
                     <Text style={styles.formLabel}>Bild/karta</Text>
@@ -1628,10 +1493,10 @@ export default function StablesScreen() {
                     )}
                     <View style={styles.imageRow}>
                       <TouchableOpacity
-                        style={[styles.imageButton, !canEdit && styles.primaryButtonDisabled]}
+                        style={[styles.imageButton, !canEditPaddocks && styles.primaryButtonDisabled]}
                         onPress={handlePickPaddockImage}
                         activeOpacity={0.85}
-                        disabled={!canEdit}
+                        disabled={!canEditPaddocks}
                       >
                         <Feather name="upload" size={14} color={palette.primaryText} />
                         <Text style={styles.imageButtonText}>Välj bild</Text>
@@ -1641,7 +1506,7 @@ export default function StablesScreen() {
                           style={styles.imageButtonDanger}
                           onPress={() => setPaddockDraft((prev) => ({ ...prev, image: null }))}
                           activeOpacity={0.85}
-                          disabled={!canEdit}
+                          disabled={!canEditPaddocks}
                         >
                           <Feather name="x" size={14} color={palette.error} />
                           <Text style={styles.imageButtonDangerText}>Ta bort</Text>
@@ -1649,22 +1514,20 @@ export default function StablesScreen() {
                       ) : null}
                     </View>
                     <TouchableOpacity
-                      style={[styles.primaryButton, !canEdit && styles.primaryButtonDisabled]}
+                      style={[styles.primaryButton, !canEditPaddocks && styles.primaryButtonDisabled]}
                       onPress={handleSavePaddock}
                       activeOpacity={0.9}
-                      disabled={!canEdit}
+                      disabled={!canEditPaddocks}
                     >
                       <Text style={styles.primaryButtonText}>{paddockDraft.id ? 'Uppdatera hage' : 'Spara hage'}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               </View>
-            </Card>
-          ) : null}
+          </Card>
 
-          {currentStepId === 'horse' ? (
-            <>
-              <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+          <>
+            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.sectionTitle}>Hästar i {currentStable?.name ?? 'valt stall'}</Text>
                   <Text style={styles.countText}>
@@ -1680,7 +1543,7 @@ export default function StablesScreen() {
                       value={horseSearch}
                       onChangeText={setHorseSearch}
                       style={[styles.input, styles.searchInput]}
-                      editable={canEdit}
+                      editable={canEditHorses}
                     />
                     <View style={styles.horseList}>
                       {filteredHorses.map((horse) => {
@@ -1697,7 +1560,7 @@ export default function StablesScreen() {
                               style={styles.horseRowMain}
                               onPress={() => handleEditHorse(horse.id)}
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditHorses}
                             >
                               {horse.image ? (
                                 <Image source={horse.image} style={styles.horseAvatar} />
@@ -1713,7 +1576,7 @@ export default function StablesScreen() {
                                 {horse.note ? <Text style={styles.horseNote}>{horse.note}</Text> : null}
                               </View>
                             </TouchableOpacity>
-                            {canEdit ? (
+                            {canEditHorses ? (
                               <TouchableOpacity style={styles.removeButton} onPress={() => handleDeleteHorse(horse.id)}>
                                 <Feather name="trash-2" size={14} color={palette.error} />
                               </TouchableOpacity>
@@ -1739,9 +1602,9 @@ export default function StablesScreen() {
                             <TouchableOpacity
                               key={stable.id}
                               style={[styles.accessChip, active && styles.accessChipActive]}
-                              onPress={() => canEdit && setHorseDraft((prev) => ({ ...prev, stableId: stable.id }))}
+                              onPress={() => canEditHorses && setHorseDraft((prev) => ({ ...prev, stableId: stable.id }))}
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditHorses}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{stable.name}</Text>
                             </TouchableOpacity>
@@ -1755,9 +1618,11 @@ export default function StablesScreen() {
                         <View style={styles.chipRow}>
                           <TouchableOpacity
                             style={[styles.accessChip, !horseDraft.ownerUserId && styles.accessChipActive]}
-                            onPress={() => canEdit && setHorseDraft((prev) => ({ ...prev, ownerUserId: undefined }))}
+                            onPress={() =>
+                              canEditHorses && setHorseDraft((prev) => ({ ...prev, ownerUserId: undefined }))
+                            }
                             activeOpacity={0.85}
-                            disabled={!canEdit}
+                            disabled={!canEditHorses}
                           >
                             <Text
                               style={[
@@ -1774,9 +1639,11 @@ export default function StablesScreen() {
                               <TouchableOpacity
                                 key={member.id}
                                 style={[styles.accessChip, active && styles.accessChipActive]}
-                                onPress={() => canEdit && setHorseDraft((prev) => ({ ...prev, ownerUserId: member.id }))}
+                                onPress={() =>
+                                  canEditHorses && setHorseDraft((prev) => ({ ...prev, ownerUserId: member.id }))
+                                }
                                 activeOpacity={0.85}
-                                disabled={!canEdit}
+                                disabled={!canEditHorses}
                               >
                                 <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
                                   {member.name}
@@ -1792,7 +1659,7 @@ export default function StablesScreen() {
                         value={horseDraft.name}
                         onChangeText={(text) => setHorseDraft((prev) => ({ ...prev, name: text }))}
                         style={styles.input}
-                        editable={canEdit}
+                        editable={canEditHorses}
                       />
                       <Text style={styles.formLabel}>Kön</Text>
                       <View style={styles.chipRow}>
@@ -1802,9 +1669,9 @@ export default function StablesScreen() {
                             <TouchableOpacity
                               key={gender}
                               style={[styles.accessChip, active && styles.accessChipActive]}
-                              onPress={() => canEdit && setHorseDraft((prev) => ({ ...prev, gender }))}
+                              onPress={() => canEditHorses && setHorseDraft((prev) => ({ ...prev, gender }))}
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditHorses}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
                                 {genderLabel[gender]}
@@ -1819,7 +1686,7 @@ export default function StablesScreen() {
                         value={horseDraft.age}
                         onChangeText={(text) => setHorseDraft((prev) => ({ ...prev, age: text }))}
                         style={styles.input}
-                        editable={canEdit}
+                        editable={canEditHorses}
                         keyboardType="numeric"
                       />
                       <TextInput
@@ -1828,7 +1695,7 @@ export default function StablesScreen() {
                         value={horseDraft.note}
                         onChangeText={(text) => setHorseDraft((prev) => ({ ...prev, note: text }))}
                         style={[styles.input, { minHeight: 46 }]}
-                        editable={canEdit}
+                        editable={canEditHorses}
                         multiline
                       />
                       <Text style={styles.formLabel}>Bild</Text>
@@ -1842,10 +1709,10 @@ export default function StablesScreen() {
                       )}
                       <View style={styles.imageRow}>
                         <TouchableOpacity
-                          style={[styles.imageButton, !canEdit && styles.primaryButtonDisabled]}
+                          style={[styles.imageButton, !canEditHorses && styles.primaryButtonDisabled]}
                           onPress={handlePickHorseImage}
                           activeOpacity={0.85}
-                          disabled={!canEdit}
+                          disabled={!canEditHorses}
                         >
                           <Feather name="upload" size={14} color={palette.primaryText} />
                           <Text style={styles.imageButtonText}>Välj bild</Text>
@@ -1855,7 +1722,7 @@ export default function StablesScreen() {
                             style={styles.imageButtonDanger}
                             onPress={() => setHorseDraft((prev) => ({ ...prev, image: null }))}
                             activeOpacity={0.85}
-                            disabled={!canEdit}
+                            disabled={!canEditHorses}
                           >
                             <Feather name="x" size={14} color={palette.error} />
                             <Text style={styles.imageButtonDangerText}>Ta bort</Text>
@@ -1863,10 +1730,10 @@ export default function StablesScreen() {
                         ) : null}
                       </View>
                       <TouchableOpacity
-                        style={[styles.primaryButton, !canEdit && styles.primaryButtonDisabled]}
+                        style={[styles.primaryButton, !canEditHorses && styles.primaryButtonDisabled]}
                         onPress={handleSaveHorse}
                         activeOpacity={0.9}
-                        disabled={!canEdit}
+                        disabled={!canEditHorses}
                       >
                         <Text style={styles.primaryButtonText}>
                           {horseDraft.id ? 'Uppdatera häst' : 'Spara häst'}
@@ -1877,7 +1744,7 @@ export default function StablesScreen() {
                 </View>
               </Card>
 
-              <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.sectionTitle}>Medlemmar i {currentStable?.name ?? 'valt stall'}</Text>
                   <Text style={styles.countText}>
@@ -1933,7 +1800,7 @@ export default function StablesScreen() {
                                     const nextRole = roleOrder[(index + 1) % roleOrder.length];
                                     actions.updateMemberRole({ userId: user.id, stableId: currentStableId, role: nextRole });
                                   }}
-                                  disabled={!canEdit}
+                                  disabled={!canEditMembers}
                                 >
                                   <Text style={styles.roleButtonText}>{roleLabels[role] ?? role}</Text>
                                 </TouchableOpacity>
@@ -1941,7 +1808,7 @@ export default function StablesScreen() {
                                   <TouchableOpacity
                                     style={styles.removeButton}
                                     onPress={() => actions.removeMemberFromStable(user.id, currentStableId)}
-                                    disabled={!isOwner}
+                                    disabled={!canEditMembers}
                                   >
                                     <Feather name="x" size={14} color={palette.error} />
                                   </TouchableOpacity>
@@ -1961,7 +1828,7 @@ export default function StablesScreen() {
                         value={inviteDraft.name}
                         onChangeText={(text) => setInviteDraft((prev) => ({ ...prev, name: text }))}
                         style={styles.input}
-                        editable={canEdit}
+                        editable={canEditMembers}
                       />
                       <TextInput
                         placeholder="E-post"
@@ -1971,7 +1838,7 @@ export default function StablesScreen() {
                         style={styles.input}
                         keyboardType="email-address"
                         autoCapitalize="none"
-                        editable={canEdit}
+                        editable={canEditMembers}
                       />
                       <TextInput
                         placeholder="Telefon (valfritt)"
@@ -1980,7 +1847,7 @@ export default function StablesScreen() {
                         onChangeText={(text) => setInviteDraft((prev) => ({ ...prev, phone: text }))}
                         style={styles.input}
                         keyboardType="phone-pad"
-                        editable={canEdit}
+                        editable={canEditMembers}
                       />
                       <Text style={styles.formLabel}>Stall</Text>
                       <View style={styles.chipRow}>
@@ -1991,7 +1858,7 @@ export default function StablesScreen() {
                               key={stable.id}
                               style={[styles.accessChip, active && styles.accessChipActive]}
                               onPress={() =>
-                                canEdit &&
+                                canEditMembers &&
                                 setInviteDraft((prev) => {
                                   const exists = prev.stableIds.includes(stable.id);
                                   if (exists && prev.stableIds.length === 1) {
@@ -2006,7 +1873,7 @@ export default function StablesScreen() {
                                 })
                               }
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditMembers}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
                                 {stable.name}
@@ -2026,7 +1893,7 @@ export default function StablesScreen() {
                               key={option.id}
                               style={[styles.roleChip, active && styles.roleChipActive]}
                               onPress={() =>
-                                canEdit &&
+                                canEditMembers &&
                                 setInviteDraft((prev) => ({
                                   ...prev,
                                   role: option.id,
@@ -2034,7 +1901,7 @@ export default function StablesScreen() {
                                 }))
                               }
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditMembers}
                             >
                               <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>{option.label}</Text>
                             </TouchableOpacity>
@@ -2047,7 +1914,7 @@ export default function StablesScreen() {
                         value={inviteDraft.customRole}
                         onChangeText={(text) => setInviteDraft((prev) => ({ ...prev, customRole: text }))}
                         style={styles.input}
-                        editable={canEdit}
+                        editable={canEditMembers}
                       />
                       <Text style={styles.formLabel}>Åtkomst</Text>
                       <View style={styles.chipRow}>
@@ -2058,9 +1925,9 @@ export default function StablesScreen() {
                             <TouchableOpacity
                               key={level}
                               style={[styles.accessChip, active && styles.accessChipActive]}
-                              onPress={() => canEdit && setInviteDraft((prev) => ({ ...prev, access: level }))}
+                              onPress={() => canEditMembers && setInviteDraft((prev) => ({ ...prev, access: level }))}
                               activeOpacity={0.85}
-                              disabled={!canEdit}
+                              disabled={!canEditMembers}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{labels[level]}</Text>
                             </TouchableOpacity>
@@ -2082,11 +1949,11 @@ export default function StablesScreen() {
                                   key={option.id}
                                   style={[styles.roleChip, active && styles.roleChipActive]}
                                   onPress={() =>
-                                    canEdit &&
+                                    canEditMembers &&
                                     setInviteDraft((prev) => ({ ...prev, riderRole: option.id as typeof prev.riderRole }))
                                   }
                                   activeOpacity={0.85}
-                                  disabled={!canEdit}
+                                  disabled={!canEditMembers}
                                 >
                                   <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>{option.label}</Text>
                                 </TouchableOpacity>
@@ -2107,7 +1974,7 @@ export default function StablesScreen() {
                                 key={horse.id}
                                 style={[styles.accessChip, active && styles.accessChipActive]}
                                 onPress={() =>
-                                  canEdit &&
+                                  canEditMembers &&
                                   setInviteDraft((prev) => ({
                                     ...prev,
                                     horseIds: active
@@ -2116,7 +1983,7 @@ export default function StablesScreen() {
                                   }))
                                 }
                                 activeOpacity={0.85}
-                                disabled={!canEdit}
+                                disabled={!canEditMembers}
                               >
                                 <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{horse.name}</Text>
                               </TouchableOpacity>
@@ -2125,7 +1992,7 @@ export default function StablesScreen() {
                         </View>
                       )}
                       <TouchableOpacity
-                        style={[styles.primaryButton, !canEdit && styles.primaryButtonDisabled]}
+                        style={[styles.primaryButton, !canEditMembers && styles.primaryButtonDisabled]}
                         onPress={() => {
                           if (!inviteDraft.name.trim() || !inviteDraft.email.trim()) {
                             toast.showToast('Namn och e-post krävs.', 'error');
@@ -2165,100 +2032,19 @@ export default function StablesScreen() {
                           }
                         }}
                         activeOpacity={0.9}
-                        disabled={!canEdit}
+                        disabled={!canEditMembers}
                       >
                         <Text style={styles.primaryButtonText}>Lägg till</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 </View>
-              </Card>
-            </>
-          ) : null}
+            </Card>
+          </>
 
-          <View style={[styles.footerNav, isDesktopWeb && styles.footerNavDesktop]}>
-            <TouchableOpacity
-              style={[styles.secondaryButton, isDesktopWeb && styles.secondaryButtonDesktop, currentStep === 0 && styles.secondaryButtonDisabled]}
-              onPress={() => setCurrentStep((prev) => Math.max(0, prev - 1))}
-              disabled={currentStep === 0}
-              activeOpacity={0.85}
-            >
-              <Text style={[styles.secondaryButtonLabel, currentStep === 0 && styles.secondaryButtonLabelDisabled]}>
-                Tillbaka
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.primaryButton, isDesktopWeb && styles.primaryButtonDesktop, !canContinue && styles.primaryButtonDisabled]}
-              onPress={() => {
-                if (currentStepId && currentStep === totalSteps - 1) {
-                  setShowComplete(true);
-                  return;
-                }
-                if (totalSteps > 0) {
-                  setCurrentStep((prev) => Math.min(totalSteps - 1, prev + 1));
-                }
-              }}
-              activeOpacity={0.9}
-              disabled={!canContinue}
-            >
-              <Text style={styles.primaryButtonText}>
-                {currentStepId && currentStep === totalSteps - 1 ? 'Klart → appen' : 'Nästa steg'}
-              </Text>
-            </TouchableOpacity>
-          </View>
             </View>
           </View>
         </ScrollView>
-        <Modal visible={showComplete} transparent animationType="fade" onRequestClose={() => setShowComplete(false)}>
-          <View style={styles.modalOverlay}>
-            <View style={styles.completeCard}>
-              <Animated.View
-                style={[
-                  styles.celebrateCircle,
-                  {
-                    transform: [
-                      {
-                        scale: celebrate.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.3, 1],
-                        }),
-                      },
-                    ],
-                    opacity: celebrate,
-                  },
-                ]}
-              >
-                <Feather name="check" size={32} color={palette.inverseText} />
-              </Animated.View>
-              <Text style={styles.completeTitle}>Klart!</Text>
-              <Text style={styles.completeText}>
-                {hasFarm ? 'Din gård och stall är satta.' : 'Ditt stall är klart.'} Vill du ta en snabb rundtur?
-              </Text>
-              <View style={styles.completeActions}>
-                <TouchableOpacity
-                  style={styles.secondaryButton}
-                  onPress={() => {
-                    setShowComplete(false);
-                    router.push('/');
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <Text style={styles.secondaryButtonLabel}>Hoppa över</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.primaryButton}
-                  onPress={() => {
-                    setShowComplete(false);
-                    router.push({ pathname: '/', params: { tour: 'intro' } });
-                  }}
-                  activeOpacity={0.9}
-                >
-                  <Text style={styles.primaryButtonText}>Visa guidad tur</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
           </>
         )}
       </SafeAreaView>

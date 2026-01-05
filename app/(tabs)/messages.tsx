@@ -26,11 +26,15 @@ const radii = theme.radii;
 
 export default function MessagesScreen() {
   const router = useRouter();
-  const { state, actions } = useAppData();
+  const { state, actions, derived } = useAppData();
   const { messages, currentStableId } = state;
   const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isWeb = Platform.OS === 'web';
+  const isDesktopWeb = isWeb && width >= 1024;
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const canManageOnboarding = derived.permissions.canManageOnboarding;
+  const canOpenAdmin = canManageOnboarding && isWeb;
+  const adminHint = canManageOnboarding && !isWeb ? ' Admin finns i webben.' : '';
 
   const handleOpenConversation = (item: MessagePreview) => {
     actions.markConversationRead(item.id);
@@ -40,9 +44,60 @@ export default function MessagesScreen() {
     });
   };
 
+  const handleOpenMembers = React.useCallback(() => {
+    router.push('/members');
+  }, [router]);
+
+  const handleOpenAdmin = React.useCallback(() => {
+    router.push('/admin');
+  }, [router]);
+
   const activeMessages = React.useMemo(
     () => messages.filter((item) => !item.stableId || item.stableId === currentStableId),
     [messages, currentStableId],
+  );
+
+  const emptyStateActions = [
+    { label: 'Hitta medlem', onPress: handleOpenMembers, variant: 'primary' as const },
+    ...(canOpenAdmin
+      ? [{ label: 'Öppna admin', onPress: handleOpenAdmin, variant: 'secondary' as const }]
+      : []),
+  ];
+
+  const emptyState = (
+    <Card tone="muted" style={styles.emptyCard}>
+      <Text style={styles.emptyTitle}>Inga meddelanden ännu</Text>
+      <Text style={styles.emptyText}>
+        {canManageOnboarding
+          ? `Starta en chatt via en medlem eller bjud in fler via Admin.${adminHint}`
+          : 'Öppna en medlem och tryck Chatta.'}
+      </Text>
+      <View style={styles.emptyActions}>
+        {emptyStateActions.map((action) => {
+          const isPrimary = action.variant === 'primary';
+          return (
+            <TouchableOpacity
+              key={action.label}
+              style={[
+                styles.emptyAction,
+                isPrimary ? styles.emptyActionPrimary : styles.emptyActionSecondary,
+              ]}
+              onPress={action.onPress}
+              activeOpacity={0.85}
+            >
+              <Text
+                style={[
+                  styles.emptyActionText,
+                  isPrimary ? styles.emptyActionPrimaryText : styles.emptyActionSecondaryText,
+                ]}
+              >
+                {action.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </Card>
   );
 
   return (
@@ -79,12 +134,73 @@ export default function MessagesScreen() {
             </View>
             <View style={styles.desktopList}>
               <View style={[styles.list, styles.listDesktop]}>
-                {activeMessages.map((item) => {
+                {activeMessages.length === 0
+                  ? emptyState
+                  : activeMessages.map((item) => {
+                      const badgeColor = item.group ? '#2E7CF6' : '#22B686';
+                      return (
+                        <TouchableOpacity
+                          key={item.id}
+                          style={[styles.item, styles.itemDesktop]}
+                          onPress={() => handleOpenConversation(item)}
+                          activeOpacity={0.9}
+                        >
+                          <View style={styles.avatarBubble}>
+                            {item.group ? (
+                              <View style={[styles.groupAvatar, { backgroundColor: `${badgeColor}15` }]}>
+                                <UserGroups width={22} height={22} />
+                              </View>
+                            ) : (
+                              <Image
+                                source={item.avatar ?? require('@/assets/images/dummy-avatar.png')}
+                                style={styles.personAvatar}
+                              />
+                            )}
+                          </View>
+                          <View style={styles.itemBody}>
+                            <View style={styles.itemHeader}>
+                              <View style={styles.itemTitleRow}>
+                                <Text style={styles.itemTitle}>{item.title}</Text>
+                                {item.unreadCount ? (
+                                  <View style={[styles.unreadDot, { backgroundColor: badgeColor }]}>
+                                    <Text style={styles.unreadCount}>{item.unreadCount}</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                              <Text style={styles.itemTime}>{item.timeAgo}</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.itemSubtitle}>
+                              {item.group ? `${item.subtitle}` : item.subtitle}
+                            </Text>
+                            <Text numberOfLines={1} style={styles.itemPreview}>
+                              {item.description}
+                            </Text>
+                            <View style={styles.itemFooter}>
+                              <View style={styles.statusChip}>
+                                <View style={[styles.statusDot, { backgroundColor: badgeColor }]} />
+                                <Text style={styles.statusText}>
+                                  {item.group ? 'Grupptråd' : 'Privat chatt'}
+                                </Text>
+                              </View>
+                              <Text style={styles.ctaText}>Visa tråd →</Text>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.list}>
+            {activeMessages.length === 0
+              ? emptyState
+              : activeMessages.map((item) => {
                   const badgeColor = item.group ? '#2E7CF6' : '#22B686';
                   return (
                     <TouchableOpacity
                       key={item.id}
-                      style={[styles.item, styles.itemDesktop]}
+                      style={styles.item}
                       onPress={() => handleOpenConversation(item)}
                       activeOpacity={0.9}
                     >
@@ -131,63 +247,6 @@ export default function MessagesScreen() {
                     </TouchableOpacity>
                   );
                 })}
-              </View>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.list}>
-            {activeMessages.map((item) => {
-              const badgeColor = item.group ? '#2E7CF6' : '#22B686';
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={styles.item}
-                  onPress={() => handleOpenConversation(item)}
-                  activeOpacity={0.9}
-                >
-                  <View style={styles.avatarBubble}>
-                    {item.group ? (
-                      <View style={[styles.groupAvatar, { backgroundColor: `${badgeColor}15` }]}>
-                        <UserGroups width={22} height={22} />
-                      </View>
-                    ) : (
-                      <Image
-                        source={item.avatar ?? require('@/assets/images/dummy-avatar.png')}
-                        style={styles.personAvatar}
-                      />
-                    )}
-                  </View>
-                  <View style={styles.itemBody}>
-                    <View style={styles.itemHeader}>
-                      <View style={styles.itemTitleRow}>
-                        <Text style={styles.itemTitle}>{item.title}</Text>
-                        {item.unreadCount ? (
-                          <View style={[styles.unreadDot, { backgroundColor: badgeColor }]}>
-                            <Text style={styles.unreadCount}>{item.unreadCount}</Text>
-                          </View>
-                        ) : null}
-                      </View>
-                      <Text style={styles.itemTime}>{item.timeAgo}</Text>
-                    </View>
-                    <Text numberOfLines={1} style={styles.itemSubtitle}>
-                      {item.group ? `${item.subtitle}` : item.subtitle}
-                    </Text>
-                    <Text numberOfLines={1} style={styles.itemPreview}>
-                      {item.description}
-                    </Text>
-                    <View style={styles.itemFooter}>
-                      <View style={styles.statusChip}>
-                        <View style={[styles.statusDot, { backgroundColor: badgeColor }]} />
-                        <Text style={styles.statusText}>
-                          {item.group ? 'Grupptråd' : 'Privat chatt'}
-                        </Text>
-                      </View>
-                      <Text style={styles.ctaText}>Visa tråd →</Text>
-                    </View>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
           </View>
         )}
       </ScrollView>
@@ -282,6 +341,54 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     color: palette.secondaryText,
+  },
+  emptyCard: {
+    padding: space.lg,
+    gap: 10,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  emptyText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.secondaryText,
+  },
+  emptyActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 4,
+  },
+  emptyAction: {
+    flexGrow: 1,
+    minWidth: 140,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  emptyActionPrimary: {
+    backgroundColor: palette.primary,
+  },
+  emptyActionPrimaryText: {
+    color: palette.inverseText,
+    fontWeight: '700',
+  },
+  emptyActionSecondary: {
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  emptyActionSecondaryText: {
+    color: palette.primaryText,
   },
   panelChips: {
     flexDirection: 'row',

@@ -1,11 +1,15 @@
 import React from 'react';
 import type { PropsWithChildren } from 'react';
 import type { ImageSourcePropType } from 'react-native';
-import type * as SecureStoreType from 'expo-secure-store';
+import { generateId } from '@/lib/ids';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
+import { formatTimeAgo } from '@/lib/time';
 
 export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
 export type AssignmentIcon = 'sun' | 'clock' | 'moon';
+export type AssignmentHistoryAction = 'created' | 'assigned' | 'declined' | 'completed';
 
 // Monday-first index (0 = Monday, 6 = Sunday)
 export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -23,14 +27,25 @@ export type StableEventVisibility = {
   evening: boolean;
 };
 
+export type ArenaBookingMode = 'open' | 'approval' | 'staff';
+
+export type StableArenaSettings = {
+  hasArena: boolean;
+  hasSchedule: boolean;
+  bookingMode: ArenaBookingMode;
+  rules?: string;
+};
+
 export type StableSettings = {
   dayLogic: StableDayLogic;
   eventVisibility: StableEventVisibility;
+  arena: StableArenaSettings;
 };
 
 export type Stable = {
   id: string;
   name: string;
+  description?: string;
   location?: string;
   farmId?: string;
   rideTypes?: RideType[];
@@ -104,6 +119,8 @@ export type Horse = {
   image?: ImageSourcePropType;
   gender?: 'mare' | 'gelding' | 'stallion' | 'unknown';
   age?: number;
+  boxNumber?: string;
+  canSleepInside?: boolean;
   note?: string;
 };
 
@@ -165,6 +182,7 @@ export type UpdateAssignmentInput = {
 
 export type AlertMessage = {
   id: string;
+  stableId: string;
   message: string;
   type: 'critical' | 'info';
   createdAt: string;
@@ -341,18 +359,7 @@ export type UserProfile = {
   defaultPasses: DefaultPass[];
   awayNotices: AwayNotice[];
   avatar?: ImageSourcePropType;
-};
-
-export type SignInInput = {
-  email: string;
-  password?: string;
-};
-
-export type SignUpInput = {
-  name: string;
-  email: string;
-  password?: string;
-  stableId?: string;
+  onboardingDismissed: boolean;
 };
 
 export type UpsertPaddockInput = {
@@ -367,6 +374,7 @@ export type UpsertPaddockInput = {
 export type UpsertStableInput = {
   id?: string;
   name: string;
+  description?: string;
   location?: string;
   farmId?: string;
   rideTypes?: RideType[];
@@ -389,6 +397,8 @@ export type UpsertHorseInput = {
   image?: Horse['image'];
   gender?: Horse['gender'];
   age?: number;
+  boxNumber?: string;
+  canSleepInside?: boolean;
   note?: string;
 };
 
@@ -470,7 +480,7 @@ type AppDataState = {
     assignmentId: string;
     label: string;
     timestamp: string;
-    action: 'created' | 'completed' | 'assigned' | 'declined';
+    action: AssignmentHistoryAction;
   }>;
   messages: MessagePreview[];
   conversations: Record<string, ConversationMessage[]>;
@@ -501,7 +511,7 @@ type AssignmentHistoryPushAction = {
   payload: {
     assignmentId: string;
     label: string;
-    action: 'created' | 'completed' | 'assigned' | 'declined';
+    action: AssignmentHistoryAction;
   };
 };
 
@@ -533,11 +543,6 @@ type UserUpdateAction = {
 type UserUpsertAction = {
   type: 'USER_UPSERT';
   payload: { user: UserProfile };
-};
-
-type UserSetAction = {
-  type: 'USER_SET';
-  payload: { id: string };
 };
 
 type SessionClearAction = {
@@ -715,7 +720,6 @@ type AppDataAction =
   | HorseDeleteAction
   | StateHydrateAction
   | StateResetAction
-  | UserSetAction
   | SessionClearAction;
 
 export type ActionResult<T = void> =
@@ -724,7 +728,10 @@ export type ActionResult<T = void> =
 
 type AppDataContextValue = {
   state: AppDataState;
+  hydrating: boolean;
   derived: {
+    isFirstTimeOnboarding: boolean;
+    canManageOnboardingAny: boolean;
     summary: {
       total: number;
       completed: number;
@@ -775,6 +782,7 @@ type AppDataContextValue = {
     markConversationRead: (conversationId: string) => void;
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
     setCurrentStable: (stableId: string) => void;
+    setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
     upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
     deleteFarm: (farmId: string) => ActionResult;
     upsertStable: (input: UpsertStableInput) => ActionResult<Stable>;
@@ -787,11 +795,6 @@ type AppDataContextValue = {
     updateMemberHorseIds: (input: UpdateMemberHorseIdsInput) => ActionResult<UserProfile>;
     toggleMemberDefaultPass: (input: ToggleMemberDefaultPassInput) => ActionResult<UserProfile>;
     removeMemberFromStable: (userId: string, stableId: string) => ActionResult<UserProfile>;
-    setCurrentUser: (userId: string) => ActionResult;
-    signIn: (input: SignInInput) => ActionResult<UserProfile>;
-    signUp: (input: SignUpInput) => ActionResult<UserProfile>;
-    signOut: () => ActionResult;
-    resetAppData: () => ActionResult;
   };
 };
 
@@ -819,10 +822,18 @@ const defaultEventVisibility: StableEventVisibility = {
   evening: true,
 };
 
+const defaultArenaSettings: StableArenaSettings = {
+  hasArena: false,
+  hasSchedule: false,
+  bookingMode: 'open',
+  rules: '',
+};
+
 export function createDefaultStableSettings(): StableSettings {
   return {
     dayLogic: 'box',
     eventVisibility: { ...defaultEventVisibility },
+    arena: { ...defaultArenaSettings },
   };
 }
 
@@ -834,6 +845,7 @@ export function resolveStableSettings(stable?: Stable): StableSettings {
   return {
     dayLogic: stable.settings.dayLogic ?? defaults.dayLogic,
     eventVisibility: { ...defaults.eventVisibility, ...stable.settings.eventVisibility },
+    arena: { ...defaults.arena, ...stable.settings.arena },
   };
 }
 
@@ -893,7 +905,6 @@ function ensureSystemGroups(
   return systemGroups.reduce((acc, group) => upsertGroup(acc, group), base);
 }
 
-const PERSIST_KEY = 'stableflow-appdata';
 const accessLevel: Record<NonNullable<StableMembership['access']>, number> = {
   view: 0,
   edit: 1,
@@ -944,8 +955,12 @@ function resolvePermissions(
   if (!user) {
     return emptyPermissions;
   }
+  const isFirstTimeOnboarding = state.stables.length === 0 && user.membership.length === 0;
   const membership = user.membership.find((entry) => entry.stableId === stableId);
   if (!membership) {
+    if (isFirstTimeOnboarding && !stableId) {
+      return { ...emptyPermissions, canManageOnboarding: true };
+    }
     return emptyPermissions;
   }
   const role = membership.role ?? 'guest';
@@ -975,448 +990,35 @@ function resolvePermissions(
   };
 }
 
-let secureStoreModule: typeof SecureStoreType | null = null;
-try {
-  // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
-  secureStoreModule = require('expo-secure-store');
-} catch {
-  secureStoreModule = null;
-}
-
 const referenceDay = new Date();
 referenceDay.setHours(0, 0, 0, 0);
 const isoDay0 = toISODate(referenceDay);
 const isoDay1 = toISODate(addDays(referenceDay, 1));
 const isoDay2 = toISODate(addDays(referenceDay, 2));
 const todayWeekday = ((referenceDay.getDay() + 6) % 7) as WeekdayIndex;
-const stableOneSettings = createDefaultStableSettings();
-const stableTwoSettings = { ...createDefaultStableSettings(), dayLogic: 'loose' as StableDayLogic };
-const postTime1 = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-const postTime2 = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-
-const initialFarms: Farm[] = [
-  { id: 'farm-1', name: 'Gillmyra gård', location: 'Täby', hasIndoorArena: true, arenaNote: '20x60 · bokningsbar' },
-];
-
-const initialStables: Stable[] = [
-  {
-    id: 'stable-1',
-    name: 'Stall A',
-    location: 'Täby gård',
-    farmId: 'farm-1',
-    settings: stableOneSettings,
-    rideTypes: [
-      { id: 'ride-type-1', code: 'K', label: 'Kort pass' },
-      { id: 'ride-type-2', code: 'K+', label: 'Kort + tempo' },
-      { id: 'ride-type-3', code: 'M', label: 'Mellanpass' },
-      { id: 'ride-type-4', code: 'H', label: 'Hoppträning' },
-      { id: 'ride-type-5', code: 'D', label: 'Dressyrpass' },
-    ],
-  },
-  {
-    id: 'stable-2',
-    name: 'Stall B',
-    location: 'Täby gård',
-    farmId: 'farm-1',
-    settings: stableTwoSettings,
-    rideTypes: [
-      { id: 'ride-type-6', code: 'K', label: 'Kort pass' },
-      { id: 'ride-type-7', code: 'M', label: 'Mellanpass' },
-      { id: 'ride-type-8', code: 'U', label: 'Uteritt' },
-    ],
-  },
-];
-
-const initialHorses: Horse[] = [
-  { id: 'horse-1', name: 'Cinder', stableId: 'stable-1', ownerUserId: 'user-jane', gender: 'mare', age: 10 },
-  { id: 'horse-2', name: 'Kanel', stableId: 'stable-1', ownerUserId: 'user-jane', gender: 'mare', age: 9 },
-  { id: 'horse-3', name: 'Atlas', stableId: 'stable-2', ownerUserId: 'user-karl', gender: 'gelding', age: 8 },
-];
-
-const initialGroups: Group[] = [
-  ...buildSystemGroups(initialFarms, initialStables, initialHorses),
-  {
-    id: 'group-custom-1',
-    name: 'Fodergruppen',
-    type: 'custom',
-    stableId: 'stable-1',
-    createdAt: new Date().toISOString(),
-    createdByUserId: 'user-jane',
-  },
-];
 
 const initialState: AppDataState = {
-  currentStableId: 'stable-1',
-  farms: initialFarms,
-  stables: initialStables,
-  horses: initialHorses,
-  currentUserId: 'user-jane',
-  sessionUserId: 'user-jane',
-  users: {
-    'user-jane': {
-      id: 'user-jane',
-      name: 'Jane Doe',
-      email: 'jane@example.com',
-      membership: [
-        { stableId: 'stable-1', role: 'admin', access: 'owner', horseIds: ['horse-1', 'horse-2'], riderRole: 'owner' },
-        { stableId: 'stable-2', role: 'staff', access: 'edit' },
-      ],
-      horses: ['Cinder', 'Kanel'],
-      location: 'Täby, Stockholm',
-      phone: '+46 70-000 00 00',
-      responsibilities: ['Foder', 'Kvällspass'],
-      defaultPasses: [
-        { weekday: todayWeekday, slot: 'Morning' },
-        { weekday: todayWeekday, slot: 'Evening' },
-      ],
-      awayNotices: [
-        {
-          id: 'away-1',
-          start: toISODate(addDays(referenceDay, 14)),
-          end: toISODate(addDays(referenceDay, 15)),
-          note: 'Träningsläger med Cinder',
-        },
-        { id: 'away-2', start: toISODate(addDays(referenceDay, 24)), end: toISODate(addDays(referenceDay, 24)), note: 'Semester' },
-      ],
-      avatar: require('@/assets/images/dummy-avatar.png'),
-    },
-    'user-karl': {
-      id: 'user-karl',
-      name: 'Karl Johansson',
-      email: 'karl@example.com',
-      membership: [{ stableId: 'stable-2', role: 'staff' }],
-      horses: ['Atlas'],
-      location: 'Täby, Stockholm',
-      phone: '+46 72-111 11 11',
-      responsibilities: ['Lunchpass'],
-      defaultPasses: [{ weekday: todayWeekday, slot: 'Lunch' }],
-      awayNotices: [],
-      avatar: require('@/assets/images/dummy-avatar.png'),
-    },
-  },
-  alerts: [
-    {
-      id: 'alert-1',
-      message: 'Ingen parkering vid containern idag.',
-      type: 'critical',
-      createdAt: new Date().toISOString(),
-    },
-  ],
-  assignments: [
-    {
-      id: 'assign-1',
-      stableId: 'stable-1',
-      date: isoDay0,
-      label: 'Morgon',
-      slot: 'Morning',
-      icon: 'sun',
-      time: '07:00',
-      note: 'Fodring saknas',
-      status: 'assigned',
-      assigneeId: 'user-jane',
-    },
-    {
-      id: 'assign-2',
-      stableId: 'stable-1',
-      date: isoDay0,
-      label: 'Lunch',
-      slot: 'Lunch',
-      icon: 'clock',
-      time: '12:00',
-      note: 'Kolla utevistelse',
-      status: 'assigned',
-      assigneeId: 'user-karl',
-    },
-    {
-      id: 'assign-3',
-      stableId: 'stable-1',
-      date: isoDay0,
-      label: 'Kväll',
-      slot: 'Evening',
-      icon: 'moon',
-      time: '18:00',
-      note: 'Hö påfyllning',
-      status: 'assigned',
-      assigneeId: 'user-jane',
-    },
-    {
-      id: 'assign-4',
-      stableId: 'stable-2',
-      date: isoDay1,
-      label: 'Morgon',
-      slot: 'Morning',
-      icon: 'sun',
-      time: '07:00',
-      note: 'Hage byte',
-      status: 'assigned',
-      assigneeId: 'user-karl',
-    },
-    {
-      id: 'assign-5',
-      stableId: 'stable-2',
-      date: isoDay1,
-      label: 'Lunch',
-      slot: 'Lunch',
-      icon: 'clock',
-      time: '12:00',
-      note: 'Behöver ansvarig',
-      status: 'open',
-    },
-    {
-      id: 'assign-6',
-      stableId: 'stable-2',
-      date: isoDay1,
-      label: 'Kväll',
-      slot: 'Evening',
-      icon: 'moon',
-      time: '18:00',
-      note: 'Stretch av hästar',
-      status: 'assigned',
-      assigneeId: 'user-karl',
-    },
-    {
-      id: 'assign-7',
-      stableId: 'stable-1',
-      date: isoDay2,
-      label: 'Morgon',
-      slot: 'Morning',
-      icon: 'sun',
-      time: '07:00',
-      status: 'assigned',
-      assigneeId: 'user-jane',
-    },
-    {
-      id: 'assign-8',
-      stableId: 'stable-1',
-      date: isoDay2,
-      label: 'Lunch',
-      slot: 'Lunch',
-      icon: 'clock',
-      time: '12:00',
-      note: 'Hovslagare bortrest',
-      status: 'open',
-    },
-    {
-      id: 'assign-9',
-      stableId: 'stable-1',
-      date: isoDay2,
-      label: 'Kväll',
-      slot: 'Evening',
-      icon: 'moon',
-      time: '18:00',
-      status: 'assigned',
-      assigneeId: 'user-jane',
-    },
-  ],
+  currentStableId: '',
+  stables: [],
+  farms: [],
+  horses: [],
+  currentUserId: '',
+  sessionUserId: null,
+  users: {},
+  alerts: [],
+  assignments: [],
   assignmentHistory: [],
-  messages: [
-    {
-      id: 'group-1',
-      title: 'Fodergruppen',
-      subtitle: 'Karl',
-      description: 'Kan någon dubbla kvällsmaten på torsdag?',
-      timeAgo: '30 min',
-      unreadCount: 2,
-      group: true,
-      stableId: 'stable-1',
-    },
-    {
-      id: 'person-1',
-      title: 'Ida Magnusson',
-      subtitle: '1h sedan',
-      description: 'Hej! Har du möjlighet att...',
-      timeAgo: '1h',
-      unreadCount: 0,
-      avatar: require('@/assets/images/dummy-avatar.png'),
-      stableId: 'stable-2',
-    },
-    {
-      id: 'person-2',
-      title: 'Samuel Hall',
-      subtitle: '2h sedan',
-      description: 'Glöm inte täcket ikväll!',
-      timeAgo: '2h',
-      unreadCount: 0,
-      avatar: require('@/assets/images/dummy-avatar.png'),
-      stableId: 'stable-1',
-    },
-  ],
-  conversations: {
-    'group-1': [
-      {
-        id: 'group-1-msg-1',
-        conversationId: 'group-1',
-        authorId: 'user-karl',
-        text: 'Kan någon dubbla kvällsmaten på torsdag?',
-        timestamp: '2025-03-08T15:00:00Z',
-      },
-      {
-        id: 'group-1-msg-2',
-        conversationId: 'group-1',
-        authorId: 'user-jane',
-        text: 'Det kan jag fixa!',
-        timestamp: '2025-03-08T15:05:00Z',
-        status: 'delivered',
-      },
-    ],
-    'person-1': [
-      {
-        id: 'person-1-msg-1',
-        conversationId: 'person-1',
-        authorId: 'person-1',
-        text: 'Hej! Har du möjlighet att hjälpa mig på fredag?',
-        timestamp: '2025-03-08T14:20:00Z',
-      },
-    ],
-  },
-  posts: [
-    {
-      id: 'post-1',
-      author: 'Ida Magnusson',
-      avatar: require('@/assets/images/dummy-avatar.png'),
-      timeAgo: '1h',
-      createdAt: postTime1,
-      content: 'Glöm inte att mockningen i Stall B ska vara klar innan lunch i morgon.',
-      likes: 8,
-      comments: 1,
-      likedByUserIds: ['user-jane'],
-      commentsData: [
-        {
-          id: 'comment-1',
-          postId: 'post-1',
-          authorId: 'user-karl',
-          authorName: 'Karl Johansson',
-          text: 'Fixar det.',
-          createdAt: postTime1,
-        },
-      ],
-      stableId: 'stable-2',
-      groupIds: ['stable:stable-2', 'farm:farm-1'],
-    },
-    {
-      id: 'post-2',
-      author: 'Ida Magnusson',
-      avatar: require('@/assets/images/dummy-avatar.png'),
-      timeAgo: '2h',
-      createdAt: postTime2,
-      content: 'Vilken kväll! Härlig uteritt med gänget.',
-      image: 'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
-      likes: 12,
-      comments: 0,
-      likedByUserIds: [],
-      commentsData: [],
-      stableId: 'stable-1',
-      groupIds: ['stable:stable-1', 'horse:horse-1', 'farm:farm-1'],
-    },
-  ],
-  groups: initialGroups,
-  ridingSchedule: [
-    { id: 'ride-1', stableId: 'stable-1', label: 'Tue 10', upcomingRides: 'Dressyr · 18:30', isToday: true },
-    { id: 'ride-2', stableId: 'stable-1', label: 'Wed 11', upcomingRides: 'Ridhus bokat 17:00' },
-    { id: 'ride-3', stableId: 'stable-1', label: 'Thu 12', upcomingRides: 'Uteritt 19:00' },
-    { id: 'ride-4', stableId: 'stable-2', label: 'Fri 13', upcomingRides: 'Inga ridpass' },
-    { id: 'ride-5', stableId: 'stable-2', label: 'Sat 14' },
-    { id: 'ride-6', stableId: 'stable-2', label: 'Sun 15' },
-  ],
-  competitionEvents: [
-    {
-      id: 'comp-1',
-      start: '2025-03-29',
-      end: '2025-03-30',
-      title: 'CEI Barbaste (FRA) · Distansritt ponny & ridhäst',
-      status: 'closed',
-    },
-    {
-      id: 'comp-2',
-      start: '2025-03-30',
-      end: '2025-03-31',
-      title: 'Göingeritten · Nationell tävling',
-      status: 'open',
-    },
-    {
-      id: 'comp-3',
-      start: '2025-04-05',
-      end: '2025-04-06',
-      title: 'Kristinehamnsritten · Distansritt',
-      status: 'open',
-    },
-  ],
-  dayEvents: [
-    {
-      id: 'day-1',
-      stableId: 'stable-1',
-      date: isoDay1,
-      label: 'Hovslagare bortrest',
-      tone: 'farrierAway',
-    },
-    {
-      id: 'day-2',
-      stableId: 'stable-1',
-      date: isoDay2,
-      label: 'Ryttare bortrest',
-      tone: 'riderAway',
-    },
-  ],
-  arenaBookings: [
-    {
-      id: 'arena-1',
-      stableId: 'stable-1',
-      date: isoDay0,
-      startTime: '17:00',
-      endTime: '18:00',
-      purpose: 'Dressyrträning',
-      bookedByUserId: 'user-jane',
-    },
-    {
-      id: 'arena-2',
-      stableId: 'stable-1',
-      date: isoDay1,
-      startTime: '19:00',
-      endTime: '20:30',
-      purpose: 'Hoppträning',
-      bookedByUserId: 'user-karl',
-    },
-  ],
-  arenaStatuses: [
-    {
-      id: 'arena-status-1',
-      stableId: 'stable-1',
-      date: isoDay0,
-      label: 'Harvat',
-      createdByUserId: 'user-jane',
-      createdAt: new Date().toISOString(),
-    },
-  ],
-  rideLogs: [
-    {
-      id: 'ride-log-1',
-      stableId: 'stable-1',
-      horseId: 'horse-1',
-      date: isoDay0,
-      rideTypeId: 'ride-type-1',
-      length: '45 min',
-      note: 'Lugn uteritt',
-      createdByUserId: 'user-jane',
-    },
-  ],
-  paddocks: [
-    {
-      id: 'paddock-1',
-      name: 'Hage 1',
-      stableId: 'stable-1',
-      horseNames: ['Cinder', 'Atlas'],
-      updatedAt: new Date().toISOString(),
-      season: 'summer',
-    },
-    {
-      id: 'paddock-2',
-      name: 'Hage 2',
-      stableId: 'stable-1',
-      horseNames: ['Kanel'],
-      updatedAt: new Date().toISOString(),
-      season: 'yearRound',
-    },
-  ],
+  messages: [],
+  conversations: {},
+  posts: [],
+  groups: [],
+  ridingSchedule: [],
+  competitionEvents: [],
+  dayEvents: [],
+  arenaBookings: [],
+  arenaStatuses: [],
+  rideLogs: [],
+  paddocks: [],
   horseDayStatuses: [],
 };
 
@@ -1447,7 +1049,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
       const historyEntry =
         !silent && updates.status && updatedAssignment
           ? {
-              id: `${id}-${Date.now()}`,
+              id: generateId(),
               assignmentId: id,
               label: `${updatedAssignment.label} ${updatedAssignment.time}`.trim(),
               timestamp: new Date().toISOString(),
@@ -1474,7 +1076,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         ...state,
         assignmentHistory: [
           {
-            id: `${assignmentId}-${Date.now()}`,
+            id: generateId(),
             assignmentId,
             label,
             timestamp: new Date().toISOString(),
@@ -1591,9 +1193,10 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'CONVERSATION_APPEND': {
       const { conversationId, message, preview } = action.payload;
       const existingMessages = state.conversations[conversationId] ?? [];
-      const updatedPreview = state.messages.map((msg) =>
-        msg.id === conversationId ? preview : msg,
-      );
+      const hasPreview = state.messages.some((msg) => msg.id === conversationId);
+      const updatedPreview = hasPreview
+        ? state.messages.map((msg) => (msg.id === conversationId ? preview : msg))
+        : [preview, ...state.messages];
 
       return {
         ...state,
@@ -1632,12 +1235,6 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
           [user.id]: existing ? { ...existing, ...user } : user,
         },
       };
-    }
-    case 'USER_SET': {
-      if (!state.users[action.payload.id]) {
-        return state;
-      }
-      return { ...state, currentUserId: action.payload.id, sessionUserId: action.payload.id };
     }
     case 'SESSION_CLEAR': {
       return { ...state, sessionUserId: null };
@@ -1984,9 +1581,174 @@ function normalizeHorseNames(names: string[]) {
   return result;
 }
 
+function hasOwnProperty<T extends object>(target: T, key: keyof T) {
+  return Object.prototype.hasOwnProperty.call(target, key);
+}
+
+function buildAssignmentInsertPayload(assignment: Assignment) {
+  return {
+    id: assignment.id,
+    stable_id: assignment.stableId,
+    date: assignment.date,
+    slot: assignment.slot,
+    label: assignment.label,
+    icon: assignment.icon,
+    time: assignment.time,
+    note: assignment.note ?? null,
+    status: assignment.status,
+    assignee_id: assignment.assigneeId ?? null,
+    completed_at: assignment.completedAt ?? null,
+    assigned_via: assignment.assignedVia ?? null,
+    declined_by_user_ids: assignment.declinedByUserIds ?? [],
+  };
+}
+
+function buildAssignmentUpdatePayload(updates: Partial<Assignment>) {
+  const payload: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+
+  if (hasOwnProperty(updates, 'stableId')) {
+    payload.stable_id = updates.stableId;
+  }
+  if (hasOwnProperty(updates, 'date')) {
+    payload.date = updates.date;
+  }
+  if (hasOwnProperty(updates, 'slot')) {
+    payload.slot = updates.slot;
+  }
+  if (hasOwnProperty(updates, 'label')) {
+    payload.label = updates.label;
+  }
+  if (hasOwnProperty(updates, 'icon')) {
+    payload.icon = updates.icon;
+  }
+  if (hasOwnProperty(updates, 'time')) {
+    payload.time = updates.time;
+  }
+  if (hasOwnProperty(updates, 'note')) {
+    payload.note = updates.note ?? null;
+  }
+  if (hasOwnProperty(updates, 'status')) {
+    payload.status = updates.status;
+  }
+  if (hasOwnProperty(updates, 'assigneeId')) {
+    payload.assignee_id = updates.assigneeId ?? null;
+  }
+  if (hasOwnProperty(updates, 'assignedVia')) {
+    payload.assigned_via = updates.assignedVia ?? null;
+  }
+  if (hasOwnProperty(updates, 'declinedByUserIds')) {
+    payload.declined_by_user_ids = updates.declinedByUserIds ?? [];
+  }
+  if (hasOwnProperty(updates, 'completedAt')) {
+    payload.completed_at = updates.completedAt ?? null;
+  }
+
+  return payload;
+}
+
+type UploadableImage = {
+  uri: string;
+  base64?: string;
+  mimeType?: string;
+};
+
+const imageContentTypes: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+};
+
+function getUploadableImage(input: unknown): UploadableImage | null {
+  if (!input) {
+    return null;
+  }
+  if (typeof input === 'string') {
+    return { uri: input };
+  }
+  if (typeof input === 'number' || Array.isArray(input)) {
+    return null;
+  }
+  if (typeof input === 'object' && 'uri' in input) {
+    const record = input as { uri?: string; base64?: string; mimeType?: string };
+    if (!record.uri) {
+      return null;
+    }
+    return {
+      uri: record.uri,
+      base64: record.base64,
+      mimeType: record.mimeType,
+    };
+  }
+  return null;
+}
+
+function isRemoteUri(uri: string) {
+  return /^https?:\/\//i.test(uri);
+}
+
+function getExtensionFromUri(uri: string, mimeType?: string) {
+  if (mimeType) {
+    const mapped = Object.entries(imageContentTypes).find(([, value]) => value === mimeType);
+    if (mapped) {
+      return mapped[0];
+    }
+  }
+  const match = uri.match(/\.([a-z0-9]+)(?:\?|#|$)/i);
+  if (match?.[1]) {
+    return match[1].toLowerCase();
+  }
+  return 'jpg';
+}
+
+function resolveContentType(extension: string, mimeType?: string) {
+  if (mimeType) {
+    return mimeType;
+  }
+  return imageContentTypes[extension] ?? 'image/jpeg';
+}
+
+async function resolveBlob(image: UploadableImage, contentType: string) {
+  if (image.base64) {
+    const base64Payload = image.base64.includes(',')
+      ? image.base64.split(',').pop() ?? image.base64
+      : image.base64;
+    const response = await fetch(`data:${contentType};base64,${base64Payload}`);
+    return response.blob();
+  }
+
+  const response = await fetch(image.uri);
+  return response.blob();
+}
+
+async function uploadImageToStorage(bucket: string, pathPrefix: string, image: UploadableImage) {
+  const extension = getExtensionFromUri(image.uri, image.mimeType);
+  const contentType = resolveContentType(extension, image.mimeType);
+  const filePath = `${pathPrefix || 'misc'}/${generateId()}.${extension}`;
+  const blob = await resolveBlob(image, contentType);
+
+  const { error } = await supabase.storage.from(bucket).upload(filePath, blob, {
+    contentType,
+    upsert: true,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
+  return data.publicUrl;
+}
+
 export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
+  const { user } = useAuth();
+  const [hydrating, setHydrating] = React.useState(true);
 
   React.useEffect(() => {
     stateRef.current = state;
@@ -2004,98 +1766,1322 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const loadPersisted = React.useCallback(async () => {
-    // Prefer localStorage on web
-    if (typeof localStorage !== 'undefined') {
-      const raw = localStorage.getItem(PERSIST_KEY);
-      if (raw) return raw;
-    }
-    if (secureStoreModule?.getItemAsync) {
-      try {
-        return await secureStoreModule.getItemAsync(PERSIST_KEY);
-      } catch {
-        return null;
+  const persistAssignmentInsert = React.useCallback(
+    async (assignment: Assignment) => {
+      if (!user) return;
+      const { error } = await supabase
+        .from('assignments')
+        .insert(buildAssignmentInsertPayload(assignment));
+      if (error) {
+        console.warn('Kunde inte spara pass', error);
       }
-    }
-    return null;
-  }, []);
+    },
+    [user],
+  );
 
-  const savePersisted = React.useCallback(async (value: string) => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(PERSIST_KEY, value);
-    }
-    if (secureStoreModule?.setItemAsync) {
+  const persistAssignmentUpdate = React.useCallback(
+    async (assignmentId: string, updates: Partial<Assignment>, overrides?: Record<string, unknown>) => {
+      if (!user) return;
+      const payload = {
+        ...buildAssignmentUpdatePayload(updates),
+        ...(overrides ?? {}),
+      };
+      const { error } = await supabase.from('assignments').update(payload).eq('id', assignmentId);
+      if (error) {
+        console.warn('Kunde inte uppdatera pass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistAssignmentDelete = React.useCallback(
+    async (assignmentId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
+      if (error) {
+        console.warn('Kunde inte ta bort pass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistAssignmentHistory = React.useCallback(
+    async (assignment: Assignment, action: AssignmentHistoryAction) => {
+      if (!user) return;
+      const { error } = await supabase.from('assignment_history').insert({
+        id: generateId(),
+        stable_id: assignment.stableId,
+        assignment_id: assignment.id,
+        label: `${assignment.label} ${assignment.time}`.trim(),
+        action,
+      });
+      if (error) {
+        console.warn('Kunde inte spara passhistorik', error);
+      }
+    },
+    [user],
+  );
+
+  const persistPaddockUpsert = React.useCallback(
+    async (paddock: Paddock, imageInput: PaddockImage | null | undefined) => {
+      if (!user) return;
       try {
-        await secureStoreModule.setItemAsync(PERSIST_KEY, value);
+        let imageUrl: string | null | undefined;
+        if (imageInput === null) {
+          imageUrl = null;
+        } else if (paddock.image) {
+          const uploadable = getUploadableImage(paddock.image);
+          if (uploadable) {
+            imageUrl = isRemoteUri(uploadable.uri)
+              ? uploadable.uri
+              : await uploadImageToStorage('paddocks', paddock.stableId, uploadable);
+          }
+        }
+
+        const payload: Record<string, unknown> = {
+          id: paddock.id,
+          stable_id: paddock.stableId,
+          name: paddock.name,
+          horse_names: paddock.horseNames,
+          season: paddock.season ?? 'yearRound',
+          updated_at: paddock.updatedAt,
+        };
+        if (imageUrl !== undefined) {
+          payload.image_url = imageUrl;
+        }
+
+        const { error } = await supabase.from('paddocks').upsert(payload);
+        if (error) {
+          console.warn('Kunde inte spara hage', error);
+          return;
+        }
+
+        if (imageUrl && paddock.image?.uri !== imageUrl) {
+          dispatch({
+            type: 'PADDOCK_UPSERT',
+            payload: { ...paddock, image: { uri: imageUrl } },
+          });
+        }
       } catch (error) {
-        console.warn('Kunde inte spara data', error);
+        console.warn('Kunde inte spara hage', error);
       }
-    }
-  }, []);
+    },
+    [user],
+  );
 
-  const clearPersisted = React.useCallback(async () => {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(PERSIST_KEY);
-    }
-    if (secureStoreModule?.deleteItemAsync) {
+  const persistPaddockDelete = React.useCallback(
+    async (paddockId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('paddocks').delete().eq('id', paddockId);
+      if (error) {
+        console.warn('Kunde inte ta bort hage', error);
+      }
+    },
+    [user],
+  );
+
+  const persistHorseUpsert = React.useCallback(
+    async (horse: Horse) => {
+      if (!user) return;
       try {
-        await secureStoreModule.deleteItemAsync(PERSIST_KEY);
+        let imageUrl: string | null | undefined;
+        if (horse.image) {
+          const uploadable = getUploadableImage(horse.image);
+          if (uploadable) {
+            imageUrl = isRemoteUri(uploadable.uri)
+              ? uploadable.uri
+              : await uploadImageToStorage('avatars', horse.stableId, uploadable);
+          }
+        }
+
+        const payload: Record<string, unknown> = {
+          id: horse.id,
+          stable_id: horse.stableId,
+          name: horse.name,
+          owner_user_id: horse.ownerUserId ?? null,
+          box_number: horse.boxNumber ?? null,
+          can_sleep_inside: horse.canSleepInside ?? null,
+          gender: horse.gender ?? null,
+          age: horse.age ?? null,
+          note: horse.note ?? null,
+        };
+        if (imageUrl !== undefined) {
+          payload.image_url = imageUrl;
+        }
+
+        const { error } = await supabase.from('horses').upsert(payload);
+        if (error) {
+          console.warn('Kunde inte spara häst', error);
+          return;
+        }
+
+        const currentUri =
+          horse.image && typeof horse.image === 'object' && 'uri' in horse.image
+            ? (horse.image as { uri?: string }).uri
+            : undefined;
+        if (imageUrl && imageUrl !== currentUri) {
+          dispatch({
+            type: 'HORSE_UPSERT',
+            payload: { ...horse, image: { uri: imageUrl } },
+          });
+        }
       } catch (error) {
-        console.warn('Kunde inte rensa sparad data', error);
+        console.warn('Kunde inte spara häst', error);
       }
-    }
-  }, []);
+    },
+    [user],
+  );
 
-  // Hydrate from storage
-  React.useEffect(() => {
-    (async () => {
-      try {
-        const raw = await loadPersisted();
-        if (!raw) return;
-        const parsed = JSON.parse(raw) as Partial<AppDataState>;
-        dispatch({
-          type: 'STATE_HYDRATE',
-          payload: parsed,
+  const persistHorseDelete = React.useCallback(
+    async (horseId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('horses').delete().eq('id', horseId);
+      if (error) {
+        console.warn('Kunde inte ta bort häst', error);
+      }
+    },
+    [user],
+  );
+
+  const persistHorseDayStatusUpsert = React.useCallback(
+    async (status: HorseDayStatus) => {
+      if (!user) return;
+      const { error } = await supabase.from('horse_day_statuses').upsert(
+        {
+          id: status.id,
+          stable_id: status.stableId,
+          horse_id: status.horseId,
+          date: status.date,
+          day_status: status.dayStatus ?? null,
+          night_status: status.nightStatus ?? null,
+          checked: status.checked ?? null,
+          water: status.water ?? null,
+          hay: status.hay ?? null,
+        },
+        { onConflict: 'stable_id,horse_id,date' },
+      );
+      if (error) {
+        console.warn('Kunde inte spara häststatus', error);
+      }
+    },
+    [user],
+  );
+
+  const persistDayEventInsert = React.useCallback(
+    async (event: DayEvent) => {
+      if (!user) return;
+      const { error } = await supabase.from('day_events').insert({
+        id: event.id,
+        stable_id: event.stableId,
+        date: event.date,
+        label: event.label,
+        tone: event.tone,
+      });
+      if (error) {
+        console.warn('Kunde inte spara dagsnotis', error);
+      }
+    },
+    [user],
+  );
+
+  const persistDayEventDelete = React.useCallback(
+    async (eventId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('day_events').delete().eq('id', eventId);
+      if (error) {
+        console.warn('Kunde inte ta bort dagsnotis', error);
+      }
+    },
+    [user],
+  );
+
+  const persistArenaBookingInsert = React.useCallback(
+    async (booking: ArenaBooking) => {
+      if (!user) return;
+      const { error } = await supabase.from('arena_bookings').insert({
+        id: booking.id,
+        stable_id: booking.stableId,
+        date: booking.date,
+        start_time: booking.startTime,
+        end_time: booking.endTime,
+        purpose: booking.purpose,
+        note: booking.note ?? null,
+        booked_by_user_id: booking.bookedByUserId,
+      });
+      if (error) {
+        console.warn('Kunde inte spara ridhusbokning', error);
+      }
+    },
+    [user],
+  );
+
+  const persistArenaBookingUpdate = React.useCallback(
+    async (bookingId: string, updates: Partial<ArenaBooking>) => {
+      if (!user) return;
+      const payload: Record<string, unknown> = {};
+      if (hasOwnProperty(updates, 'date')) {
+        payload.date = updates.date;
+      }
+      if (hasOwnProperty(updates, 'startTime')) {
+        payload.start_time = updates.startTime;
+      }
+      if (hasOwnProperty(updates, 'endTime')) {
+        payload.end_time = updates.endTime;
+      }
+      if (hasOwnProperty(updates, 'purpose')) {
+        payload.purpose = updates.purpose;
+      }
+      if (hasOwnProperty(updates, 'note')) {
+        payload.note = updates.note ?? null;
+      }
+      if (!Object.keys(payload).length) {
+        return;
+      }
+      const { error } = await supabase.from('arena_bookings').update(payload).eq('id', bookingId);
+      if (error) {
+        console.warn('Kunde inte uppdatera ridhusbokning', error);
+      }
+    },
+    [user],
+  );
+
+  const persistArenaBookingDelete = React.useCallback(
+    async (bookingId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('arena_bookings').delete().eq('id', bookingId);
+      if (error) {
+        console.warn('Kunde inte ta bort ridhusbokning', error);
+      }
+    },
+    [user],
+  );
+
+  const persistArenaStatusInsert = React.useCallback(
+    async (status: ArenaStatus) => {
+      if (!user) return;
+      const { error } = await supabase.from('arena_statuses').insert({
+        id: status.id,
+        stable_id: status.stableId,
+        date: status.date,
+        label: status.label,
+        created_by_user_id: status.createdByUserId,
+      });
+      if (error) {
+        console.warn('Kunde inte spara ridhusstatus', error);
+      }
+    },
+    [user],
+  );
+
+  const persistArenaStatusDelete = React.useCallback(
+    async (statusId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('arena_statuses').delete().eq('id', statusId);
+      if (error) {
+        console.warn('Kunde inte ta bort ridhusstatus', error);
+      }
+    },
+    [user],
+  );
+
+  const persistRideLogInsert = React.useCallback(
+    async (log: RideLogEntry) => {
+      if (!user) return;
+      const { error } = await supabase.from('ride_logs').insert({
+        id: log.id,
+        stable_id: log.stableId,
+        horse_id: log.horseId,
+        date: log.date,
+        ride_type_id: log.rideTypeId,
+        length: log.length ?? null,
+        note: log.note ?? null,
+        created_by_user_id: log.createdByUserId,
+      });
+      if (error) {
+        console.warn('Kunde inte spara ridpass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistRideLogDelete = React.useCallback(
+    async (rideLogId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('ride_logs').delete().eq('id', rideLogId);
+      if (error) {
+        console.warn('Kunde inte ta bort ridpass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistAlertInsert = React.useCallback(
+    async (alert: AlertMessage) => {
+      if (!user) return;
+      const { error } = await supabase.from('alerts').insert({
+        id: alert.id,
+        stable_id: alert.stableId,
+        message: alert.message,
+        type: alert.type,
+      });
+      if (error) {
+        console.warn('Kunde inte spara notis', error);
+      }
+    },
+    [user],
+  );
+
+  const persistDefaultPassToggle = React.useCallback(
+    async (input: { userId: string; stableId: string; weekday: WeekdayIndex; slot: AssignmentSlot; enabled: boolean }) => {
+      if (!user) return;
+      if (!input.stableId) return;
+      if (input.enabled) {
+        const { error } = await supabase.from('default_passes').insert({
+          user_id: input.userId,
+          stable_id: input.stableId,
+          weekday: input.weekday,
+          slot: input.slot,
         });
-      } catch (error) {
-        console.warn('Kunde inte läsa sparad data', error);
+        if (error && error.code !== '23505') {
+          console.warn('Kunde inte spara standardpass', error);
+        }
+        return;
       }
-    })();
-  }, [loadPersisted]);
 
-  // Persist key slices
-  React.useEffect(() => {
-    const payload: Partial<AppDataState> = {
-      farms: state.farms,
-      stables: state.stables,
-      horses: state.horses,
-      paddocks: state.paddocks,
-      horseDayStatuses: state.horseDayStatuses,
-      users: state.users,
-      currentStableId: state.currentStableId,
-      currentUserId: state.currentUserId,
-      sessionUserId: state.sessionUserId,
-    };
-    (async () => {
+      const { error } = await supabase
+        .from('default_passes')
+        .delete()
+        .eq('user_id', input.userId)
+        .eq('stable_id', input.stableId)
+        .eq('weekday', input.weekday)
+        .eq('slot', input.slot);
+      if (error) {
+        console.warn('Kunde inte ta bort standardpass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistGroupInsert = React.useCallback(
+    async (group: Group) => {
+      if (!user) return;
+      const { error } = await supabase.from('groups').insert({
+        id: group.id,
+        stable_id: group.stableId ?? null,
+        farm_id: group.farmId ?? null,
+        horse_id: group.horseId ?? null,
+        name: group.name,
+        type: group.type,
+        created_by_user_id: group.createdByUserId ?? null,
+        created_at: group.createdAt,
+      });
+      if (error) {
+        console.warn('Kunde inte spara grupp', error);
+      }
+    },
+    [user],
+  );
+
+  const persistGroupUpdate = React.useCallback(
+    async (groupId: string, updates: Partial<Group>) => {
+      if (!user) return;
+      const payload: Record<string, unknown> = {};
+      if (hasOwnProperty(updates, 'name')) {
+        payload.name = updates.name;
+      }
+      if (!Object.keys(payload).length) {
+        return;
+      }
+      const { error } = await supabase.from('groups').update(payload).eq('id', groupId);
+      if (error) {
+        console.warn('Kunde inte uppdatera grupp', error);
+      }
+    },
+    [user],
+  );
+
+  const persistGroupDelete = React.useCallback(
+    async (groupId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('groups').delete().eq('id', groupId);
+      if (error) {
+        console.warn('Kunde inte ta bort grupp', error);
+      }
+    },
+    [user],
+  );
+
+  const persistPostInsert = React.useCallback(
+    async (post: Post, rawImage?: string) => {
+      if (!user || !post.stableId) return;
       try {
-        await savePersisted(JSON.stringify(payload));
+        let imageUrl: string | null | undefined;
+        if (rawImage) {
+          const uploadable = getUploadableImage(rawImage);
+          if (uploadable) {
+            imageUrl = isRemoteUri(uploadable.uri)
+              ? uploadable.uri
+              : await uploadImageToStorage('posts', post.stableId, uploadable);
+          }
+        }
+
+        const { error } = await supabase.from('posts').insert({
+          id: post.id,
+          stable_id: post.stableId,
+          user_id: user.id,
+          content: post.content ?? null,
+          group_ids: post.groupIds ?? [],
+          media_type: imageUrl ? 'image' : 'text',
+          image_url: imageUrl ?? null,
+        });
+        if (error) {
+          console.warn('Kunde inte spara inlägg', error);
+          return;
+        }
+
+        if (imageUrl && imageUrl !== post.image) {
+          dispatch({
+            type: 'POST_UPDATE',
+            payload: { id: post.id, updates: { image: imageUrl } },
+          });
+        }
       } catch (error) {
-        console.warn('Kunde inte spara data', error);
+        console.warn('Kunde inte spara inlägg', error);
       }
-    })();
-  }, [
-    savePersisted,
-    state.farms,
-    state.stables,
-    state.horses,
-    state.paddocks,
-    state.horseDayStatuses,
-    state.users,
-    state.currentStableId,
-    state.sessionUserId,
-  ]);
+    },
+    [user],
+  );
+
+  const persistPostLikeToggle = React.useCallback(
+    async (postId: string, userId: string, enabled: boolean) => {
+      if (!user) return;
+      if (enabled) {
+        const { error } = await supabase.from('likes').insert({ user_id: userId, post_id: postId });
+        if (error && error.code !== '23505') {
+          console.warn('Kunde inte gilla inlägg', error);
+        }
+        return;
+      }
+
+      const { error } = await supabase
+        .from('likes')
+        .delete()
+        .eq('user_id', userId)
+        .eq('post_id', postId);
+      if (error) {
+        console.warn('Kunde inte ta bort gillning', error);
+      }
+    },
+    [user],
+  );
+
+  const persistPostCommentInsert = React.useCallback(
+    async (postId: string, userId: string, text: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('comments').insert({
+        user_id: userId,
+        post_id: postId,
+        content: text,
+      });
+      if (error) {
+        console.warn('Kunde inte spara kommentar', error);
+      }
+    },
+    [user],
+  );
+
+  const persistFarmUpsert = React.useCallback(
+    async (farm: Farm) => {
+      if (!user) return;
+      const { error } = await supabase.from('farms').upsert({
+        id: farm.id,
+        name: farm.name,
+        location: farm.location ?? null,
+        has_indoor_arena: farm.hasIndoorArena ?? null,
+        arena_note: farm.arenaNote ?? null,
+      });
+      if (error) {
+        console.warn('Kunde inte spara gård', error);
+      }
+    },
+    [user],
+  );
+
+  const persistFarmDelete = React.useCallback(
+    async (farmId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('farms').delete().eq('id', farmId);
+      if (error) {
+        console.warn('Kunde inte ta bort gård', error);
+      }
+    },
+    [user],
+  );
+
+  const persistStableUpsert = React.useCallback(
+    async (stable: Stable, isNew: boolean, ownerId: string) => {
+      if (!user) return;
+      const payload: Record<string, unknown> = {
+        id: stable.id,
+        name: stable.name,
+        description: stable.description ?? null,
+        location: stable.location ?? null,
+        farm_id: stable.farmId ?? null,
+        settings: stable.settings ?? null,
+        ride_types: stable.rideTypes ?? [],
+      };
+      if (isNew) {
+        payload.created_by = ownerId;
+      }
+      const { error } = await supabase.from('stables').upsert(payload);
+      if (error) {
+        console.warn('Kunde inte spara stall', error);
+        return;
+      }
+
+      if (isNew) {
+        const { error: memberError } = await supabase.from('stable_members').upsert(
+          {
+            stable_id: stable.id,
+            user_id: ownerId,
+            role: 'admin',
+            access: 'owner',
+            rider_role: 'owner',
+          },
+          { onConflict: 'stable_id,user_id' },
+        );
+        if (memberError) {
+          console.warn('Kunde inte koppla admin till stallet', memberError);
+        }
+        const { error: conversationError } = await supabase.from('conversations').insert({
+          stable_id: stable.id,
+          title: stable.name,
+          is_group: true,
+          created_by_user_id: ownerId,
+        });
+        if (conversationError && conversationError.code !== '23505') {
+          console.warn('Kunde inte skapa gruppkonversation', conversationError);
+        }
+      }
+    },
+    [user],
+  );
+
+  const persistStableUpdate = React.useCallback(
+    async (stableId: string, updates: Partial<Stable>) => {
+      if (!user) return;
+      const payload: Record<string, unknown> = {};
+      if (hasOwnProperty(updates, 'name')) {
+        payload.name = updates.name;
+      }
+      if (hasOwnProperty(updates, 'description')) {
+        payload.description = updates.description ?? null;
+      }
+      if (hasOwnProperty(updates, 'location')) {
+        payload.location = updates.location ?? null;
+      }
+      if (hasOwnProperty(updates, 'farmId')) {
+        payload.farm_id = updates.farmId ?? null;
+      }
+      if (hasOwnProperty(updates, 'settings')) {
+        payload.settings = updates.settings ?? null;
+      }
+      if (hasOwnProperty(updates, 'rideTypes')) {
+        payload.ride_types = updates.rideTypes ?? [];
+      }
+      if (!Object.keys(payload).length) {
+        return;
+      }
+      const { error } = await supabase.from('stables').update(payload).eq('id', stableId);
+      if (error) {
+        console.warn('Kunde inte uppdatera stall', error);
+        return;
+      }
+      if (hasOwnProperty(updates, 'name')) {
+        const { error: conversationError } = await supabase
+          .from('conversations')
+          .update({ title: updates.name ?? null })
+          .eq('stable_id', stableId)
+          .eq('is_group', true);
+        if (conversationError) {
+          console.warn('Kunde inte uppdatera stallchatten', conversationError);
+        }
+      }
+    },
+    [user],
+  );
+
+  const persistStableDelete = React.useCallback(
+    async (stableId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('stables').delete().eq('id', stableId);
+      if (error) {
+        console.warn('Kunde inte ta bort stall', error);
+      }
+    },
+    [user],
+  );
+
+  const persistStableInvite = React.useCallback(
+    async (input: AddMemberInput, stableIds: string[]) => {
+      if (!user) return;
+      const invites = stableIds.map((stableId) => ({
+        stable_id: stableId,
+        email: input.email.trim(),
+        role: input.role,
+        custom_role: input.customRole?.trim() || null,
+        access: input.access ?? 'view',
+        rider_role: input.role === 'rider' ? input.riderRole ?? 'medryttare' : null,
+        horse_ids: stableId === input.stableId ? input.horseIds ?? [] : [],
+        code: null,
+      }));
+      const { error } = await supabase.from('stable_invites').insert(invites);
+      if (error) {
+        console.warn('Kunde inte skicka inbjudan', error);
+      }
+    },
+    [user],
+  );
+
+  const persistStableMemberUpdate = React.useCallback(
+    async (stableId: string, userId: string, updates: Partial<StableMembership>) => {
+      if (!user) return;
+      const payload: Record<string, unknown> = {};
+      if (hasOwnProperty(updates, 'role')) {
+        payload.role = updates.role;
+      }
+      if (hasOwnProperty(updates, 'customRole')) {
+        payload.custom_role = updates.customRole ?? null;
+      }
+      if (hasOwnProperty(updates, 'access')) {
+        payload.access = updates.access ?? null;
+      }
+      if (hasOwnProperty(updates, 'horseIds')) {
+        payload.horse_ids = updates.horseIds ?? [];
+      }
+      if (hasOwnProperty(updates, 'riderRole')) {
+        payload.rider_role = updates.riderRole ?? null;
+      }
+      if (!Object.keys(payload).length) {
+        return;
+      }
+      const { error } = await supabase
+        .from('stable_members')
+        .update(payload)
+        .eq('stable_id', stableId)
+        .eq('user_id', userId);
+      if (error) {
+        console.warn('Kunde inte uppdatera medlem', error);
+      }
+    },
+    [user],
+  );
+
+  const persistStableMemberDelete = React.useCallback(
+    async (stableId: string, userId: string) => {
+      if (!user) return;
+      const { error } = await supabase
+        .from('stable_members')
+        .delete()
+        .eq('stable_id', stableId)
+        .eq('user_id', userId);
+      if (error) {
+        console.warn('Kunde inte ta bort medlem', error);
+      }
+    },
+    [user],
+  );
+
+  const persistProfileUpdate = React.useCallback(
+    async (userId: string, updates: Record<string, unknown>) => {
+      if (!user) return;
+      const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
+      if (error) {
+        if (
+          error.code === 'PGRST204' &&
+          typeof error.message === 'string' &&
+          error.message.includes('onboarding_dismissed')
+        ) {
+          return;
+        }
+        console.warn('Kunde inte uppdatera profil', error);
+      }
+    },
+    [user],
+  );
+
+  const persistConversationMessage = React.useCallback(
+    async (message: ConversationMessage) => {
+      if (!user) return;
+      const { error } = await supabase.from('messages').insert({
+        id: message.id,
+        conversation_id: message.conversationId,
+        author_id: message.authorId,
+        text: message.text,
+        status: message.status ?? null,
+      });
+      if (error) {
+        console.warn('Kunde inte spara meddelande', error);
+      }
+    },
+    [user],
+  );
 
   React.useEffect(() => {
+    if (!user) {
+      dispatch({ type: 'STATE_RESET' });
+      setHydrating(false);
+      return;
+    }
+
+    let cancelled = false;
+    setHydrating(true);
+
+    const hydrate = async () => {
+      const membershipResult = await supabase
+        .from('stable_members')
+        .select('*')
+        .eq('user_id', user.id);
+      if (membershipResult.error || !membershipResult.data) {
+        console.warn('Kunde inte hämta medlemskap', membershipResult.error);
+        setHydrating(false);
+        return;
+      }
+      const myMembership = membershipResult.data;
+      const stableIds = myMembership.map((row) => row.stable_id);
+      if (stableIds.length === 0) {
+        const profilesResult = await supabase.from('profiles').select('*').eq('id', user.id).single();
+        const profile = profilesResult.data;
+        if (!profile) {
+          setHydrating(false);
+          return;
+        }
+        const userProfile: UserProfile = {
+          id: user.id,
+          name: profile.full_name || profile.username || 'Okänd',
+          email: '',
+          membership: [],
+          horses: [],
+          location: profile.location ?? '',
+          phone: profile.phone ?? '',
+          responsibilities: profile.responsibilities ?? [],
+          defaultPasses: [],
+          awayNotices: [],
+          avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
+          onboardingDismissed: profile.onboarding_dismissed ?? false,
+        };
+        if (!cancelled) {
+          dispatch({
+            type: 'STATE_HYDRATE',
+            payload: {
+              users: { [user.id]: userProfile },
+              currentUserId: user.id,
+              sessionUserId: user.id,
+              messages: [],
+              conversations: {},
+            },
+          });
+          setHydrating(false);
+        }
+        return;
+      }
+      const allMembershipResult = await supabase
+        .from('stable_members')
+        .select('*')
+        .in('stable_id', stableIds);
+      const membership = allMembershipResult.data ?? myMembership;
+
+      const [
+        stablesResult,
+        farmsResult,
+        horsesResult,
+        paddocksResult,
+        assignmentsResult,
+        assignmentHistoryResult,
+        dayEventsResult,
+        arenaBookingsResult,
+        arenaStatusesResult,
+        rideLogsResult,
+        horseDayStatusesResult,
+        alertsResult,
+        ridingDaysResult,
+        competitionEventsResult,
+        groupsResult,
+        defaultPassesResult,
+        awayNoticesResult,
+        conversationsResult,
+      ] = await Promise.all([
+        supabase.from('stables').select('*').in('id', stableIds),
+        supabase.from('farms').select('*'),
+        supabase.from('horses').select('*').in('stable_id', stableIds),
+        supabase.from('paddocks').select('*').in('stable_id', stableIds),
+        supabase.from('assignments').select('*').in('stable_id', stableIds),
+        supabase.from('assignment_history').select('*').in('stable_id', stableIds),
+        supabase.from('day_events').select('*').in('stable_id', stableIds),
+        supabase.from('arena_bookings').select('*').in('stable_id', stableIds),
+        supabase.from('arena_statuses').select('*').in('stable_id', stableIds),
+        supabase.from('ride_logs').select('*').in('stable_id', stableIds),
+        supabase.from('horse_day_statuses').select('*').in('stable_id', stableIds),
+        supabase.from('alerts').select('*').in('stable_id', stableIds),
+        supabase.from('riding_days').select('*').in('stable_id', stableIds),
+        supabase.from('competition_events').select('*').in('stable_id', stableIds),
+        supabase.from('groups').select('*').in('stable_id', stableIds),
+        supabase.from('default_passes').select('*').in('stable_id', stableIds),
+        supabase.from('away_notices').select('*').in('stable_id', stableIds),
+        supabase.from('conversations').select('*').in('stable_id', stableIds).eq('is_group', true),
+      ]);
+
+      const stableRows = stablesResult.data ?? [];
+      const farmRows = farmsResult.data ?? [];
+      const horseRows = horsesResult.data ?? [];
+      const paddockRows = paddocksResult.data ?? [];
+      const assignmentRows = assignmentsResult.data ?? [];
+      const assignmentHistoryRows = assignmentHistoryResult.data ?? [];
+      const dayEventRows = dayEventsResult.data ?? [];
+      const arenaBookingRows = arenaBookingsResult.data ?? [];
+      const arenaStatusRows = arenaStatusesResult.data ?? [];
+      const rideLogRows = rideLogsResult.data ?? [];
+      const horseStatusRows = horseDayStatusesResult.data ?? [];
+      const alertRows = alertsResult.data ?? [];
+      const ridingDayRows = ridingDaysResult.data ?? [];
+      const competitionRows = competitionEventsResult.data ?? [];
+      const groupRows = groupsResult.data ?? [];
+      const defaultPassRows = defaultPassesResult.data ?? [];
+      const awayNoticeRows = awayNoticesResult.data ?? [];
+      let conversationRows = conversationsResult.data ?? [];
+
+      const stableById = stableRows.reduce<Record<string, (typeof stableRows)[number]>>(
+        (acc, stable) => {
+          acc[stable.id] = stable;
+          return acc;
+        },
+        {},
+      );
+      const conversationStableIds = new Set<string>(
+        conversationRows.map((row) => row.stable_id).filter((id): id is string => Boolean(id)),
+      );
+      const missingConversationStableIds = stableIds.filter((stableId) => !conversationStableIds.has(stableId));
+      if (missingConversationStableIds.length) {
+        const inserts = missingConversationStableIds.map((stableId) => ({
+          stable_id: stableId,
+          title: stableById[stableId]?.name ?? null,
+          is_group: true,
+          created_by_user_id: user.id,
+        }));
+        const insertResult = await supabase.from('conversations').insert(inserts).select('*');
+        if (insertResult.error && insertResult.error.code !== '23505') {
+          console.warn('Kunde inte skapa gruppkonversation', insertResult.error);
+        } else if (insertResult.data) {
+          conversationRows = [...conversationRows, ...insertResult.data];
+        }
+      }
+
+      const profileIds = new Set<string>([user.id]);
+      membership.forEach((row) => profileIds.add(row.user_id));
+      const profilesResult = await supabase
+        .from('profiles')
+        .select('*')
+        .in('id', Array.from(profileIds));
+
+      const profiles = profilesResult.data ?? [];
+      const profilesById = profiles.reduce<Record<string, (typeof profiles)[number]>>(
+        (acc, profile) => {
+          acc[profile.id] = profile;
+          return acc;
+        },
+        {},
+      );
+
+      const userMap: Record<string, UserProfile> = {};
+      membership.forEach((row) => {
+        const profile = profilesById[row.user_id];
+        if (!profile) {
+          return;
+        }
+        const existing = userMap[row.user_id];
+        const base: UserProfile = existing ?? {
+          id: row.user_id,
+          name: profile.full_name || profile.username || 'Okänd',
+          email: '',
+          membership: [],
+          horses: [],
+          location: profile.location ?? '',
+          phone: profile.phone ?? '',
+          responsibilities: profile.responsibilities ?? [],
+          defaultPasses: [],
+          awayNotices: [],
+          avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
+          onboardingDismissed: profile.onboarding_dismissed ?? false,
+        };
+
+        base.membership = [
+          ...base.membership,
+          {
+            stableId: row.stable_id,
+            role: row.role ?? 'guest',
+            customRole: row.custom_role ?? undefined,
+            access: row.access ?? 'view',
+            horseIds: row.horse_ids ?? [],
+            riderRole: row.rider_role ?? undefined,
+          },
+        ];
+
+        userMap[row.user_id] = base;
+      });
+
+      if (!userMap[user.id]) {
+        const profile = profilesById[user.id];
+        if (profile) {
+          userMap[user.id] = {
+            id: user.id,
+            name: profile.full_name || profile.username || 'Okänd',
+            email: '',
+            membership: [],
+            horses: [],
+            location: profile.location ?? '',
+            phone: profile.phone ?? '',
+            responsibilities: profile.responsibilities ?? [],
+            defaultPasses: [],
+            awayNotices: [],
+            avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
+            onboardingDismissed: profile.onboarding_dismissed ?? false,
+          };
+        }
+      }
+
+      defaultPassRows.forEach((entry) => {
+        const target = userMap[entry.user_id];
+        if (!target) return;
+        target.defaultPasses = [
+          ...target.defaultPasses,
+          { weekday: entry.weekday as WeekdayIndex, slot: entry.slot as AssignmentSlot },
+        ];
+      });
+
+      awayNoticeRows.forEach((entry) => {
+        const target = userMap[entry.user_id];
+        if (!target) return;
+        target.awayNotices = [
+          ...target.awayNotices,
+          { id: entry.id, start: entry.start, end: entry.end, note: entry.note ?? '' },
+        ];
+      });
+
+      horseRows.forEach((horse) => {
+        const ownerId = horse.owner_user_id;
+        if (!ownerId || !userMap[ownerId]) return;
+        const current = userMap[ownerId].horses;
+        if (!current.includes(horse.name)) {
+          userMap[ownerId].horses = [...current, horse.name];
+        }
+      });
+
+      const postsResult = await supabase
+        .from('posts')
+        .select('*')
+        .in('stable_id', stableIds)
+        .order('created_at', { ascending: false });
+      const postRows = postsResult.data ?? [];
+      const postIds = postRows.map((post) => post.id);
+
+      const [likesResult, commentsResult] = await Promise.all([
+        postIds.length ? supabase.from('likes').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+        postIds.length ? supabase.from('comments').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+      ]);
+
+      const likes = likesResult.data ?? [];
+      const comments = commentsResult.data ?? [];
+
+      const commentsByPost = comments.reduce<Record<string, PostComment[]>>((acc, comment) => {
+        const list = acc[comment.post_id] ?? [];
+        const authorProfile = profilesById[comment.user_id];
+        list.push({
+          id: comment.id.toString(),
+          postId: comment.post_id,
+          authorId: comment.user_id,
+          authorName: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+          text: comment.content,
+          createdAt: comment.created_at,
+        });
+        acc[comment.post_id] = list;
+        return acc;
+      }, {});
+
+      const likedByPost = likes.reduce<Record<string, string[]>>((acc, like) => {
+        const list = acc[like.post_id] ?? [];
+        list.push(like.user_id);
+        acc[like.post_id] = list;
+        return acc;
+      }, {});
+
+      const posts = postRows.map((post) => {
+        const authorProfile = profilesById[post.user_id];
+        const likedByUserIds = likedByPost[post.id] ?? [];
+        const commentsData = commentsByPost[post.id] ?? [];
+        return {
+          id: post.id,
+          author: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+          avatar: authorProfile?.avatar_url ? { uri: authorProfile.avatar_url } : require('@/assets/images/dummy-avatar.png'),
+          timeAgo: 'Nu',
+          createdAt: post.created_at,
+          content: post.content ?? post.caption ?? '',
+          image: post.image_url ?? post.image ?? undefined,
+          likes: likedByUserIds.length,
+          comments: commentsData.length,
+          likedByUserIds,
+          commentsData,
+          stableId: post.stable_id ?? undefined,
+          groupIds: post.group_ids ?? undefined,
+        } as Post;
+      });
+
+      const conversationIds = conversationRows.map((row) => row.id);
+      const messagesResult = conversationIds.length
+        ? await supabase
+            .from('messages')
+            .select('*')
+            .in('conversation_id', conversationIds)
+            .order('created_at', { ascending: true })
+        : { data: [] as any[] };
+      const messageRows = messagesResult.data ?? [];
+      const conversations = messageRows.reduce<Record<string, ConversationMessage[]>>((acc, row) => {
+        const list = acc[row.conversation_id] ?? [];
+        list.push({
+          id: row.id,
+          conversationId: row.conversation_id,
+          authorId: row.author_id,
+          text: row.text,
+          timestamp: row.created_at,
+          status: row.status ?? undefined,
+        });
+        acc[row.conversation_id] = list;
+        return acc;
+      }, {});
+
+      const messagePreviews = conversationRows
+        .map((row) => {
+          const stable = row.stable_id ? stableById[row.stable_id] : undefined;
+          const previewMessages = conversations[row.id] ?? [];
+          const lastMessage = previewMessages.length
+            ? previewMessages[previewMessages.length - 1]
+            : undefined;
+          const sortTime = lastMessage?.timestamp ?? row.created_at ?? '';
+          const sortMs = sortTime ? new Date(sortTime).getTime() : 0;
+          const preview: MessagePreview = {
+            id: row.id,
+            title: row.title ?? stable?.name ?? 'Konversation',
+            subtitle: stable?.location ?? (row.is_group ? 'Gruppchatt' : ''),
+            description: lastMessage?.text ?? 'Inga meddelanden ännu',
+            timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
+            unreadCount: 0,
+            group: row.is_group ?? false,
+            stableId: row.stable_id ?? undefined,
+          };
+          return { preview, sortMs };
+        })
+        .sort((a, b) => b.sortMs - a.sortMs)
+        .map((entry) => entry.preview);
+
+      const formattedStables: Stable[] = stableRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description ?? undefined,
+        location: row.location ?? undefined,
+        farmId: row.farm_id ?? undefined,
+        rideTypes: (row.ride_types as RideType[] | null) ?? undefined,
+        settings: (row.settings as StableSettings | null) ?? undefined,
+      }));
+
+      const formattedFarms: Farm[] = farmRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        location: row.location ?? undefined,
+        hasIndoorArena: row.has_indoor_arena ?? undefined,
+        arenaNote: row.arena_note ?? undefined,
+      }));
+
+      const formattedHorses: Horse[] = horseRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        stableId: row.stable_id,
+        ownerUserId: row.owner_user_id ?? undefined,
+        boxNumber: row.box_number ?? undefined,
+        canSleepInside: row.can_sleep_inside ?? undefined,
+        gender: row.gender ?? undefined,
+        age: row.age ?? undefined,
+        note: row.note ?? undefined,
+        image: row.image_url ? { uri: row.image_url } : undefined,
+      }));
+
+      const formattedPaddocks: Paddock[] = paddockRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        stableId: row.stable_id,
+        horseNames: row.horse_names ?? [],
+        updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+        season: row.season ?? 'yearRound',
+        image: row.image_url ? { uri: row.image_url } : undefined,
+      }));
+
+      const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        date: row.date,
+        label: row.label,
+        slot: row.slot,
+        icon: row.icon,
+        time: row.time,
+        note: row.note ?? undefined,
+        status: row.status,
+        assigneeId: row.assignee_id ?? undefined,
+        completedAt: row.completed_at ?? undefined,
+        assignedVia: row.assigned_via ?? undefined,
+        declinedByUserIds: row.declined_by_user_ids ?? [],
+      }));
+
+      const formattedAssignmentHistory = assignmentHistoryRows
+        .map((row) => ({
+          id: row.id,
+          assignmentId: row.assignment_id,
+          label: row.label,
+          timestamp: row.created_at,
+          action: row.action as AssignmentHistoryAction,
+        }))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      const formattedDayEvents: DayEvent[] = dayEventRows.map((row) => ({
+        id: row.id,
+        date: row.date,
+        stableId: row.stable_id,
+        label: row.label,
+        tone: row.tone,
+      }));
+
+      const formattedArenaBookings: ArenaBooking[] = arenaBookingRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        date: row.date,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        purpose: row.purpose,
+        note: row.note ?? undefined,
+        bookedByUserId: row.booked_by_user_id,
+      }));
+
+      const formattedArenaStatuses: ArenaStatus[] = arenaStatusRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        date: row.date,
+        label: row.label,
+        createdByUserId: row.created_by_user_id,
+        createdAt: row.created_at,
+      }));
+
+      const formattedRideLogs: RideLogEntry[] = rideLogRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        horseId: row.horse_id,
+        date: row.date,
+        rideTypeId: row.ride_type_id,
+        length: row.length ?? undefined,
+        note: row.note ?? undefined,
+        createdByUserId: row.created_by_user_id,
+      }));
+
+      const formattedHorseStatuses: HorseDayStatus[] = horseStatusRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        horseId: row.horse_id,
+        date: row.date,
+        dayStatus: row.day_status ?? undefined,
+        nightStatus: row.night_status ?? undefined,
+        checked: row.checked ?? undefined,
+        water: row.water ?? undefined,
+        hay: row.hay ?? undefined,
+      }));
+
+      const formattedAlerts: AlertMessage[] = alertRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        message: row.message,
+        type: row.type,
+        createdAt: row.created_at,
+      }));
+
+      const formattedRidingDays: RidingDay[] = ridingDayRows.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id,
+        label: row.label,
+        upcomingRides: row.upcoming_rides ?? undefined,
+        isToday: row.is_today ?? undefined,
+      }));
+
+      const formattedCompetitionEvents: CompetitionEvent[] = competitionRows.map((row) => ({
+        id: row.id,
+        start: row.start,
+        end: row.end,
+        title: row.title,
+        status: row.status,
+      }));
+
+      const formattedGroups: Group[] = groupRows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        stableId: row.stable_id ?? undefined,
+        farmId: row.farm_id ?? undefined,
+        horseId: row.horse_id ?? undefined,
+        createdAt: row.created_at,
+        createdByUserId: row.created_by_user_id ?? undefined,
+      }));
+
+      if (cancelled) {
+        return;
+      }
+
+      const previousStableId = stateRef.current.currentStableId;
+      const currentStableId = stableIds.includes(previousStableId) ? previousStableId : stableIds[0] ?? '';
+      dispatch({
+        type: 'STATE_HYDRATE',
+        payload: {
+          farms: formattedFarms,
+          stables: formattedStables,
+          horses: formattedHorses,
+          paddocks: formattedPaddocks,
+          assignments: formattedAssignments,
+          assignmentHistory: formattedAssignmentHistory,
+          dayEvents: formattedDayEvents,
+          arenaBookings: formattedArenaBookings,
+          arenaStatuses: formattedArenaStatuses,
+          rideLogs: formattedRideLogs,
+          horseDayStatuses: formattedHorseStatuses,
+          alerts: formattedAlerts,
+          ridingSchedule: formattedRidingDays,
+          competitionEvents: formattedCompetitionEvents,
+          posts,
+          messages: messagePreviews,
+          conversations,
+          groups: formattedGroups,
+          users: userMap,
+          currentStableId,
+          currentUserId: user.id,
+          sessionUserId: user.id,
+        },
+      });
+      setHydrating(false);
+    };
+
+    void hydrate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  React.useEffect(() => {
+    if (hydrating) {
+      return;
+    }
     const todayIso = toISODate(new Date());
     const users = Object.values(state.users).sort((a, b) => a.id.localeCompare(b.id));
 
@@ -2133,6 +3119,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             },
           },
         });
+        void persistAssignmentUpdate(assignment.id, {
+          status: 'assigned',
+          assigneeId: candidate.id,
+          assignedVia: 'default',
+        });
         return;
       }
 
@@ -2150,6 +3141,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 assignedVia: undefined,
               },
             },
+          });
+          void persistAssignmentUpdate(assignment.id, {
+            status: 'open',
+            assigneeId: undefined,
+            assignedVia: undefined,
           });
           return;
         }
@@ -2170,25 +3166,39 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               },
             },
           });
+          void persistAssignmentUpdate(assignment.id, {
+            status: 'open',
+            assigneeId: undefined,
+            assignedVia: undefined,
+          });
         }
       }
     });
-  }, [state.assignments, state.users]);
+  }, [hydrating, persistAssignmentUpdate, state.assignments, state.users]);
 
   const derived = React.useMemo(() => {
     const { assignments, alerts, currentUserId, currentStableId } = state;
+    const currentUser = state.users[currentUserId];
     const membership = state.users[currentUserId]?.membership.find((m) => m.stableId === currentStableId);
     const currentAccess = membership?.access ?? 'view';
     const currentRole = membership?.role ?? 'guest';
     const permissions = resolvePermissions(state, currentStableId, currentUserId);
     const activeAssignments = assignments.filter((assignment) => assignment.stableId === currentStableId);
+    const stableAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
     const completed = activeAssignments.filter((assignment) => assignment.status === 'completed').length;
     const open = activeAssignments.filter((assignment) => assignment.status === 'open').length;
+    const isFirstTimeOnboarding =
+      state.stables.length === 0 && (currentUser?.membership.length ?? 0) === 0;
+    const canManageOnboardingAny =
+      isFirstTimeOnboarding ||
+      (currentUser?.membership ?? []).some(
+        (entry) => entry.role === 'admin' && (entry.access ?? 'view') === 'owner',
+      );
     const summary = {
       total: activeAssignments.length,
       completed,
       open,
-      alerts: alerts.length,
+      alerts: stableAlerts.length,
       openSlotLabels: formatSlotList(activeAssignments, 'open'),
       nextUpdateLabel: formatNextUpdate(activeAssignments),
     };
@@ -2205,6 +3215,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       .slice(0, 5);
 
     return {
+      isFirstTimeOnboarding,
+      canManageOnboardingAny,
       summary,
       loggableAssignment,
       claimableAssignment,
@@ -2229,19 +3241,26 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return accessCheck;
     }
 
+    const completedAt = new Date().toISOString();
     dispatch({
       type: 'ASSIGNMENT_UPDATE',
       payload: {
         id: assignment.id,
         updates: {
           status: 'completed',
-          completedAt: new Date().toISOString(),
+          completedAt,
         },
       },
     });
+    const updated = { ...assignment, status: 'completed' as AssignmentStatus, completedAt };
+    void persistAssignmentUpdate(assignment.id, {
+      status: 'completed',
+      completedAt,
+    });
+    void persistAssignmentHistory(updated, 'completed');
 
-    return { success: true, data: { ...assignment, status: 'completed' } };
-  }, [ensurePermission]);
+    return { success: true, data: updated };
+  }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
 
   const claimNextOpenAssignment = React.useCallback((): ActionResult<Assignment> => {
     const current = stateRef.current;
@@ -2271,17 +3290,26 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       },
     });
 
+    const updated: Assignment = {
+      ...assignment,
+      status: 'assigned',
+      assigneeId: current.currentUserId,
+      assignedVia: 'manual',
+      declinedByUserIds,
+    };
+    void persistAssignmentUpdate(assignment.id, {
+      status: 'assigned',
+      assigneeId: current.currentUserId,
+      assignedVia: 'manual',
+      declinedByUserIds,
+    });
+    void persistAssignmentHistory(updated, 'assigned');
+
     return {
       success: true,
-      data: {
-        ...assignment,
-        status: 'assigned',
-        assigneeId: current.currentUserId,
-        assignedVia: 'manual',
-        declinedByUserIds,
-      },
+      data: updated,
     };
-  }, [ensurePermission]);
+  }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
 
   const claimAssignment = React.useCallback(
     (assignmentId: string): ActionResult<Assignment> => {
@@ -2316,18 +3344,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      const updated: Assignment = {
+        ...assignment,
+        status: 'assigned',
+        assigneeId: current.currentUserId,
+        assignedVia: 'manual',
+        declinedByUserIds,
+      };
+      void persistAssignmentUpdate(assignment.id, {
+        status: 'assigned',
+        assigneeId: current.currentUserId,
+        assignedVia: 'manual',
+        declinedByUserIds,
+      });
+      void persistAssignmentHistory(updated, 'assigned');
+
       return {
         success: true,
-        data: {
-          ...assignment,
-          status: 'assigned',
-          assigneeId: current.currentUserId,
-          assignedVia: 'manual',
-          declinedByUserIds,
-        },
+        data: updated,
       };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
   );
 
   const declineAssignment = React.useCallback(
@@ -2362,18 +3399,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      const updated: Assignment = {
+        ...assignment,
+        status: 'open',
+        assigneeId: undefined,
+        assignedVia: undefined,
+        declinedByUserIds: Array.from(declined),
+      };
+      void persistAssignmentUpdate(assignment.id, {
+        status: 'open',
+        assigneeId: undefined,
+        assignedVia: undefined,
+        declinedByUserIds: Array.from(declined),
+      });
+      void persistAssignmentHistory(updated, 'declined');
+
       return {
         success: true,
-        data: {
-          ...assignment,
-          status: 'open',
-          assigneeId: undefined,
-          assignedVia: undefined,
-          declinedByUserIds: Array.from(declined),
-        },
+        data: updated,
       };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
   );
 
   const completeAssignment = React.useCallback(
@@ -2405,16 +3451,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      const updated: Assignment = {
+        ...assignment,
+        status: 'completed',
+        completedAt,
+      };
+      void persistAssignmentUpdate(assignment.id, {
+        status: 'completed',
+        completedAt,
+      });
+      void persistAssignmentHistory(updated, 'completed');
+
       return {
         success: true,
-        data: {
-          ...assignment,
-          status: 'completed',
-          completedAt,
-        },
+        data: updated,
       };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
   );
 
   const createAssignment = React.useCallback(
@@ -2438,7 +3491,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
 
       const assignment: Assignment = {
-        id: `assign-${Date.now()}`,
+        id: generateId(),
         date: input.date,
         stableId,
         label,
@@ -2452,10 +3505,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
+      void persistAssignmentInsert(assignment);
+      void persistAssignmentHistory(assignment, 'created');
 
       return { success: true, data: assignment };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentHistory, persistAssignmentInsert],
   );
 
   const updateAssignment = React.useCallback(
@@ -2541,9 +3596,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
-      return { success: true, data: { ...existing, ...updates } };
+      const updated = { ...existing, ...updates };
+      void persistAssignmentUpdate(existing.id, updates);
+      if (updates.status) {
+        const action: AssignmentHistoryAction =
+          updates.status === 'completed'
+            ? 'completed'
+            : updates.status === 'open'
+              ? 'declined'
+              : 'assigned';
+        void persistAssignmentHistory(updated, action);
+      }
+
+      return { success: true, data: updated };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
   );
 
   const deleteAssignment = React.useCallback(
@@ -2559,9 +3626,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       dispatch({ type: 'ASSIGNMENT_REMOVE', payload: { id: assignmentId } });
+      void persistAssignmentDelete(assignmentId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistAssignmentDelete],
   );
 
   const addEvent = React.useCallback(
@@ -2575,15 +3643,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       const alert: AlertMessage = {
-        id: `alert-${Date.now()}`,
+        id: generateId(),
+        stableId: current.currentStableId,
         message,
         type,
         createdAt: new Date().toISOString(),
       };
       dispatch({ type: 'ALERT_ADD', payload: alert });
+      void persistAlertInsert(alert);
       return { success: true, data: alert };
     },
-    [ensurePermission],
+    [ensurePermission, persistAlertInsert],
   );
 
   const toggleDefaultPass = React.useCallback(
@@ -2611,9 +3681,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      void persistDefaultPassToggle({
+        userId: user.id,
+        stableId: current.currentStableId,
+        weekday,
+        slot,
+        enabled: !exists,
+      });
+
       return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
     },
-    [],
+    [persistDefaultPassToggle],
   );
 
   const markConversationRead = React.useCallback((conversationId: string) => {
@@ -2627,26 +3705,31 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const current = stateRef.current;
+      if (!current.currentUserId) {
+        return { success: false, reason: 'Ingen inloggad användare.' };
+      }
+      const timestamp = new Date().toISOString();
       const message: ConversationMessage = {
-        id: `${conversationId}-${Date.now()}`,
+        id: generateId(),
         conversationId,
         authorId: current.currentUserId,
         text: text.trim(),
-        timestamp: new Date().toISOString(),
+        timestamp,
         status: 'sent',
       };
 
+      const existingPreview = current.messages.find((msg) => msg.id === conversationId);
       const preview: MessagePreview = {
-        ...(current.messages.find((msg) => msg.id === conversationId) ?? {
+        ...(existingPreview ?? {
           id: conversationId,
-          title: 'Okänd konversation',
+          title: 'Konversation',
           subtitle: '',
           description: '',
-          timeAgo: 'Nu',
+          timeAgo: '',
         }),
-        stableId: current.messages.find((msg) => msg.id === conversationId)?.stableId ?? current.currentStableId,
+        stableId: existingPreview?.stableId ?? current.currentStableId,
         description: text.trim(),
-        timeAgo: 'Nu',
+        timeAgo: formatTimeAgo(timestamp),
         unreadCount: 0,
       };
 
@@ -2654,10 +3737,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'CONVERSATION_APPEND',
         payload: { conversationId, message, preview },
       });
+      void persistConversationMessage(message);
 
       return { success: true, data: message };
     },
-    [],
+    [persistConversationMessage],
   );
 
   const upsertPaddock = React.useCallback(
@@ -2679,7 +3763,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         ? current.paddocks.find((paddock) => paddock.id === input.id)
         : undefined;
 
-      const id = existing?.id ?? input.id ?? `paddock-${Date.now()}`;
+      const id = existing?.id ?? input.id ?? generateId();
       const updatedAt = new Date().toISOString();
       const horseNames = normalizeHorseNames(input.horseNames);
       const image =
@@ -2697,9 +3781,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       dispatch({ type: 'PADDOCK_UPSERT', payload: paddock });
+      void persistPaddockUpsert(paddock, input.image);
       return { success: true, data: paddock };
     },
-    [ensurePermission],
+    [ensurePermission, persistPaddockUpsert],
   );
 
   const deletePaddock = React.useCallback((paddockId: string): ActionResult => {
@@ -2714,8 +3799,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     }
 
     dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
+    void persistPaddockDelete(paddockId);
     return { success: true };
-  }, [ensurePermission]);
+  }, [ensurePermission, persistPaddockDelete]);
 
   const updateHorseDayStatus = React.useCallback(
     (input: UpdateHorseDayStatusInput): ActionResult<HorseDayStatus> => {
@@ -2739,7 +3825,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           status.date === input.date &&
           status.stableId === stableId,
       );
-      const id = existing?.id ?? `horse-day-${input.horseId}-${input.date}`;
+      const id = existing?.id ?? generateId();
       const next: HorseDayStatus = {
         id,
         horseId: input.horseId,
@@ -2754,9 +3840,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       dispatch({ type: 'HORSE_DAY_STATUS_UPSERT', payload: next });
+      void persistHorseDayStatusUpsert(next);
       return { success: true, data: next };
     },
-    [ensurePermission],
+    [ensurePermission, persistHorseDayStatusUpsert],
   );
 
   const addDayEvent = React.useCallback(
@@ -2776,16 +3863,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const event: DayEvent = {
-        id: `day-${Date.now()}`,
+        id: generateId(),
         stableId,
         date: input.date,
         label,
         tone: input.tone ?? 'info',
       };
       dispatch({ type: 'DAY_EVENT_ADD', payload: event });
+      void persistDayEventInsert(event);
       return { success: true, data: event };
     },
-    [ensurePermission],
+    [ensurePermission, persistDayEventInsert],
   );
 
   const removeDayEvent = React.useCallback(
@@ -2800,9 +3888,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       dispatch({ type: 'DAY_EVENT_DELETE', payload: { id: eventId } });
+      void persistDayEventDelete(eventId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistDayEventDelete],
   );
 
   const addArenaBooking = React.useCallback(
@@ -2828,7 +3917,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const booking: ArenaBooking = {
-        id: `arena-${Date.now()}`,
+        id: generateId(),
         stableId,
         date: input.date,
         startTime: input.startTime,
@@ -2838,9 +3927,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         bookedByUserId: current.currentUserId,
       };
       dispatch({ type: 'ARENA_BOOKING_ADD', payload: booking });
+      void persistArenaBookingInsert(booking);
       return { success: true, data: booking };
     },
-    [ensurePermission],
+    [ensurePermission, persistArenaBookingInsert],
   );
 
   const updateArenaBooking = React.useCallback(
@@ -2861,9 +3951,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
       const updated = { ...existing, ...updates };
       dispatch({ type: 'ARENA_BOOKING_UPDATE', payload: { id: input.id, updates } });
+      void persistArenaBookingUpdate(input.id, updates);
       return { success: true, data: updated };
     },
-    [ensurePermission],
+    [ensurePermission, persistArenaBookingUpdate],
   );
 
   const removeArenaBooking = React.useCallback(
@@ -2878,9 +3969,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       dispatch({ type: 'ARENA_BOOKING_DELETE', payload: { id: bookingId } });
+      void persistArenaBookingDelete(bookingId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistArenaBookingDelete],
   );
 
   const addArenaStatus = React.useCallback(
@@ -2900,7 +3992,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const status: ArenaStatus = {
-        id: `arena-status-${Date.now()}`,
+        id: generateId(),
         stableId,
         date: input.date,
         label,
@@ -2908,9 +4000,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         createdAt: new Date().toISOString(),
       };
       dispatch({ type: 'ARENA_STATUS_ADD', payload: status });
+      void persistArenaStatusInsert(status);
       return { success: true, data: status };
     },
-    [ensurePermission],
+    [ensurePermission, persistArenaStatusInsert],
   );
 
   const removeArenaStatus = React.useCallback(
@@ -2925,9 +4018,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       dispatch({ type: 'ARENA_STATUS_DELETE', payload: { id: statusId } });
+      void persistArenaStatusDelete(statusId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistArenaStatusDelete],
   );
 
   const addRideLog = React.useCallback(
@@ -2961,7 +4055,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const log: RideLogEntry = {
-        id: `ride-log-${Date.now()}`,
+        id: generateId(),
         stableId,
         horseId: input.horseId,
         date: input.date,
@@ -2971,9 +4065,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         createdByUserId: current.currentUserId,
       };
       dispatch({ type: 'RIDE_LOG_ADD', payload: log });
+      void persistRideLogInsert(log);
       return { success: true, data: log };
     },
-    [ensurePermission],
+    [ensurePermission, persistRideLogInsert],
   );
 
   const removeRideLog = React.useCallback(
@@ -2988,9 +4083,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       dispatch({ type: 'RIDE_LOG_DELETE', payload: { id: rideLogId } });
+      void persistRideLogDelete(rideLogId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistRideLogDelete],
   );
 
   const addPost = React.useCallback(
@@ -3012,7 +4108,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const defaultGroupId = `stable:${stableId}`;
       const groupIds = input.groupIds?.length ? input.groupIds : [defaultGroupId];
       const post: Post = {
-        id: `post-${Date.now()}`,
+        id: generateId(),
         author: user.name,
         avatar: user.avatar ?? require('@/assets/images/dummy-avatar.png'),
         timeAgo: 'Nu',
@@ -3027,9 +4123,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         groupIds: groupIds.includes(defaultGroupId) ? groupIds : [defaultGroupId, ...groupIds],
       };
       dispatch({ type: 'POST_ADD', payload: post });
+      void persistPostInsert(post, input.image);
       return { success: true, data: post };
     },
-    [ensurePermission],
+    [ensurePermission, persistPostInsert],
   );
 
   const togglePostLike = React.useCallback(
@@ -3058,9 +4155,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         likes: nextLikes,
       };
       dispatch({ type: 'POST_UPDATE', payload: { id: post.id, updates } });
+      void persistPostLikeToggle(post.id, userId, !hasLiked);
       return { success: true, data: { ...post, ...updates } };
     },
-    [ensurePermission],
+    [ensurePermission, persistPostLikeToggle],
   );
 
   const addPostComment = React.useCallback(
@@ -3081,7 +4179,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const author = current.users[current.currentUserId];
       const comment: PostComment = {
-        id: `comment-${Date.now()}`,
+        id: generateId(),
         postId,
         authorId: current.currentUserId,
         authorName: author?.name ?? 'Okänd',
@@ -3094,9 +4192,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         comments: post.comments + 1,
       };
       dispatch({ type: 'POST_UPDATE', payload: { id: post.id, updates } });
+      void persistPostCommentInsert(postId, current.currentUserId, trimmed);
       return { success: true, data: comment };
     },
-    [ensurePermission],
+    [ensurePermission, persistPostCommentInsert],
   );
 
   const createGroup = React.useCallback(
@@ -3112,7 +4211,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Gruppen behöver ett namn.' };
       }
       const group: Group = {
-        id: `group-${Date.now()}`,
+        id: generateId(),
         name,
         type: 'custom',
         stableId,
@@ -3120,9 +4219,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         createdByUserId: current.currentUserId,
       };
       dispatch({ type: 'GROUP_ADD', payload: group });
+      void persistGroupInsert(group);
       return { success: true, data: group };
     },
-    [ensurePermission],
+    [ensurePermission, persistGroupInsert],
   );
 
   const renameGroup = React.useCallback(
@@ -3145,9 +4245,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Gruppen behöver ett namn.' };
       }
       dispatch({ type: 'GROUP_UPDATE', payload: { id: input.id, updates: { name } } });
+      void persistGroupUpdate(input.id, { name });
       return { success: true, data: { ...existing, name } };
     },
-    [ensurePermission],
+    [ensurePermission, persistGroupUpdate],
   );
 
   const deleteGroup = React.useCallback(
@@ -3166,14 +4267,33 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       dispatch({ type: 'GROUP_DELETE', payload: { id: groupId } });
+      void persistGroupDelete(groupId);
       return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistGroupDelete],
   );
 
   const setCurrentStable = React.useCallback((stableId: string) => {
     dispatch({ type: 'STABLE_SET', payload: { stableId } });
   }, []);
+
+  const setOnboardingDismissed = React.useCallback(
+    (dismissed: boolean): ActionResult<UserProfile> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      const profile = current.users[userId];
+      if (!profile) {
+        return { success: false, reason: 'Användaren hittades inte.' };
+      }
+      dispatch({
+        type: 'USER_UPDATE',
+        payload: { id: userId, updates: { onboardingDismissed: dismissed } },
+      });
+      void persistProfileUpdate(userId, { onboarding_dismissed: dismissed });
+      return { success: true, data: { ...profile, onboardingDismissed: dismissed } };
+    },
+    [persistProfileUpdate],
+  );
 
   const upsertFarm = React.useCallback(
     (input: UpsertFarmInput): ActionResult<Farm> => {
@@ -3189,7 +4309,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!name) {
         return { success: false, reason: 'Gården måste ha ett namn.' };
       }
-      const id = input.id ?? `farm-${Date.now()}`;
+      const id = input.id ?? generateId();
       const farm: Farm = {
         id,
         name,
@@ -3198,9 +4318,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         arenaNote: input.arenaNote?.trim() || undefined,
       };
       dispatch({ type: 'FARM_UPSERT', payload: farm });
+      void persistFarmUpsert(farm);
       return { success: true, data: farm };
     },
-    [ensurePermission],
+    [ensurePermission, persistFarmUpsert],
   );
 
   const deleteFarm = React.useCallback((farmId: string): ActionResult => {
@@ -3217,8 +4338,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: false, reason: 'Gården kunde inte hittas.' };
     }
     dispatch({ type: 'FARM_DELETE', payload: { id: farmId } });
+    void persistFarmDelete(farmId);
     return { success: true };
-  }, [ensurePermission]);
+  }, [ensurePermission, persistFarmDelete]);
 
   const upsertStable = React.useCallback(
     (input: UpsertStableInput): ActionResult<Stable> => {
@@ -3230,7 +4352,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      const id = input.id ?? `stable-${Date.now()}`;
+      const id = input.id ?? generateId();
       const existing = input.id ? current.stables.find((stable) => stable.id === input.id) : undefined;
       const baseSettings = existing ? resolveStableSettings(existing) : createDefaultStableSettings();
       const nextSettings = input.settings
@@ -3240,11 +4362,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               ...baseSettings.eventVisibility,
               ...input.settings.eventVisibility,
             },
+            arena: {
+              ...baseSettings.arena,
+              ...input.settings.arena,
+            },
           }
         : baseSettings;
       const stable: Stable = {
         id,
         name: input.name.trim(),
+        description: input.description?.trim() || existing?.description,
         location: input.location?.trim() || undefined,
         farmId: input.farmId,
         rideTypes: input.rideTypes ?? existing?.rideTypes ?? [],
@@ -3256,6 +4383,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       dispatch({ type: 'STABLE_UPSERT', payload: stable });
+      void persistStableUpsert(stable, !existing, current.currentUserId);
 
       // ensure current user is admin of new stable
       const user = current.users[current.currentUserId];
@@ -3273,7 +4401,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       return { success: true, data: stable };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableUpsert],
   );
 
   const updateStable = React.useCallback(
@@ -3295,6 +4423,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               ...baseSettings.eventVisibility,
               ...input.updates.settings.eventVisibility,
             },
+            arena: {
+              ...baseSettings.arena,
+              ...input.updates.settings.arena,
+            },
           }
         : existing.settings;
       const updates = input.updates.settings
@@ -3308,9 +4440,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'STABLE_UPDATE',
         payload: { id: input.id, updates },
       });
+      void persistStableUpdate(input.id, updates);
       return { success: true, data: updated };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableUpdate],
   );
 
   const deleteStable = React.useCallback((stableId: string): ActionResult => {
@@ -3324,8 +4457,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: false, reason: 'Stallet kunde inte hittas.' };
     }
     dispatch({ type: 'STABLE_DELETE', payload: { id: stableId } });
+    void persistStableDelete(stableId);
     return { success: true };
-  }, [ensurePermission]);
+  }, [ensurePermission, persistStableDelete]);
 
   const upsertHorse = React.useCallback(
     (input: UpsertHorseInput): ActionResult<Horse> => {
@@ -3337,21 +4471,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!name) {
         return { success: false, reason: 'Hästen måste ha ett namn.' };
       }
-      const id = input.id ?? `horse-${Date.now()}`;
+      const existing = input.id ? stateRef.current.horses.find((horse) => horse.id === input.id) : undefined;
+      const id = input.id ?? generateId();
       const horse: Horse = {
         id,
         name,
         stableId: input.stableId,
         ownerUserId: input.ownerUserId,
-        image: input.image,
+        image: input.image ?? existing?.image,
         gender: input.gender,
         age: input.age,
+        boxNumber: input.boxNumber?.trim() || undefined,
+        canSleepInside: input.canSleepInside,
         note: input.note?.trim() || undefined,
       };
       dispatch({ type: 'HORSE_UPSERT', payload: horse });
+      void persistHorseUpsert(horse);
       return { success: true, data: horse };
     },
-    [ensurePermission],
+    [ensurePermission, persistHorseUpsert],
   );
 
   const deleteHorse = React.useCallback((horseId: string): ActionResult => {
@@ -3365,8 +4503,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return accessCheck;
     }
     dispatch({ type: 'HORSE_DELETE', payload: { id: horseId } });
+    void persistHorseDelete(horseId);
     return { success: true };
-  }, [ensurePermission]);
+  }, [ensurePermission, persistHorseDelete]);
 
   const addMember = React.useCallback(
     (input: AddMemberInput): ActionResult<UserProfile> => {
@@ -3388,33 +4527,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!email) {
         return { success: false, reason: 'E-post krävs.' };
       }
-      const id = `user-${Date.now()}`;
-      const membership: StableMembership[] = stableIds.map((stableId) => ({
-        stableId,
-        role: input.role,
-        customRole: input.customRole?.trim() || undefined,
-        access:
-          input.access ??
-          (input.role === 'admin' ? 'owner' : input.role === 'staff' ? 'edit' : 'view'),
-        horseIds: stableId === input.stableId ? input.horseIds : undefined,
-        riderRole: input.role === 'rider' ? input.riderRole ?? 'medryttare' : undefined,
-      }));
-      const user: UserProfile = {
-        id,
-        name,
-        email,
-        membership,
-        horses: [],
-        location: input.location ?? 'Okänd plats',
-        phone: input.phone ?? '',
-        responsibilities: [],
-        defaultPasses: [],
-        awayNotices: [],
-      };
-      dispatch({ type: 'USER_UPSERT', payload: { user } });
-      return { success: true, data: user };
+      void persistStableInvite(input, stableIds);
+      return { success: true };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableInvite],
   );
 
   const updateMemberRole = React.useCallback(
@@ -3449,6 +4565,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             }
           : entry,
       );
+      const nextEntry = membership.find((entry) => entry.stableId === input.stableId);
       dispatch({
         type: 'USER_UPDATE',
         payload: {
@@ -3456,9 +4573,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           updates: { membership },
         },
       });
+      if (nextEntry) {
+        void persistStableMemberUpdate(input.stableId, user.id, {
+          role: nextEntry.role,
+          customRole: nextEntry.customRole,
+          access: nextEntry.access,
+          horseIds: nextEntry.horseIds,
+          riderRole: nextEntry.riderRole,
+        });
+      }
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableMemberUpdate],
   );
 
   const updateMemberHorseIds = React.useCallback(
@@ -3486,9 +4612,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           updates: { membership },
         },
       });
+      void persistStableMemberUpdate(input.stableId, user.id, { horseIds: input.horseIds });
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableMemberUpdate],
   );
 
   const toggleMemberDefaultPass = React.useCallback(
@@ -3519,9 +4646,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      void persistDefaultPassToggle({
+        userId: user.id,
+        stableId: input.stableId,
+        weekday: input.weekday,
+        slot: input.slot,
+        enabled: !exists,
+      });
+
       return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
     },
-    [ensurePermission],
+    [ensurePermission, persistDefaultPassToggle],
   );
 
   const removeMemberFromStable = React.useCallback(
@@ -3540,95 +4675,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'USER_UPDATE',
         payload: { id: userId, updates: { membership } },
       });
+      void persistStableMemberDelete(stableId, userId);
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission],
+    [ensurePermission, persistStableMemberDelete],
   );
-
-  const setCurrentUser = React.useCallback((userId: string): ActionResult => {
-    const current = stateRef.current;
-    if (!current.users[userId]) {
-      return { success: false, reason: 'Användaren finns inte.' };
-    }
-    dispatch({ type: 'USER_SET', payload: { id: userId } });
-    return { success: true };
-  }, []);
-
-  const signIn = React.useCallback((input: SignInInput): ActionResult<UserProfile> => {
-    const email = input.email.trim().toLowerCase();
-    if (!email) {
-      return { success: false, reason: 'Ange e-post.' };
-    }
-    const current = stateRef.current;
-    const user = Object.values(current.users).find(
-      (entry) => entry.email?.toLowerCase() === email,
-    );
-    if (!user) {
-      return { success: false, reason: 'Ingen användare med den e-posten.' };
-    }
-    dispatch({ type: 'USER_SET', payload: { id: user.id } });
-    return { success: true, data: user };
-  }, []);
-
-  const signUp = React.useCallback((input: SignUpInput): ActionResult<UserProfile> => {
-    const name = input.name.trim();
-    const email = input.email.trim().toLowerCase();
-    if (!name) {
-      return { success: false, reason: 'Namn krävs.' };
-    }
-    if (!email) {
-      return { success: false, reason: 'E-post krävs.' };
-    }
-    const current = stateRef.current;
-    const existing = Object.values(current.users).some(
-      (entry) => entry.email?.toLowerCase() === email,
-    );
-    if (existing) {
-      return { success: false, reason: 'E-postadressen finns redan.' };
-    }
-    const stableId = input.stableId ?? current.currentStableId ?? current.stables[0]?.id;
-    if (!stableId) {
-      return { success: false, reason: 'Skapa ett stall först.' };
-    }
-    const user: UserProfile = {
-      id: `user-${Date.now()}`,
-      name,
-      email,
-      membership: [
-        {
-          stableId,
-          role: 'rider',
-          access: 'view',
-          riderRole: 'medryttare',
-        },
-      ],
-      horses: [],
-      location: '',
-      phone: '',
-      responsibilities: [],
-      defaultPasses: [],
-      awayNotices: [],
-      avatar: require('@/assets/images/dummy-avatar.png'),
-    };
-    dispatch({ type: 'USER_UPSERT', payload: { user } });
-    dispatch({ type: 'USER_SET', payload: { id: user.id } });
-    return { success: true, data: user };
-  }, []);
-
-  const signOut = React.useCallback((): ActionResult => {
-    dispatch({ type: 'SESSION_CLEAR' });
-    return { success: true };
-  }, []);
-
-  const resetAppData = React.useCallback((): ActionResult => {
-    dispatch({ type: 'STATE_RESET' });
-    void clearPersisted();
-    return { success: true };
-  }, [clearPersisted]);
 
   const value = React.useMemo<AppDataContextValue>(
     () => ({
       state,
+      hydrating,
       derived,
       actions: {
         logNextAssignment,
@@ -3662,6 +4718,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         markConversationRead,
         sendConversationMessage,
         setCurrentStable,
+        setOnboardingDismissed,
         upsertFarm,
         deleteFarm,
         upsertStable,
@@ -3674,15 +4731,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updateMemberHorseIds,
         toggleMemberDefaultPass,
         removeMemberFromStable,
-        setCurrentUser,
-        signIn,
-        signUp,
-        signOut,
-        resetAppData,
       },
     }),
     [
       state,
+      hydrating,
       derived,
       logNextAssignment,
       claimNextOpenAssignment,
@@ -3715,6 +4768,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       markConversationRead,
       sendConversationMessage,
       setCurrentStable,
+      setOnboardingDismissed,
       upsertFarm,
       deleteFarm,
       upsertStable,
@@ -3727,11 +4781,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       updateMemberHorseIds,
       toggleMemberDefaultPass,
       removeMemberFromStable,
-      setCurrentUser,
-      signIn,
-      signUp,
-      signOut,
-      resetAppData,
     ],
   );
 

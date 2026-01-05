@@ -27,14 +27,13 @@ import BroomIcon from '@/assets/images/broom.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { quickActionVariants, systemPalette } from '@/design/system';
-import { Card, HeaderIconButton, SearchBar } from '@/components/Primitives';
+import { Card, HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { StableSwitcher } from '@/components/StableSwitcher';
-import { UserSwitchModal } from '@/components/UserSwitchModal';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import type { Assignment } from '@/context/AppDataContext';
+import type { Assignment, UserRole } from '@/context/AppDataContext';
 import {
   groupAssignmentsByDay,
   formatPrimaryDay,
@@ -91,6 +90,17 @@ const quickActionStyles: Record<
   warning: quickActionVariants.warning,
 };
 
+const roleLabels: Record<UserRole, string> = {
+  admin: 'Admin',
+  staff: 'Personal',
+  rider: 'Ryttare',
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  trainer: 'Tränare',
+  therapist: 'Terapeut',
+  guest: 'Gäst',
+};
+
 export default function OverviewScreen() {
   const router = useRouter();
   const { state, derived, actions } = useAppData();
@@ -101,12 +111,15 @@ export default function OverviewScreen() {
     posts: postItems,
     currentUserId,
     paddocks,
+    horses,
     currentStableId,
     users,
+    stables,
   } = state;
   const toast = useToast();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isWeb = Platform.OS === 'web';
   const { tour } = useLocalSearchParams<{ tour?: string }>();
   const activeAssignments = React.useMemo(
     () => assignments.filter((assignment) => assignment.stableId === currentStableId),
@@ -116,16 +129,17 @@ export default function OverviewScreen() {
     () => paddocks.filter((paddock) => paddock.stableId === currentStableId),
     [paddocks, currentStableId],
   );
+  const activeHorses = React.useMemo(
+    () => horses.filter((horse) => horse.stableId === currentStableId),
+    [horses, currentStableId],
+  );
 
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
   const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
   const [eventText, setEventText] = React.useState('');
-  const [searchText, setSearchText] = React.useState('');
-  const [searchVisible, setSearchVisible] = React.useState(false);
   const [tourVisible, setTourVisible] = React.useState(tour === 'intro');
   const [tourStep, setTourStep] = React.useState(0);
-  const [userSwitchVisible, setUserSwitchVisible] = React.useState(false);
 
   React.useEffect(() => {
     if (eventsModalVisible) {
@@ -139,10 +153,14 @@ export default function OverviewScreen() {
     }
   }, [tour]);
 
-  const currentUser = users[currentUserId];
-  const currentAccess = derived.currentAccess;
   const { permissions } = derived;
   const canManageDayEvents = permissions.canManageDayEvents;
+  const membership = derived.membership;
+  const roleLabel =
+    membership?.customRole?.trim() || roleLabels[membership?.role ?? 'guest'];
+  const stableName =
+    stables.find((stable) => stable.id === currentStableId)?.name ?? 'stallet';
+  const isOwner = permissions.canManageOnboarding;
 
   const activeMessages = React.useMemo(
     () => messageItems.filter((item) => !item.stableId || item.stableId === currentStableId),
@@ -245,6 +263,13 @@ export default function OverviewScreen() {
     const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
     return { paddockCount, horseCount };
   }, [activePaddocks]);
+  const memberCount = React.useMemo(
+    () =>
+      Object.values(users).filter((user) =>
+        user.membership.some((entry) => entry.stableId === currentStableId),
+      ).length,
+    [currentStableId, users],
+  );
 
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
@@ -299,6 +324,23 @@ export default function OverviewScreen() {
     latestEvent,
     paddockSummary,
   ]);
+
+  const adminChecklist = [
+    { id: 'stable', label: 'Skapa stall', done: stables.length > 0 },
+    { id: 'horses', label: 'Lägg till hästar', done: activeHorses.length > 0 },
+    { id: 'members', label: 'Bjud in medlemmar', done: memberCount > 1 },
+    { id: 'assignments', label: 'Skapa första pass', done: activeAssignments.length > 0 },
+  ];
+
+  const memberChecklist = [
+    { id: 'passes', label: 'Se dina pass i kalendern' },
+    { id: 'chat', label: 'Säg hej i stallchatten' },
+    { id: 'profile', label: 'Uppdatera din profil' },
+  ];
+
+  const startHereSubtitle = isOwner
+    ? 'Fyll i grunderna så att stallet blir tydligt för alla.'
+    : `Du är ${roleLabel} i ${stableName}. Här är snabbaste vägen in.`;
   const isEventValid = eventText.trim().length >= 3;
 
   const todaySummary = React.useMemo(() => {
@@ -378,17 +420,22 @@ export default function OverviewScreen() {
   const handlePrimaryAction = React.useCallback(() => {
     router.push('/calendar');
   }, [router]);
-  const handleSearchSubmit = React.useCallback(() => {
-    const query = searchText.trim();
-    if (!query) {
-      toast.showToast('Sök på namn, häst eller pass.', 'info');
-      return;
-    }
-    setSearchVisible(false);
-    router.push({ pathname: '/members', params: { q: query } });
-  }, [router, searchText, toast]);
   const handleOpenSearch = React.useCallback(() => {
-    setSearchVisible(true);
+    router.push('/search');
+  }, [router]);
+  const handleOpenOnboarding = React.useCallback(() => {
+    actions.setOnboardingDismissed(false);
+    router.push('/(onboarding)');
+  }, [actions, router]);
+  const handleOpenAdmin = React.useCallback(() => {
+    router.push('/admin');
+  }, [router]);
+  const handleOpenMyPasses = React.useCallback(() => {
+    router.push('/calendar?view=mine');
+  }, [router]);
+  const handleStartTour = React.useCallback(() => {
+    setTourStep(0);
+    setTourVisible(true);
   }, []);
 
   const handleSubmitEvent = React.useCallback(() => {
@@ -409,6 +456,90 @@ export default function OverviewScreen() {
       toast.showToast(result.reason, 'error');
     }
   }, [actions, canManageDayEvents, eventText, toast]);
+
+  const startHereSection = (
+    <Card
+      tone="muted"
+      elevated={!isDesktopWeb}
+      style={[styles.startHereCard, !isDesktopWeb && styles.startHereCardMobile]}
+    >
+      <View style={styles.startHereHeader}>
+        <View style={styles.startHereTitleBlock}>
+          <Text style={styles.startHereTitle}>Starta här</Text>
+          <Text style={styles.startHereSubtitle}>{startHereSubtitle}</Text>
+        </View>
+        <View style={styles.startHereBadge}>
+          <Text style={styles.startHereBadgeText}>{roleLabel}</Text>
+        </View>
+      </View>
+      <View style={styles.startHereList}>
+        {(isOwner ? adminChecklist : memberChecklist).map((item) => (
+          <View key={item.id} style={styles.startHereRow}>
+            {isOwner ? (
+              <Feather
+                name={item.done ? 'check-circle' : 'circle'}
+                size={16}
+                color={item.done ? palette.primary : palette.border}
+              />
+            ) : (
+              <View style={styles.startHereDot} />
+            )}
+            <Text
+              style={[
+                styles.startHereText,
+                isOwner && item.done && styles.startHereTextDone,
+              ]}
+            >
+              {item.label}
+            </Text>
+          </View>
+        ))}
+      </View>
+      <View style={styles.startHereActions}>
+        {isOwner ? (
+          <>
+            <TouchableOpacity
+              style={styles.startHerePrimary}
+              onPress={handleOpenOnboarding}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.startHerePrimaryText}>Fortsätt uppstart</Text>
+            </TouchableOpacity>
+            {isWeb ? (
+              <TouchableOpacity
+                style={styles.startHereSecondary}
+                onPress={handleOpenAdmin}
+                activeOpacity={0.9}
+              >
+                <Text style={styles.startHereSecondaryText}>Öppna admin</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.startHereHint}>
+                <Text style={styles.startHereHintText}>Admin finns i webben.</Text>
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.startHerePrimary}
+              onPress={handleOpenMyPasses}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.startHerePrimaryText}>Se mina pass</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.startHereSecondary}
+              onPress={handleStartTour}
+              activeOpacity={0.9}
+            >
+              <Text style={styles.startHereSecondaryText}>Guidad tur</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </Card>
+  );
 
   const eventsSection = recentEvents.length ? (
     <Card
@@ -628,35 +759,11 @@ export default function OverviewScreen() {
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
           title="Dagens överblick"
           primaryAction={
-            <View style={styles.headerRight}>
-              <TouchableOpacity style={styles.userChip} onPress={() => setUserSwitchVisible(true)}>
-                <Feather name="user" size={14} color={palette.primaryText} />
-                <Text style={styles.userChipText}>{currentUser?.name ?? 'Okänd'}</Text>
-                <View style={[styles.accessPill, currentAccess === 'owner' && styles.accessPillOwner]}>
-                  <Text style={[styles.accessPillText, currentAccess === 'owner' && styles.accessPillTextOwner]}>
-                    {currentAccess === 'owner' ? 'Full' : currentAccess === 'edit' ? 'Redigera' : 'Läsa'}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-              <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
-                <Feather name="search" size={18} color={palette.primaryText} />
-              </HeaderIconButton>
-            </View>
+            <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
+              <Feather name="search" size={18} color={palette.primaryText} />
+            </HeaderIconButton>
           }
         />
-        {searchVisible ? (
-          <View style={isDesktopWeb ? styles.desktopClamp : undefined}>
-            <SearchBar
-              placeholder="Sök personer, hästar, pass..."
-              value={searchText}
-              onChangeText={setSearchText}
-              onSubmitEditing={handleSearchSubmit}
-              returnKeyType="search"
-              autoFocus
-              style={[styles.searchBar, isDesktopWeb && styles.searchBarDesktop]}
-            />
-          </View>
-        ) : null}
         {!isDesktopWeb ? <StableSwitcher showAccess /> : null}
         <ScrollView
           style={styles.scroll}
@@ -669,6 +776,7 @@ export default function OverviewScreen() {
           {isDesktopWeb ? (
             <View style={styles.desktopDashboard}>
             <View style={[styles.desktopColumn, styles.desktopColumnPrimary]}>
+              {startHereSection}
               {eventsSection}
               {quickActionsSection}
               {summarySection}
@@ -681,6 +789,7 @@ export default function OverviewScreen() {
             </View>
           ) : (
             <>
+              {startHereSection}
               {eventsSection}
               {quickActionsSection}
               {summarySection}
@@ -737,7 +846,6 @@ export default function OverviewScreen() {
         </View>
       </Modal>
 
-      <UserSwitchModal visible={userSwitchVisible} onClose={() => setUserSwitchVisible(false)} />
     </LinearGradient>
   );
 }
@@ -1152,39 +1260,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     marginBottom: 12,
   },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  userChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-  },
-  userChipText: { fontSize: 13, fontWeight: '700', color: palette.primaryText },
-  accessPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-  },
-  accessPillOwner: { backgroundColor: 'rgba(45,108,246,0.15)', borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(45,108,246,0.3)' },
-  accessPillText: { fontSize: 11, fontWeight: '700', color: palette.secondaryText },
-  accessPillTextOwner: { color: palette.primary },
-  searchBar: {
-    marginHorizontal: 20,
-    marginTop: 4,
-    marginBottom: 8,
-  },
-  searchBarDesktop: {
-    marginHorizontal: 0,
-    marginTop: 6,
-    marginBottom: 12,
-    width: '100%',
-  },
   alertCard: {
     paddingHorizontal: 18,
     paddingVertical: 14,
@@ -1346,6 +1421,116 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     color: palette.mutedText,
+  },
+  startHereCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 0,
+    gap: 14,
+  },
+  startHereCardMobile: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.08)',
+    backgroundColor: palette.surface,
+  },
+  startHereHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  startHereTitleBlock: {
+    flex: 1,
+    gap: 6,
+  },
+  startHereTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  startHereSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: palette.secondaryText,
+  },
+  startHereBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+  },
+  startHereBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  startHereList: {
+    gap: 10,
+  },
+  startHereRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  startHereDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: palette.primary,
+  },
+  startHereText: {
+    fontSize: 13,
+    color: palette.primaryText,
+  },
+  startHereTextDone: {
+    color: palette.mutedText,
+    textDecorationLine: 'line-through',
+  },
+  startHereActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  startHerePrimary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    backgroundColor: palette.primary,
+  },
+  startHerePrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.inverseText,
+  },
+  startHereSecondary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  startHereSecondaryText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  startHereHint: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceTint,
+  },
+  startHereHintText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
   },
   summarySection: {
     gap: 16,
