@@ -211,7 +211,7 @@ export default function StablesScreen() {
   );
   React.useEffect(() => {
     setSettingsDraft(resolveStableSettings(currentStable));
-  }, [currentStable?.id]);
+  }, [currentStable]);
   const currentRideTypes = React.useMemo(
     () => currentStable?.rideTypes ?? [],
     [currentStable],

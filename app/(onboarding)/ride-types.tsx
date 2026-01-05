@@ -24,7 +24,7 @@ export default function OnboardingRideTypes() {
     () => stables.find((stable) => stable.id === activeStableId),
     [activeStableId, stables],
   );
-  const rideTypes = activeStable?.rideTypes ?? [];
+  const rideTypes = React.useMemo(() => activeStable?.rideTypes ?? [], [activeStable]);
 
   const [draft, setDraft] = React.useState({ code: '', label: '', description: '' });
 

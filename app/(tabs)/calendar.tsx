@@ -157,7 +157,7 @@ const dayEventToneLabels: Record<DayEventTone, string> = {
   info: 'Info',
 };
 
-const dayEventToneOptions: Array<{ id: DayEventTone; label: string }> = [
+const dayEventToneOptions: { id: DayEventTone; label: string }[] = [
   { id: 'feeding', label: dayEventToneLabels.feeding },
   { id: 'cleaning', label: dayEventToneLabels.cleaning },
   { id: 'riderAway', label: dayEventToneLabels.riderAway },
@@ -317,7 +317,7 @@ export default function CalendarScreen() {
   );
   const stableSettings = React.useMemo(() => resolveStableSettings(currentStable), [currentStable]);
   const enabledEventTones = React.useMemo(() => {
-    const entries = Object.entries(stableSettings.eventVisibility) as Array<[DayEventTone, boolean]>;
+    const entries = Object.entries(stableSettings.eventVisibility) as [DayEventTone, boolean][];
     const enabled = entries.filter(([, value]) => value).map(([tone]) => tone);
     return new Set<DayEventTone>(enabled);
   }, [stableSettings]);
@@ -1587,7 +1587,7 @@ export default function CalendarScreen() {
                       const bookings = arenaBookingsByDateMap.get(isoDate) ?? [];
                       const statuses = arenaStatusByDateMap.get(isoDate) ?? [];
                       const latestStatus = statuses[0];
-                      const items: Array<{ id: string; label: string; color: string }> = [];
+                      const items: { id: string; label: string; color: string }[] = [];
 
                       if (bookings.length > 0) {
                         items.push({

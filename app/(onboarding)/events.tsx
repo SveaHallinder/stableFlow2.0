@@ -11,7 +11,7 @@ import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 
-const eventVisibilityOptions: Array<{ id: keyof StableEventVisibility; label: string }> = [
+const eventVisibilityOptions: { id: keyof StableEventVisibility; label: string }[] = [
   { id: 'feeding', label: 'Fodring saknas' },
   { id: 'cleaning', label: 'Städning/Mockning' },
   { id: 'riderAway', label: 'Ryttare bortrest' },

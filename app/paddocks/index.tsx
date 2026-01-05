@@ -271,6 +271,7 @@ export default function PaddocksScreen() {
     draft.id,
     draft.image,
     draft.name,
+    draft.season,
     state.currentStableId,
     toast,
   ]);

@@ -11,7 +11,7 @@ import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 
-const bookingModeOptions: Array<{ id: ArenaBookingMode; label: string; description: string }> = [
+const bookingModeOptions: { id: ArenaBookingMode; label: string; description: string }[] = [
   { id: 'open', label: 'Öppen bokning', description: 'Alla kan boka direkt.' },
   { id: 'approval', label: 'Kräver godkännande', description: 'Bokningar behöver godkännas.' },
   { id: 'staff', label: 'Endast personal', description: 'Endast admin/personal kan boka.' },

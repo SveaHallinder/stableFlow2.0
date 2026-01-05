@@ -60,7 +60,10 @@ export default function MembersScreen() {
   }, [router]);
 
   const currentUser = state.users[state.currentUserId];
-  const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
+  const memberStableIds = React.useMemo(
+    () => currentUser?.membership.map((entry) => entry.stableId) ?? [],
+    [currentUser?.membership],
+  );
   const visibleStables = state.stables.filter((stable) => memberStableIds.includes(stable.id));
   const stables = visibleStables.length ? visibleStables : state.stables;
 
@@ -129,7 +132,7 @@ export default function MembersScreen() {
   }, [memberStableIds, stableFilter, state.horses]);
 
   const memberRows = React.useMemo(() => {
-    const rows: Array<{
+    const rows: {
       userId: string;
       name: string;
       email?: string;
@@ -140,7 +143,7 @@ export default function MembersScreen() {
       access?: string;
       riderRole?: string;
       horseNames: string[];
-    }> = [];
+    }[] = [];
 
     const search = query.trim().toLowerCase();
     const horsesByUserId = state.horses.reduce<Record<string, string[]>>((acc, horse) => {

@@ -11,7 +11,7 @@ import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 
-const genderOptions: Array<{ id: NonNullable<Horse['gender']>; label: string }> = [
+const genderOptions: { id: NonNullable<Horse['gender']>; label: string }[] = [
   { id: 'mare', label: 'Sto' },
   { id: 'gelding', label: 'Valack' },
   { id: 'stallion', label: 'Hingst' },

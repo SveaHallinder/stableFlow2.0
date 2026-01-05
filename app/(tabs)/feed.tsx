@@ -204,7 +204,7 @@ export default function FeedScreen() {
     });
   }, [filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
 
-  const filterOptions: Array<{ id: GroupFilter; label: string }> = [
+  const filterOptions: { id: GroupFilter; label: string }[] = [
     { id: 'all', label: 'Alla' },
     { id: 'stable', label: 'Mitt stall' },
     { id: 'horse', label: 'Min häst' },
@@ -392,10 +392,10 @@ export default function FeedScreen() {
   );
 
   const groupSections = React.useMemo(() => {
-    const sections: Array<{
+    const sections: {
       title: string;
-      options: Array<{ id: string; label: string; locked?: boolean }>;
-    }> = [
+      options: { id: string; label: string; locked?: boolean }[];
+    }[] = [
       {
         title: 'Stall',
         options: [{ id: stableGroupIdValue, label: 'Mitt stall', locked: true }],

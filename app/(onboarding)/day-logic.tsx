@@ -11,7 +11,7 @@ import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
 
-const dayLogicOptions: Array<{ id: StableDayLogic; title: string; description: string }> = [
+const dayLogicOptions: { id: StableDayLogic; title: string; description: string }[] = [
   { id: 'box', title: 'Box', description: 'Hästarna står i boxar.' },
   { id: 'loose', title: 'Lösdrift', description: 'Lösdrift med möjlighet att ha box per häst.' },
 ];

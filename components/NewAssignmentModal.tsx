@@ -42,7 +42,7 @@ type NewAssignmentModalProps = {
   onDelete?: () => void;
 };
 
-const slots: Array<{ label: string; value: AssignmentSlot }> = [
+const slots: { label: string; value: AssignmentSlot }[] = [
   { label: 'Morgon', value: 'Morning' },
   { label: 'Lunch', value: 'Lunch' },
   { label: 'Kväll', value: 'Evening' },

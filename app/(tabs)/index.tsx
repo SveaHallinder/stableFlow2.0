@@ -22,8 +22,6 @@ import { Feather } from '@expo/vector-icons';
 import HeartIcon from '@/assets/images/Heart.svg';
 import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
-import WarningIcon from '@/assets/images/⚠.svg';
-import BroomIcon from '@/assets/images/broom.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { quickActionVariants, systemPalette } from '@/design/system';
@@ -33,24 +31,15 @@ import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import type { Assignment, UserRole } from '@/context/AppDataContext';
+import type { UserRole } from '@/context/AppDataContext';
 import {
   groupAssignmentsByDay,
-  formatPrimaryDay,
-  formatPrimaryDate,
-  formatSecondaryLabel,
   toISODate,
 } from '@/lib/schedule';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 
 const palette = theme.colors;
 const radii = theme.radii;
-
-type StatusChip = {
-  label: string;
-  tone: 'alert' | 'info' | 'neutral';
-  icon?: 'warning' | 'broom';
-};
 
 type QuickActionTint = 'primary' | 'accent' | 'warning';
 type QuickActionIcon = 'clock' | 'users' | 'alert-triangle' | 'map';
@@ -171,10 +160,6 @@ export default function OverviewScreen() {
     [postItems, currentStableId],
   );
 
-  const alertBanner = React.useMemo(
-    () => alerts.find((alert) => alert.type === 'critical'),
-    [alerts],
-  );
   const latestEvent = alerts[0];
   const recentEvents = alerts.slice(0, 3);
 
@@ -204,32 +189,9 @@ export default function OverviewScreen() {
     () => upcomingDayGroups.slice(0, 7),
     [upcomingDayGroups],
   );
-  const primaryDayGroup = calendarPreviewGroups[0];
-  const secondaryDayGroups = calendarPreviewGroups.slice(1, 3);
   const todayDayGroup = React.useMemo(
     () => groupedDays.find((day) => day.isoDate === todayIso),
     [groupedDays, todayIso],
-  );
-
-  const primaryDayLabel = primaryDayGroup ? formatPrimaryDay(primaryDayGroup.date) : '';
-  const primaryDateLabel = primaryDayGroup ? formatPrimaryDate(primaryDayGroup.date) : '';
-  const primaryWeekNumber = primaryDayGroup ? getISOWeekNumber(primaryDayGroup.date) : undefined;
-
-  const primaryChips = React.useMemo<StatusChip[]>(() => {
-    if (!primaryDayGroup) {
-      return [];
-    }
-    return sortAssignments(primaryDayGroup.assignments).map(createStatusChip);
-  }, [primaryDayGroup]);
-
-  const upcomingDays = React.useMemo(
-    () =>
-      secondaryDayGroups.map((day) => ({
-        id: day.isoDate,
-        label: formatSecondaryLabel(day.date),
-        items: sortAssignments(day.assignments).map(createStatusChip),
-      })),
-    [secondaryDayGroups],
   );
 
   const myAssignedUpcoming = React.useMemo(() => {
@@ -417,9 +379,6 @@ export default function OverviewScreen() {
     [canManageDayEvents, router, toast],
   );
 
-  const handlePrimaryAction = React.useCallback(() => {
-    router.push('/calendar');
-  }, [router]);
   const handleOpenSearch = React.useCallback(() => {
     router.push('/search');
   }, [router]);
@@ -1058,26 +1017,6 @@ function QuickActionSheet({
   );
 }
 
-function ScheduleChip({ label, tone, icon }: StatusChip) {
-  const toneStyles = {
-    alert: { background: palette.surfaceTint, border: palette.error },
-    info: { background: palette.surfaceTint, border: palette.info },
-    neutral: { background: palette.surfaceTint, border: palette.accent },
-  } as const;
-
-  const { background, border } = toneStyles[tone];
-
-  return (
-    <View style={[styles.scheduleChip, { backgroundColor: background, borderLeftColor: border }]}>
-      {icon === 'warning' && <WarningIcon width={8} height={8} />}
-      {icon === 'broom' && <BroomIcon width={8} height={8} />}
-      <Text style={styles.scheduleChipText} numberOfLines={1} ellipsizeMode="tail">
-        {label}
-      </Text>
-    </View>
-  );
-}
-
 function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <View style={styles.sectionHeader}>
@@ -1146,43 +1085,6 @@ function StackedCard({
   );
 }
 
-function createStatusChip(assignment: Assignment): StatusChip {
-  const tone: StatusChip['tone'] =
-    assignment.status === 'open' ? 'alert' : assignment.status === 'assigned' ? 'info' : 'neutral';
-
-  const label =
-    assignment.note ??
-    `${assignment.label} · ${assignment.time}`;
-
-  const icon =
-    assignment.status === 'open'
-      ? 'warning'
-      : assignment.note?.toLowerCase().includes('mock') ||
-        assignment.note?.toLowerCase().includes('städ')
-        ? 'broom'
-        : undefined;
-
-  return {
-    label,
-    tone,
-    icon,
-  };
-}
-
-function sortAssignments(assignments: Assignment[]) {
-  return [...assignments].sort(
-    (a, b) =>
-      new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
-  );
-}
-
-function truncateText(value: string, maxLength: number) {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength - 1)}…`;
-}
-
 function formatEventTime(value: string) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
@@ -1194,14 +1096,6 @@ function formatEventTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
-}
-
-function getISOWeekNumber(date: Date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
 }
 
 const styles = StyleSheet.create({

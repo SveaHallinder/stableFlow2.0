@@ -3,7 +3,7 @@ import { Stack } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 
 export default function AuthLayout() {
-  const { session, loading } = useAuth();
+  const { loading } = useAuth();
 
   if (loading) {
     return null;

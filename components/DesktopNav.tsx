@@ -35,7 +35,6 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarm = state.farms.find((farm) => farm.id === currentStable?.farmId);
   const currentUser = state.users[state.currentUserId];
-  const isFirstTimeOnboarding = derived.isFirstTimeOnboarding;
   const canManageOnboarding = derived.canManageOnboardingAny;
   const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));

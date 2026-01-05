@@ -75,13 +75,13 @@ const adminLinks: AdminLink[] = [
 
 type QuickRole = 'admin' | 'staff' | 'rider';
 
-const quickRoleOptions: Array<{
+const quickRoleOptions: {
   id: QuickRole;
   label: string;
   customRole: string;
   access: 'owner' | 'edit' | 'view';
   riderRole: 'owner' | 'medryttare' | 'other';
-}> = [
+}[] = [
   { id: 'admin', label: 'Admin', customRole: 'Admin', access: 'owner', riderRole: 'owner' },
   { id: 'staff', label: 'Personal', customRole: 'Personal', access: 'edit', riderRole: 'other' },
   { id: 'rider', label: 'Medryttare', customRole: 'Medryttare', access: 'view', riderRole: 'medryttare' },
@@ -95,43 +95,7 @@ export default function AdminDashboard() {
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
   const isWeb = Platform.OS === 'web';
 
-  if (!isWeb) {
-    return (
-      <LinearGradient colors={theme.gradients.background} style={styles.background}>
-        <SafeAreaView style={styles.safeArea}>
-          <ScreenHeader
-            style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-            title="Admin"
-            showSearch={false}
-            left={
-              <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.replace('/')}>
-                <Feather name="chevron-left" size={18} color={palette.primaryText} />
-              </HeaderIconButton>
-            }
-          />
-          <View style={styles.mobileGate}>
-            <Card tone="muted" style={styles.mobileGateCard}>
-              <Text style={styles.mobileGateTitle}>Admin finns på webben</Text>
-              <Text style={styles.mobileGateText}>
-                Admincenter är gjort för större skärmar. Öppna StableFlow i webben för att
-                hantera stall, medlemmar och hästar.
-              </Text>
-              <TouchableOpacity
-                style={styles.mobileGateButton}
-                onPress={() => router.replace('/')}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.mobileGateButtonText}>Till överblick</Text>
-              </TouchableOpacity>
-            </Card>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
-
   const currentUser = state.users[state.currentUserId];
-  const isFirstTimeOnboarding = derived.isFirstTimeOnboarding;
   const canManageOnboarding = derived.canManageOnboardingAny;
   const stableCount = state.stables.length;
   const farmCount = state.farms.length;
@@ -360,6 +324,41 @@ export default function AdminDashboard() {
       quickMemberDraft.name.trim().length > 0 &&
       quickMemberDraft.email.trim().length > 0,
   );
+
+  if (!isWeb) {
+    return (
+      <LinearGradient colors={theme.gradients.background} style={styles.background}>
+        <SafeAreaView style={styles.safeArea}>
+          <ScreenHeader
+            style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+            title="Admin"
+            showSearch={false}
+            left={
+              <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.replace('/')}>
+                <Feather name="chevron-left" size={18} color={palette.primaryText} />
+              </HeaderIconButton>
+            }
+          />
+          <View style={styles.mobileGate}>
+            <Card tone="muted" style={styles.mobileGateCard}>
+              <Text style={styles.mobileGateTitle}>Admin finns på webben</Text>
+              <Text style={styles.mobileGateText}>
+                Admincenter är gjort för större skärmar. Öppna StableFlow i webben för att
+                hantera stall, medlemmar och hästar.
+              </Text>
+              <TouchableOpacity
+                style={styles.mobileGateButton}
+                onPress={() => router.replace('/')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.mobileGateButtonText}>Till överblick</Text>
+              </TouchableOpacity>
+            </Card>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   if (!canManageOnboarding) {
     return (
