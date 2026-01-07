@@ -9,6 +9,17 @@ import { radius } from '@/design/tokens';
 
 const palette = theme.colors;
 
+const roleLabels = {
+  admin: 'Admin',
+  staff: 'Personal',
+  rider: 'Ryttare',
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  trainer: 'Tränare',
+  therapist: 'Terapeut',
+  guest: 'Gäst',
+} as const;
+
 const navItems = [
   { label: 'Överblick', route: '/' },
   { label: 'Schema', route: '/calendar' },
@@ -41,31 +52,15 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const stablesToShow = visibleStables.length ? visibleStables : stables;
   const membership = currentUser?.membership.find((item) => item.stableId === currentStableId);
   const roleLabel =
-    membership?.role === 'admin'
-      ? 'Admin'
-      : membership?.role === 'staff'
-        ? 'Personal'
-        : membership?.role === 'rider'
-          ? 'Medryttare'
-          : membership?.role === 'farrier'
-            ? 'Hovslagare'
-            : membership?.role === 'vet'
-              ? 'Veterinär'
-              : membership?.role === 'trainer'
-                ? 'Tränare'
-                : membership?.role === 'therapist'
-                  ? 'Massör'
-                  : membership?.role === 'guest'
-                    ? 'Gäst'
-                    : membership?.role ?? 'Ingen roll';
-  const accessLabel =
     membership?.access === 'owner'
-      ? 'Full'
-      : membership?.access === 'edit'
-        ? 'Redigera'
-        : membership?.access === 'view'
-          ? 'Läsa'
-          : '';
+      ? 'Ägare'
+      : membership?.customRole?.trim() || roleLabels[membership?.role ?? 'guest'];
+  const accessLabel =
+    membership?.access === 'edit'
+      ? 'Redigera'
+      : membership?.access === 'view'
+        ? 'Läsa'
+        : '';
   const metaLabel = accessLabel ? `${roleLabel} · ${accessLabel}` : roleLabel;
   const showSidebarHeader = isSidebar && showHeader;
 

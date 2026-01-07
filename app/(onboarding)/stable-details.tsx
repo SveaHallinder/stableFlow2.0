@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -13,6 +13,8 @@ const palette = theme.colors;
 export default function OnboardingStableDetails() {
   const router = useRouter();
   const toast = useToast();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId } = state;
 
@@ -89,20 +91,34 @@ export default function OnboardingStableDetails() {
 
   const handleNext = React.useCallback(() => {
     if (handleSave()) {
-      router.push('/(onboarding)/arena');
+      if (returnTo) {
+        router.replace(returnTo);
+      } else {
+        router.back();
+      }
     }
-  }, [handleSave, router]);
+  }, [handleSave, returnTo, router]);
+
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
 
   const canContinue = Boolean(activeStableId && draft.name.trim());
 
   return (
     <OnboardingShell
       title="Stalluppgifter"
-      subtitle="Fyll i grundinfo som namn, plats och beskrivning."
+      subtitle="Valfritt: Fyll i namn, plats och beskrivning. Du kan göra det senare."
       step={3}
       total={10}
-      onBack={() => router.back()}
+      onBack={handleBack}
       onNext={handleNext}
+      nextLabel="Spara & tillbaka"
+      showProgress={false}
       disableNext={!canContinue}
     >
       {stables.length > 1 ? (

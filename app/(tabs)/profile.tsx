@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   Image,
-  Linking,
   Platform,
   ScrollView,
   StyleSheet,
@@ -13,9 +12,9 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
-import { color, radius } from '@/design/tokens';
+import { radius } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
@@ -26,7 +25,6 @@ import type {
   AssignmentSlot,
   AssignmentStatus,
   DefaultPass,
-  UserProfile,
   UserRole,
   WeekdayIndex,
 } from '@/context/AppDataContext';
@@ -35,7 +33,6 @@ import { useToast } from '@/components/ToastProvider';
 const palette = theme.colors;
 const radii = theme.radii;
 
-const WEEK_DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 const DEFAULT_WEEKDAYS: { label: string; value: WeekdayIndex }[] = [
   { label: 'Mån', value: 0 },
   { label: 'Tis', value: 1 },
@@ -63,19 +60,6 @@ const roleLabels: Record<UserRole, string> = {
   guest: 'Gäst',
 };
 
-const EMPTY_USER: UserProfile = {
-  id: '',
-  name: '',
-  membership: [],
-  horses: [],
-  location: '',
-  phone: '',
-  responsibilities: [],
-  defaultPasses: [],
-  awayNotices: [],
-  onboardingDismissed: false,
-};
-
 function hasDefaultPass(passes: DefaultPass[], weekday: WeekdayIndex, slot: AssignmentSlot) {
   return passes.some((entry) => entry.weekday === weekday && entry.slot === slot);
 }
@@ -88,32 +72,25 @@ const assignmentStatusStyles: Record<AssignmentStatus, { label: string; backgrou
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { section } = useLocalSearchParams<{ section?: string | string[] }>();
   const { state, derived, actions } = useAppData();
-  const { currentUserId, users, assignments, currentStableId } = state;
+  const { currentUserId, users, currentStableId } = state;
   const currentUser = users[currentUserId];
-  const safeUser = currentUser ?? EMPTY_USER;
   const toast = useToast();
+  const scrollRef = React.useRef<ScrollView>(null);
+  const [defaultPassAnchor, setDefaultPassAnchor] = React.useState<number | null>(null);
+  const [highlightDefaultPass, setHighlightDefaultPass] = React.useState(false);
+  const [didScrollToSection, setDidScrollToSection] = React.useState(false);
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isWeb = Platform.OS === 'web';
   const currentStable = state.stables.find((stable) => stable.id === currentStableId);
-  const primaryMembership = currentUser?.membership.find(
-    (entry) => entry.stableId === currentStableId,
-  ) ?? currentUser?.membership[0];
-  const membershipRoleLabel = primaryMembership
-    ? primaryMembership.customRole?.trim() || roleLabels[primaryMembership.role]
-    : undefined;
+  const resolvedSection = Array.isArray(section) ? section[0] : section;
+  const hasStable = Boolean(currentStableId && currentStable);
   const stableLabel = currentStable?.name ?? 'Inget stall valt';
-  const roleLabel = membershipRoleLabel ?? 'Ingen roll';
-  const accessLabel =
-    primaryMembership?.access === 'owner'
-      ? 'Full'
-      : primaryMembership?.access === 'edit'
-        ? 'Redigera'
-        : primaryMembership?.access === 'view'
-          ? 'Läsa'
-          : '';
 
   const upcomingAssignments = derived.upcomingAssignmentsForUser.slice(0, 3);
+  const canManageAdmin = derived.canManageOnboardingAny;
   const memberCount = React.useMemo(
     () =>
       Object.values(users).filter((user) =>
@@ -121,35 +98,6 @@ export default function ProfileScreen() {
       ).length,
     [currentStableId, users],
   );
-
-  const profileStats = React.useMemo(() => {
-    const nextAssignment = derived.nextAssignmentForUser;
-    const formattedResponsibilities =
-      membershipRoleLabel ||
-      (safeUser.responsibilities.length
-        ? safeUser.responsibilities.join(' · ')
-        : 'Ingen roll angiven');
-    const nextPassValue = nextAssignment
-      ? `${formatAssignmentTitle(nextAssignment)} · ${formatDateLabel(
-          nextAssignment.date,
-        )} · ${nextAssignment.time}`
-      : 'Inga pass planerade';
-    const nextAway = safeUser.awayNotices[0];
-    const nextAwayLabel = nextAway
-      ? formatRange(nextAway.start, nextAway.end)
-      : 'Ej planerat';
-
-    return [
-      { id: 'next', label: 'Nästa pass', value: nextPassValue },
-      { id: 'responsibility', label: 'Ansvar', value: formattedResponsibilities },
-      { id: 'time-off', label: 'Planerad frånvaro', value: nextAwayLabel },
-    ];
-  }, [derived.nextAssignmentForUser, membershipRoleLabel, safeUser]);
-
-  const calendarMetadata = React.useMemo(() => buildCalendarMetadata(assignments, safeUser), [
-    assignments,
-    safeUser,
-  ]);
 
   const upcomingAssignmentsView = React.useMemo(
     () =>
@@ -163,34 +111,48 @@ export default function ProfileScreen() {
     [upcomingAssignments, users, currentUserId],
   );
 
-  const handleMessage = React.useCallback(() => {
-    router.push('/(tabs)/messages');
-  }, [router]);
-
-  const currentUserPhone = currentUser?.phone ?? '';
-  const handleCall = React.useCallback(async () => {
-    if (!currentUserPhone) {
-      toast.showToast('Telefonnummer saknas för användaren.', 'info');
+  const scrollToDefaultPass = React.useCallback(() => {
+    if (defaultPassAnchor === null) {
       return;
     }
-    const url = `tel:${currentUserPhone}`;
-    try {
-      const supported = await Linking.canOpenURL(url);
-      if (!supported) {
-        toast.showToast('Kan inte starta samtal på den här enheten.', 'error');
-        return;
-      }
-      await Linking.openURL(url);
-    } catch {
-      toast.showToast('Kunde inte starta samtalet.', 'error');
+    scrollRef.current?.scrollTo({ y: Math.max(defaultPassAnchor - 12, 0), animated: true });
+    setHighlightDefaultPass(true);
+  }, [defaultPassAnchor]);
+
+  React.useEffect(() => {
+    setDidScrollToSection(false);
+  }, [resolvedSection]);
+
+  React.useEffect(() => {
+    if (resolvedSection !== 'availability' || didScrollToSection) {
+      return;
     }
-  }, [currentUserPhone, toast]);
+    if (defaultPassAnchor === null) {
+      return;
+    }
+    scrollToDefaultPass();
+    setDidScrollToSection(true);
+  }, [defaultPassAnchor, didScrollToSection, resolvedSection, scrollToDefaultPass]);
+
+  React.useEffect(() => {
+    if (!highlightDefaultPass) {
+      return;
+    }
+    const timer = setTimeout(() => setHighlightDefaultPass(false), 1800);
+    return () => clearTimeout(timer);
+  }, [highlightDefaultPass]);
 
   const handleOpenMembers = React.useCallback(() => {
     router.push('/members');
   }, [router]);
   const handleOpenSettings = React.useCallback(() => {
-    router.push('/settings');
+    router.push('/settings/account');
+  }, [router]);
+  const handleOpenNotifications = React.useCallback(() => {
+    router.push('/settings/notifications');
+  }, [router]);
+  const handleOpenOverview = React.useCallback(() => {
+    router.push('/');
   }, [router]);
 
   const handleTakeAssignment = React.useCallback(
@@ -224,6 +186,22 @@ export default function ProfileScreen() {
     );
   }
 
+  const primaryMembership = currentUser.membership.find(
+    (entry) => entry.stableId === currentStableId,
+  ) ?? currentUser.membership[0];
+  const isOwner = primaryMembership?.access === 'owner';
+  const membershipRoleLabel = primaryMembership
+    ? primaryMembership.customRole?.trim() || roleLabels[primaryMembership.role]
+    : undefined;
+  const roleLabel = isOwner ? 'Ägare' : membershipRoleLabel ?? 'Ingen roll';
+  const accessLabel =
+    primaryMembership?.access === 'edit'
+      ? 'Redigera'
+      : primaryMembership?.access === 'view'
+        ? 'Läsa'
+        : '';
+  const hasAwayNotices = currentUser.awayNotices.length > 0;
+
   const heroSection = (
     <View style={[styles.profileHero, isDesktopWeb && styles.profileHeroDesktop]}>
       <View style={styles.profileHeroContent}>
@@ -251,30 +229,14 @@ export default function ProfileScreen() {
         ))}
       </View>
       <View style={styles.profileActionRow}>
-        <TouchableOpacity style={styles.primaryActionButton} onPress={handleCall}>
-          <Feather name="phone-call" size={16} color={palette.inverseText} />
-          <Text style={styles.primaryActionLabel}>Ring</Text>
+        <TouchableOpacity style={styles.primaryActionButton} onPress={scrollToDefaultPass}>
+          <Feather name="calendar" size={16} color={palette.inverseText} />
+          <Text style={styles.primaryActionLabel}>Standardpass</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage}>
-          <Feather name="message-circle" size={16} color="#2D6CF6" />
-          <Text style={styles.secondaryActionLabel}>Chatta</Text>
+        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleOpenSettings}>
+          <Feather name="settings" size={16} color={palette.primary} />
+          <Text style={styles.secondaryActionLabel}>Kontoinställningar</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.moreActionButton}>
-          <Feather name="more-horizontal" size={18} color={palette.icon} />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
-  const statsSection = (
-    <View style={[styles.statsSection, isDesktopWeb && styles.statsSectionDesktop]}>
-      <View style={styles.statsRow}>
-        {profileStats.map((item) => (
-          <View key={item.id} style={styles.statItem}>
-            <Text style={styles.statLabel}>{item.label}</Text>
-            <Text style={styles.statValue}>{item.value}</Text>
-          </View>
-        ))}
       </View>
     </View>
   );
@@ -294,6 +256,17 @@ export default function ProfileScreen() {
         <View style={styles.settingsRowLeft}>
           <Feather name="settings" size={16} color={palette.primaryText} />
           <Text style={styles.settingsRowText}>Kontoinställningar</Text>
+        </View>
+        <Feather name="chevron-right" size={16} color={palette.secondaryText} />
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.settingsRow}
+        onPress={handleOpenNotifications}
+        activeOpacity={0.85}
+      >
+        <View style={styles.settingsRowLeft}>
+          <Feather name="bell" size={16} color={palette.primaryText} />
+          <Text style={styles.settingsRowText}>Notiser</Text>
         </View>
         <Feather name="chevron-right" size={16} color={palette.secondaryText} />
       </TouchableOpacity>
@@ -317,46 +290,87 @@ export default function ProfileScreen() {
     </Card>
   );
 
-  const defaultPassSection = (
-    <Card tone="muted" style={styles.defaultPassCard}>
-      <View style={styles.defaultPassHeader}>
-        <Text style={styles.defaultPassTitle}>Standardpass</Text>
-        <Text style={styles.defaultPassSubtitle}>
-          Dessa markeras automatiskt som dina i schemat – tryck “Kan inte” på en dag du inte kan.
-        </Text>
-      </View>
-
-      <View style={styles.defaultPassGrid}>
-        {DEFAULT_SLOTS.map((slot) => (
-          <View key={slot.value} style={styles.defaultPassRow}>
-            <Text style={styles.defaultPassRowLabel}>{slot.label}</Text>
-            <View style={styles.defaultPassRowChips}>
-              {DEFAULT_WEEKDAYS.map((day) => {
-                const active = hasDefaultPass(currentUser.defaultPasses, day.value, slot.value);
-                return (
-                  <TouchableOpacity
-                    key={`${slot.value}-${day.value}`}
-                    onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
-                    activeOpacity={0.85}
-                  >
-                    <Pill active={active} style={styles.defaultPassChip}>
-                      <Text
-                        style={[
-                          styles.defaultPassChipText,
-                          active && styles.defaultPassChipTextActive,
-                        ]}
-                      >
-                        {day.label}
-                      </Text>
-                    </Pill>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        ))}
-      </View>
+  const noStableSection = !hasStable ? (
+    <Card tone="muted" style={styles.infoCard}>
+      <Text style={styles.infoTitle}>Inget stall valt</Text>
+      <Text style={styles.infoText}>
+        {canManageAdmin
+          ? 'Starta uppstarten från Överblick eller öppna Admin i webben för att skapa ett stall.'
+          : 'Gå till Överblick för att skapa stall eller invänta en inbjudan.'}
+      </Text>
+      <TouchableOpacity style={styles.infoAction} onPress={handleOpenOverview} activeOpacity={0.85}>
+        <Text style={styles.infoActionText}>Till överblick</Text>
+      </TouchableOpacity>
     </Card>
+  ) : null;
+
+  const adminSection =
+    isWeb && canManageAdmin ? (
+      <Card tone="muted" style={styles.adminCard}>
+        <Text style={styles.adminTitle}>Admincenter</Text>
+        <Text style={styles.adminText}>
+          Hantera stall, medlemmar, hästar och scheman i adminvyn.
+        </Text>
+        <TouchableOpacity
+          style={styles.adminAction}
+          onPress={() => router.push('/admin')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.adminActionText}>Öppna admin</Text>
+        </TouchableOpacity>
+      </Card>
+    ) : null;
+
+  const defaultPassSubtitle = hasStable
+    ? 'Välj dagar du oftast kan ta pass. De markeras automatiskt som dina i schemat.'
+    : 'Välj dagar du brukar kunna ta pass. Sparas lokalt tills du går med i ett stall.';
+
+  const defaultPassSection = (
+    <View
+      onLayout={(event) => setDefaultPassAnchor(event.nativeEvent.layout.y)}
+      style={styles.defaultPassAnchor}
+    >
+      <Card
+        tone="muted"
+        style={[styles.defaultPassCard, highlightDefaultPass && styles.defaultPassCardHighlight]}
+      >
+        <View style={styles.defaultPassHeader}>
+          <Text style={styles.defaultPassTitle}>Standardpass</Text>
+          <Text style={styles.defaultPassSubtitle}>{defaultPassSubtitle}</Text>
+        </View>
+
+        <View style={styles.defaultPassGrid}>
+          {DEFAULT_SLOTS.map((slot) => (
+            <View key={slot.value} style={styles.defaultPassRow}>
+              <Text style={styles.defaultPassRowLabel}>{slot.label}</Text>
+              <View style={styles.defaultPassRowChips}>
+                {DEFAULT_WEEKDAYS.map((day) => {
+                  const active = hasDefaultPass(currentUser.defaultPasses, day.value, slot.value);
+                  return (
+                    <TouchableOpacity
+                      key={`${slot.value}-${day.value}`}
+                      onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Pill active={active} style={styles.defaultPassChip}>
+                        <Text
+                          style={[
+                            styles.defaultPassChipText,
+                            active && styles.defaultPassChipTextActive,
+                          ]}
+                        >
+                          {day.label}
+                        </Text>
+                      </Pill>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+        </View>
+      </Card>
+    </View>
   );
 
   const upcomingSection = (
@@ -372,84 +386,24 @@ export default function ProfileScreen() {
         </TouchableOpacity>
       </View>
       <View style={styles.assignmentList}>
-        {upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser }) => (
-          <AssignmentCard
-            key={assignment.id}
-            assignment={assignment}
-            assigneeName={assigneeName}
-            isCurrentUser={isCurrentUser}
-            onTakeAssignment={handleTakeAssignment}
-          />
-        ))}
+        {upcomingAssignmentsView.length > 0 ? (
+          upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser }) => (
+            <AssignmentCard
+              key={assignment.id}
+              assignment={assignment}
+              assigneeName={assigneeName}
+              isCurrentUser={isCurrentUser}
+              onTakeAssignment={handleTakeAssignment}
+            />
+          ))
+        ) : (
+          <Text style={styles.emptyHint}>Inga pass inplanerade ännu.</Text>
+        )}
       </View>
     </View>
   );
 
-  const calendarSection = (
-    <Card tone="muted" style={styles.calendarCard}>
-      <View style={styles.calendarHeader}>
-        <TouchableOpacity style={styles.calendarArrow}>
-          <Text style={styles.calendarArrowText}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.calendarMonth}>{calendarMetadata.title}</Text>
-        <TouchableOpacity style={styles.calendarArrow}>
-          <Text style={styles.calendarArrowText}>›</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.calendarLegend}>
-        <LegendItem label="Idag" type="today" />
-        <LegendItem label="Mina pass" type="riding" />
-        <LegendItem label="Frånvaro" type="away" />
-      </View>
-
-      <View style={styles.weekRow}>
-        {WEEK_DAYS.map((day) => (
-          <View key={day} style={styles.weekDayContainer}>
-            <Text style={styles.weekDay}>{day}</Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={styles.dayGrid}>
-        {calendarMetadata.days.map((day, index) => {
-          if (day === null) {
-            return <View key={`empty-${index}`} style={styles.dayCell} />;
-          }
-
-          const isToday = day === calendarMetadata.today;
-          const isRidingDay = calendarMetadata.ridingDays.has(day);
-          const isAwayDay = calendarMetadata.awayDays.has(day);
-
-          return (
-            <View key={index} style={styles.dayCell}>
-              <View
-                style={[
-                  styles.dayCircle,
-                  isToday && styles.todayDay,
-                  isRidingDay && styles.ridingDay,
-                  isAwayDay && styles.awayDay,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.dayLabel,
-                    isToday && styles.todayDayText,
-                    isRidingDay && styles.ridingDayText,
-                    isAwayDay && styles.awayDayText,
-                  ]}
-                >
-                  {day}
-                </Text>
-              </View>
-            </View>
-          );
-        })}
-      </View>
-    </Card>
-  );
-
-  const awaySection = (
+  const awaySection = hasAwayNotices ? (
     <Card tone="muted" style={styles.awayCard}>
       <Text style={styles.awayTitle}>Planerad frånvaro</Text>
       <View style={styles.awayList}>
@@ -461,88 +415,65 @@ export default function ProfileScreen() {
         ))}
       </View>
     </Card>
-  );
-
-  const recentSection = (
-    <Card tone="muted" style={styles.recentCard}>
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionTitleGroup}>
-          <Text style={styles.sectionTitle}>Senaste inlägg</Text>
-          <View style={styles.sectionDot} />
-          <Text style={styles.sectionCount}>{state.posts.length}</Text>
-        </View>
-        <TouchableOpacity>
-          <Text style={styles.sectionAction}>Visa alla</Text>
-        </TouchableOpacity>
-      </View>
-      <Image
-        resizeMode="cover"
-        source={{
-          uri: 'https://images.unsplash.com/photo-1553284965-83fd3e82fa5a?q=80&w=1000&auto=format&fit=crop',
-        }}
-        style={styles.recentImage}
-      />
-    </Card>
-  );
+  ) : null;
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
-      <ScreenHeader
-        style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-        title={currentUser.name}
-        showSearch={false}
-        right={
-          <HeaderIconButton
-            accessibilityLabel="Inställningar"
-            onPress={handleOpenSettings}
-          >
-            <Feather name="settings" size={18} color={palette.primaryText} />
-          </HeaderIconButton>
-        }
-      />
-      {!isDesktopWeb ? <StableSwitcher /> : null}
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
-        showsVerticalScrollIndicator={false}
-      >
-        {isDesktopWeb ? (
+        <ScreenHeader
+          style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+          title={currentUser.name}
+          showSearch={false}
+          right={
+            <HeaderIconButton
+              accessibilityLabel="Inställningar"
+              onPress={handleOpenSettings}
+            >
+              <Feather name="settings" size={18} color={palette.primaryText} />
+            </HeaderIconButton>
+          }
+        />
+        {!isDesktopWeb ? <StableSwitcher /> : null}
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
+          showsVerticalScrollIndicator={false}
+        >
+          {isDesktopWeb ? (
             <View style={styles.desktopLayout}>
               <View style={styles.desktopSidebar}>
                 {heroSection}
-                {statsSection}
                 {settingsSection}
                 {awaySection}
               </View>
             <View style={styles.desktopMain}>
-              {membersSection}
+              {noStableSection}
+              {adminSection}
               {defaultPassSection}
-              {upcomingSection}
-              {calendarSection}
-              {recentSection}
+              {hasStable ? upcomingSection : null}
+              {hasStable ? membersSection : null}
             </View>
           </View>
         ) : (
           <>
             {heroSection}
-            {statsSection}
-            {settingsSection}
-            {membersSection}
+            {noStableSection}
+            {adminSection}
             {defaultPassSection}
-            {upcomingSection}
-            {calendarSection}
+            {hasStable ? upcomingSection : null}
+            {hasStable ? membersSection : null}
+            {settingsSection}
             {awaySection}
-            {recentSection}
-          </>
-        )}
+            </>
+          )}
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
   );
 }
 
-function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text: string }) {
+function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text?: string }) {
   if (!text || text.trim().length === 0) {
     return null;
   }
@@ -597,87 +528,6 @@ function AssignmentCard({
   );
 }
 
-function LegendItem({ label, type }: { label: string; type: 'today' | 'riding' | 'away' }) {
-  return (
-    <View style={styles.legendItem}>
-      <View
-        style={[
-          styles.legendDotBase,
-          type === 'today' && styles.legendDotToday,
-          type === 'riding' && styles.legendDotRiding,
-          type === 'away' && styles.legendDotAway,
-        ]}
-      />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
-  );
-}
-
-type CalendarMetadata = {
-  year: number;
-  month: number;
-  title: string;
-  days: (number | null)[];
-  today: number | null;
-  ridingDays: Set<number>;
-  awayDays: Set<number>;
-};
-
-function buildCalendarMetadata(assignments: Assignment[], user: UserProfile): CalendarMetadata {
-  const referenceDate = assignments[0]
-    ? new Date(`${assignments[0].date}T00:00:00`)
-    : new Date();
-  const year = referenceDate.getFullYear();
-  const month = referenceDate.getMonth();
-  const title = referenceDate.toLocaleDateString('sv-SE', { month: 'long', year: 'numeric' });
-  const totalDays = new Date(year, month + 1, 0).getDate();
-  const startDay = new Date(year, month, 1).getDay();
-  const startIndex = startDay === 0 ? 6 : startDay - 1; // Monday first
-
-  const days: (number | null)[] = [];
-  for (let i = 0; i < startIndex; i++) {
-    days.push(null);
-  }
-  for (let day = 1; day <= totalDays; day++) {
-    days.push(day);
-  }
-
-  const todayDate = new Date();
-  const today =
-    todayDate.getFullYear() === year && todayDate.getMonth() === month ? todayDate.getDate() : null;
-
-  const ridingDays = new Set<number>(
-    assignments
-      .filter((assignment) => assignment.assigneeId === user.id)
-      .map((assignment) => new Date(`${assignment.date}T00:00:00`).getDate()),
-  );
-
-  const awayDays = new Set<number>();
-  user.awayNotices.forEach((notice: { start: string; end: string }) => {
-    const start = new Date(`${notice.start}T00:00:00`);
-    const end = new Date(`${notice.end}T00:00:00`);
-    for (
-      let date = new Date(start);
-      date <= end;
-      date.setDate(date.getDate() + 1)
-    ) {
-      if (date.getMonth() === month && date.getFullYear() === year) {
-        awayDays.add(date.getDate());
-      }
-    }
-  });
-
-  return {
-    year,
-    month,
-    title: capitalize(title),
-    days,
-    today,
-    ridingDays,
-    awayDays,
-  };
-}
-
 function formatDateLabel(isoDate: string) {
   return new Date(`${isoDate}T00:00:00`).toLocaleDateString('sv-SE', {
     weekday: 'short',
@@ -707,13 +557,6 @@ function formatRange(start: string, end: string) {
     return startDate.toLocaleDateString('sv-SE', { day: 'numeric', month: 'numeric' });
   }
   return `${startDate.getDate()}–${endDate.getDate()}/${startDate.getMonth() + 1}`;
-}
-
-function capitalize(value: string) {
-  if (!value) {
-    return value;
-  }
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 const styles = StyleSheet.create({
@@ -881,23 +724,66 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.primary,
   },
-  moreActionButton: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: radius.full,
+  infoCard: {
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: 0,
     backgroundColor: palette.surfaceTint,
   },
-  statsSection: {
-    paddingHorizontal: 22,
-    paddingVertical: 20,
-    backgroundColor: surfacePresets.section,
-    borderRadius: radius.xl,
+  infoTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
   },
-  statsSectionDesktop: {
-    paddingHorizontal: 24,
-    paddingVertical: 22,
+  infoText: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    lineHeight: 18,
+  },
+  infoAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primary,
+    borderRadius: radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  infoActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.inverseText,
+  },
+  adminCard: {
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: 0,
+    backgroundColor: palette.surfaceTint,
+  },
+  adminTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  adminText: {
+    fontSize: 13,
+    color: palette.secondaryText,
+    lineHeight: 18,
+  },
+  adminAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.primary,
+    borderRadius: radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  adminActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.inverseText,
+  },
+  defaultPassAnchor: {
+    width: '100%',
   },
   defaultPassCard: {
     paddingHorizontal: 18,
@@ -905,6 +791,15 @@ const styles = StyleSheet.create({
     gap: 14,
     borderWidth: 0,
     backgroundColor: palette.surfaceTint,
+  },
+  defaultPassCardHighlight: {
+    borderWidth: 1,
+    borderColor: palette.primary,
+    shadowColor: palette.primary,
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
   },
   defaultPassHeader: {
     gap: 6,
@@ -948,26 +843,6 @@ const styles = StyleSheet.create({
   },
   defaultPassChipTextActive: {
     color: palette.inverseText,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  statItem: {
-    flex: 1,
-    gap: 6,
-  },
-  statValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: systemPalette.textPrimary,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: systemPalette.textSecondary,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
   },
   sectionBlock: {
     gap: 14,
@@ -1040,140 +915,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.inverseText,
   },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendDotBase: {
-    width: 10,
-    height: 10,
-    borderRadius: radius.full,
-  },
-  legendDotToday: {
-    backgroundColor: palette.icon,
-  },
-  legendDotRiding: {
-    backgroundColor: palette.accent,
-  },
-  legendDotAway: {
-    borderWidth: 1,
-    borderColor: palette.icon,
-  },
-  legendText: {
-    fontWeight: '500',
-    fontSize: 12,
-    color: palette.primaryText,
-    letterSpacing: 0.2,
-  },
-  calendarCard: {
-    gap: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
-  },
-  calendarHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-  },
-  calendarLegend: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 16,
-    marginTop: 12,
-    marginBottom: 4,
-  },
-  calendarArrow: {
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  calendarArrowText: {
-    fontSize: 22,
-    color: color.textMuted,
-    fontWeight: '400',
-    letterSpacing: -0.3,
-  },
-  calendarMonth: {
-    fontWeight: '400',
-    fontSize: 20,
-    lineHeight: 22,
-    color: color.text,
-    textAlign: 'center',
-    letterSpacing: -0.3,
-    textTransform: 'capitalize',
-  },
-  weekRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    width: '100%',
-    marginTop: 8,
-  },
-  weekDayContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-  weekDay: {
-    fontWeight: '600',
-    fontSize: 12,
-    lineHeight: 12,
-    textTransform: 'uppercase',
-    color: palette.mutedText,
-    textAlign: 'center',
-  },
-  dayGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    alignContent: 'flex-start',
-    width: '100%',
-  },
-  dayCell: {
-    width: '14.28%',
-    height: 35,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 6,
-  },
-  dayCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayLabel: {
-    fontWeight: '500',
-    fontSize: 14,
-    lineHeight: 20,
-    color: palette.primaryText,
-  },
-  ridingDay: {
-    backgroundColor: palette.accent,
-  },
-  ridingDayText: {
-    color: palette.inverseText,
-  },
-  todayDay: {
-    backgroundColor: palette.icon,
-  },
-  todayDayText: {
-    color: palette.inverseText,
-  },
-  awayDay: {
-    borderWidth: 1,
-    borderColor: palette.icon,
-  },
-  awayDayText: {
-    color: palette.primaryText,
-  },
   awayCard: {
     gap: 12,
     paddingHorizontal: 20,
@@ -1241,13 +982,6 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
     lineHeight: 18,
   },
-  recentCard: {
-    gap: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
-  },
   sectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1277,9 +1011,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: palette.secondaryText,
   },
-  recentImage: {
-    width: '100%',
-    height: 200,
-    borderRadius: radii.lg,
+  emptyHint: {
+    fontSize: 13,
+    color: palette.secondaryText,
   },
 });

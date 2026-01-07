@@ -37,7 +37,7 @@ const roleLabels: Record<UserRole, string> = {
   guest: 'Gäst',
 };
 const accessLabels: Record<string, string> = {
-  owner: 'Full',
+  owner: 'Ägare',
   edit: 'Redigera',
   view: 'Läsa',
 };

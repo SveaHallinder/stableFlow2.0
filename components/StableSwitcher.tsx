@@ -2,10 +2,21 @@ import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { theme } from '@/components/theme';
-import { useAppData } from '@/context/AppDataContext';
+import { useAppData, type UserRole } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
 
 const palette = theme.colors;
+
+const roleLabels: Record<UserRole, string> = {
+  admin: 'Admin',
+  staff: 'Personal',
+  rider: 'Ryttare',
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  trainer: 'Tränare',
+  therapist: 'Terapeut',
+  guest: 'Gäst',
+};
 
 type StableSwitcherProps = {
   style?: StyleProp<ViewStyle>;
@@ -20,7 +31,7 @@ export function StableSwitcher({
   showLocation = true,
   showAccess = false,
 }: StableSwitcherProps) {
-  const { state, derived, actions } = useAppData();
+  const { state, actions } = useAppData();
   const { stables, currentStableId, users, currentUserId } = state;
   const currentUser = users[currentUserId];
   const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
@@ -32,6 +43,11 @@ export function StableSwitcher({
   const currentStable =
     stablesToShow.find((stable) => stable.id === currentStableId) ??
     stables.find((stable) => stable.id === currentStableId);
+  const membership = currentUser?.membership.find((entry) => entry.stableId === currentStableId);
+  const rolePillLabel =
+    membership?.access === 'owner'
+      ? 'Ägare'
+      : membership?.customRole?.trim() || roleLabels[membership?.role ?? 'guest'];
 
   return (
     <View style={[styles.wrap, variant === 'inline' && styles.wrapInline, style]}>
@@ -39,13 +55,7 @@ export function StableSwitcher({
         <Text style={styles.label}>Stall</Text>
         {showAccess ? (
           <View style={styles.accessPill}>
-            <Text style={styles.accessPillText}>
-              {derived.currentAccess === 'owner'
-                ? 'Full'
-                : derived.currentAccess === 'edit'
-                  ? 'Redigera'
-                  : 'Läsa'}
-            </Text>
+            <Text style={styles.accessPillText}>{rolePillLabel}</Text>
           </View>
         ) : null}
       </View>

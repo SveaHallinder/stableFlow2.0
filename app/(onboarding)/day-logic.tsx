@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -24,6 +24,8 @@ type HorseDraft = {
 export default function OnboardingDayLogic() {
   const router = useRouter();
   const toast = useToast();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId, horses } = state;
 
@@ -138,18 +140,32 @@ export default function OnboardingDayLogic() {
 
   const handleNext = React.useCallback(() => {
     if (handleSave()) {
-      router.push('/(onboarding)/paddocks');
+      if (returnTo) {
+        router.replace(returnTo);
+      } else {
+        router.back();
+      }
     }
-  }, [handleSave, router]);
+  }, [handleSave, returnTo, router]);
+
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
 
   return (
     <OnboardingShell
       title="Lösdrift eller box"
-      subtitle="Välj box eller lösdrift. Vid lösdrift kan du markera om hästen har box."
+      subtitle="Valfritt: Välj box eller lösdrift. Du kan ändra senare."
       step={7}
       total={10}
-      onBack={() => router.back()}
+      onBack={handleBack}
       onNext={handleNext}
+      nextLabel="Spara & tillbaka"
+      showProgress={false}
     >
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>

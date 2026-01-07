@@ -24,6 +24,7 @@ type OnboardingShellProps = {
   onExit?: () => void;
   exitLabel?: string;
   allowExit?: boolean;
+  showProgress?: boolean;
 };
 
 const palette = theme.colors;
@@ -42,11 +43,13 @@ export function OnboardingShell({
   onExit,
   exitLabel = 'Gör senare',
   allowExit = true,
+  showProgress = true,
 }: OnboardingShellProps) {
   const router = useRouter();
   const { actions, derived } = useAppData();
   const progress = total > 0 ? (step / total) * 100 : 0;
   const showExit = Boolean(onExit || allowExit);
+  const showFooter = Boolean(onNext || onBack || onSkip);
   const exitAriaLabel = exitLabel === 'Gör senare' ? 'Stäng onboarding' : exitLabel;
   const canManageOnboarding = derived.canManageOnboardingAny;
   const exitRoute = canManageOnboarding && Platform.OS === 'web' ? '/admin' : '/(tabs)';
@@ -87,17 +90,21 @@ export function OnboardingShell({
           <View style={styles.stack}>
             <View style={styles.main}>
               <View style={styles.header}>
-                <Text style={styles.stepLabel}>Steg {step} av {total}</Text>
+                {showProgress ? (
+                  <Text style={styles.stepLabel}>Steg {step} av {total}</Text>
+                ) : null}
                 <Text style={styles.title}>{title}</Text>
                 {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
-                <View style={styles.progressTrack}>
-                  <View style={[styles.progressFill, { width: `${progress}%` }]} />
-                </View>
+                {showProgress ? (
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${progress}%` }]} />
+                  </View>
+                ) : null}
               </View>
 
               <View style={styles.body}>{children}</View>
 
-              {onNext ? (
+              {showFooter ? (
                 <View style={styles.footer}>
                   <View style={styles.footerRow}>
                     {onBack ? (
@@ -111,14 +118,16 @@ export function OnboardingShell({
                       </TouchableOpacity>
                     ) : null}
                   </View>
-                  <TouchableOpacity
-                    style={[styles.primaryButton, disableNext && styles.primaryButtonDisabled]}
-                    onPress={onNext}
-                    activeOpacity={0.9}
-                    disabled={disableNext}
-                  >
-                    <Text style={styles.primaryLabel}>{nextLabel}</Text>
-                  </TouchableOpacity>
+                  {onNext ? (
+                    <TouchableOpacity
+                      style={[styles.primaryButton, disableNext && styles.primaryButtonDisabled]}
+                      onPress={onNext}
+                      activeOpacity={0.9}
+                      disabled={disableNext}
+                    >
+                      <Text style={styles.primaryLabel}>{nextLabel}</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               ) : null}
             </View>

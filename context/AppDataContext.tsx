@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PropsWithChildren } from 'react';
 import type { ImageSourcePropType } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -140,6 +141,86 @@ export type DefaultPass = {
   weekday: WeekdayIndex;
   slot: AssignmentSlot;
 };
+
+const DEFAULT_PASS_DRAFT_PREFIX = 'default_passes_draft';
+const VALID_DEFAULT_SLOTS: AssignmentSlot[] = ['Morning', 'Lunch', 'Evening'];
+
+function buildDefaultPassDraftKey(userId: string) {
+  return `${DEFAULT_PASS_DRAFT_PREFIX}:${userId}`;
+}
+
+function normalizeDefaultPasses(value: unknown): DefaultPass[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const normalized: DefaultPass[] = [];
+  value.forEach((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return;
+    }
+    const rawWeekday = (entry as { weekday?: number | string }).weekday;
+    const rawSlot = (entry as { slot?: AssignmentSlot }).slot;
+    const weekday = typeof rawWeekday === 'number' ? rawWeekday : Number(rawWeekday);
+    const slot = rawSlot;
+    if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+      return;
+    }
+    if (!slot || !VALID_DEFAULT_SLOTS.includes(slot)) {
+      return;
+    }
+    const key = `${weekday}-${slot}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    normalized.push({ weekday: weekday as WeekdayIndex, slot });
+  });
+  return normalized;
+}
+
+async function loadDefaultPassDraft(userId: string): Promise<DefaultPass[]> {
+  if (!userId) {
+    return [];
+  }
+  try {
+    const stored = await SecureStore.getItemAsync(buildDefaultPassDraftKey(userId));
+    if (!stored) {
+      return [];
+    }
+    return normalizeDefaultPasses(JSON.parse(stored));
+  } catch {
+    return [];
+  }
+}
+
+async function saveDefaultPassDraft(userId: string, passes: DefaultPass[]) {
+  if (!userId) {
+    return;
+  }
+  const normalized = normalizeDefaultPasses(passes);
+  const key = buildDefaultPassDraftKey(userId);
+  try {
+    if (!normalized.length) {
+      await SecureStore.deleteItemAsync(key);
+      return;
+    }
+    await SecureStore.setItemAsync(key, JSON.stringify(normalized));
+  } catch {
+    return;
+  }
+}
+
+async function clearDefaultPassDraft(userId: string) {
+  if (!userId) {
+    return;
+  }
+  try {
+    await SecureStore.deleteItemAsync(buildDefaultPassDraftKey(userId));
+  } catch {
+    return;
+  }
+}
 
 export type AssignmentAssignedVia = 'default' | 'manual';
 
@@ -419,6 +500,12 @@ export type AddMemberInput = {
   access?: 'owner' | 'edit' | 'view';
   horseIds?: string[];
   riderRole?: StableMembership['riderRole'];
+  phone?: string;
+  location?: string;
+};
+
+export type UpdateProfileInput = {
+  name?: string;
   phone?: string;
   location?: string;
 };
@@ -783,6 +870,7 @@ type AppDataContextValue = {
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
     setCurrentStable: (stableId: string) => void;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
+    updateProfile: (input: UpdateProfileInput) => ActionResult<UserProfile>;
     upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
     deleteFarm: (farmId: string) => ActionResult;
     upsertStable: (input: UpsertStableInput) => ActionResult<Stable>;
@@ -2556,6 +2644,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           setHydrating(false);
           return;
         }
+        const draftDefaultPasses = await loadDefaultPassDraft(user.id);
         const userProfile: UserProfile = {
           id: user.id,
           name: profile.full_name || profile.username || 'Okänd',
@@ -2565,7 +2654,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           location: profile.location ?? '',
           phone: profile.phone ?? '',
           responsibilities: profile.responsibilities ?? [],
-          defaultPasses: [],
+          defaultPasses: draftDefaultPasses,
           awayNotices: [],
           avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
           onboardingDismissed: profile.onboarding_dismissed ?? false,
@@ -3077,6 +3166,52 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       cancelled = true;
     };
   }, [user]);
+
+  React.useEffect(() => {
+    if (hydrating) {
+      return;
+    }
+    const stableId = state.currentStableId;
+    const userId = state.currentUserId;
+    if (!stableId || !userId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const applyDraft = async () => {
+      const draft = await loadDefaultPassDraft(userId);
+      if (cancelled || !draft.length) {
+        return;
+      }
+      const currentUser = stateRef.current.users[userId];
+      if (!currentUser) {
+        return;
+      }
+      if (currentUser.defaultPasses.length === 0) {
+        dispatch({
+          type: 'USER_UPDATE',
+          payload: { id: userId, updates: { defaultPasses: draft } },
+        });
+      }
+      draft.forEach((entry) => {
+        void persistDefaultPassToggle({
+          userId,
+          stableId,
+          weekday: entry.weekday,
+          slot: entry.slot,
+          enabled: true,
+        });
+      });
+      await clearDefaultPassDraft(userId);
+    };
+
+    void applyDraft();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrating, persistDefaultPassToggle, state.currentStableId, state.currentUserId]);
 
   React.useEffect(() => {
     if (hydrating) {
@@ -3664,6 +3799,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Användaren kunde inte hittas.' };
       }
 
+      const stableId = current.currentStableId;
       const exists = user.defaultPasses.some(
         (entry) => entry.weekday === weekday && entry.slot === slot,
       );
@@ -3681,9 +3817,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         },
       });
 
+      if (!stableId) {
+        void saveDefaultPassDraft(user.id, nextDefaultPasses);
+        return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
+      }
+
       void persistDefaultPassToggle({
         userId: user.id,
-        stableId: current.currentStableId,
+        stableId,
         weekday,
         slot,
         enabled: !exists,
@@ -4295,6 +4436,53 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [persistProfileUpdate],
   );
 
+  const updateProfile = React.useCallback(
+    (input: UpdateProfileInput): ActionResult<UserProfile> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      const profile = current.users[userId];
+      if (!profile) {
+        return { success: false, reason: 'Användaren hittades inte.' };
+      }
+
+      const updates: Partial<UserProfile> = {};
+      const payload: Record<string, unknown> = {};
+
+      if (hasOwnProperty(input, 'name')) {
+        const name = input.name?.trim() ?? '';
+        if (!name) {
+          return { success: false, reason: 'Namn kan inte vara tomt.' };
+        }
+        updates.name = name;
+        payload.full_name = name;
+      }
+
+      if (hasOwnProperty(input, 'phone')) {
+        const phone = input.phone?.trim() ?? '';
+        updates.phone = phone;
+        payload.phone = phone || null;
+      }
+
+      if (hasOwnProperty(input, 'location')) {
+        const location = input.location?.trim() ?? '';
+        updates.location = location;
+        payload.location = location || null;
+      }
+
+      if (!Object.keys(updates).length) {
+        return { success: true, data: profile };
+      }
+
+      dispatch({
+        type: 'USER_UPDATE',
+        payload: { id: userId, updates },
+      });
+      void persistProfileUpdate(userId, payload);
+      return { success: true, data: { ...profile, ...updates } };
+    },
+    [persistProfileUpdate],
+  );
+
   const upsertFarm = React.useCallback(
     (input: UpsertFarmInput): ActionResult<Farm> => {
       const current = stateRef.current;
@@ -4719,6 +4907,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         sendConversationMessage,
         setCurrentStable,
         setOnboardingDismissed,
+        updateProfile,
         upsertFarm,
         deleteFarm,
         upsertStable,
@@ -4769,6 +4958,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       sendConversationMessage,
       setCurrentStable,
       setOnboardingDismissed,
+      updateProfile,
       upsertFarm,
       deleteFarm,
       upsertStable,

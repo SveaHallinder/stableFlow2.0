@@ -18,7 +18,6 @@ export default function RootLayout() {
                 <Stack.Screen name="(auth)" options={{ headerShown: false }} />
                 <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
                 <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="settings" options={{ headerShown: false }} />
                 <Stack.Screen name="+not-found" />
               </Stack>
             </OnboardingGate>

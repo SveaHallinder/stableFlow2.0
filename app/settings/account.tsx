@@ -4,6 +4,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
   useWindowDimensions,
@@ -26,10 +27,31 @@ export default function AccountSettingsScreen() {
   const router = useRouter();
   const toast = useToast();
   const { signOut, user } = useAuth();
-  const { state } = useAppData();
+  const { state, actions } = useAppData();
   const currentUser = state.users[state.currentUserId];
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const [draft, setDraft] = React.useState({
+    name: currentUser?.name ?? '',
+    phone: currentUser?.phone ?? '',
+    location: currentUser?.location ?? '',
+  });
+
+  React.useEffect(() => {
+    setDraft({
+      name: currentUser?.name ?? '',
+      phone: currentUser?.phone ?? '',
+      location: currentUser?.location ?? '',
+    });
+  }, [currentUser?.location, currentUser?.name, currentUser?.phone]);
+
+  const isDirty = Boolean(
+    currentUser &&
+      (draft.name !== currentUser.name ||
+        draft.phone !== (currentUser.phone ?? '') ||
+        draft.location !== (currentUser.location ?? '')),
+  );
+  const canSave = Boolean(currentUser && draft.name.trim().length > 0 && isDirty);
 
   const handleLogout = React.useCallback(() => {
     signOut()
@@ -41,6 +63,22 @@ export default function AccountSettingsScreen() {
         toast.showToast('Kunde inte logga ut.', 'error');
       });
   }, [router, signOut, toast]);
+
+  const handleSave = React.useCallback(() => {
+    if (!currentUser) {
+      return;
+    }
+    const result = actions.updateProfile({
+      name: draft.name,
+      phone: draft.phone,
+      location: draft.location,
+    });
+    if (result.success) {
+      toast.showToast('Uppgifter sparade.', 'success');
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, currentUser, draft.location, draft.name, draft.phone, toast]);
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -64,25 +102,52 @@ export default function AccountSettingsScreen() {
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Kontouppgifter</Text>
             </View>
-            <View style={styles.infoGrid}>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Namn</Text>
-                <Text style={styles.infoValue}>{currentUser?.name ?? 'Ej angivet'}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>E-post</Text>
-                <Text style={styles.infoValue}>{user?.email ?? 'Ej angiven'}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Telefon</Text>
-                <Text style={styles.infoValue}>{currentUser?.phone || 'Ej angiven'}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Plats</Text>
-                <Text style={styles.infoValue}>{currentUser?.location || 'Ej angiven'}</Text>
-              </View>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Namn</Text>
+              <TextInput
+                placeholder="Ditt namn"
+                placeholderTextColor={palette.mutedText}
+                value={draft.name}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
+                style={styles.input}
+              />
             </View>
-            <Text style={styles.sectionHint}>Redigering kommer i nästa steg.</Text>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>E-post</Text>
+              <Text style={styles.infoValue}>{user?.email ?? 'Ej angiven'}</Text>
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Telefon</Text>
+              <TextInput
+                placeholder="Telefon"
+                placeholderTextColor={palette.mutedText}
+                value={draft.phone}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, phone: text }))}
+                style={styles.input}
+                keyboardType="phone-pad"
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Plats</Text>
+              <TextInput
+                placeholder="Plats"
+                placeholderTextColor={palette.mutedText}
+                value={draft.location}
+                onChangeText={(text) => setDraft((prev) => ({ ...prev, location: text }))}
+                style={styles.input}
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}
+              onPress={handleSave}
+              activeOpacity={0.85}
+              disabled={!canSave}
+            >
+              <Text style={[styles.saveButtonText, !canSave && styles.saveButtonTextDisabled]}>
+                Spara ändringar
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.sectionHint}>E-post ändras i inloggningskontot.</Text>
           </Card>
 
           <Card tone="muted" style={styles.card}>
@@ -157,10 +222,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: palette.secondaryText,
   },
-  infoGrid: {
-    gap: 10,
-  },
-  infoRow: {
+  field: {
     gap: 4,
   },
   infoLabel: {
@@ -171,6 +233,33 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
+  },
+  input: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    borderRadius: radius.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: palette.primaryText,
+    backgroundColor: palette.surface,
+  },
+  saveButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    backgroundColor: palette.primary,
+  },
+  saveButtonDisabled: {
+    backgroundColor: palette.border,
+  },
+  saveButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.inverseText,
+  },
+  saveButtonTextDisabled: {
+    color: palette.mutedText,
   },
   logoutButton: {
     alignItems: 'center',

@@ -10,41 +10,63 @@ const palette = theme.colors;
 
 export default function OnboardingStart() {
   const router = useRouter();
-  const { setHasFarm } = useOnboarding();
+  const { setHasFarm, setMode } = useOnboarding();
+
+  const handleQuickStart = React.useCallback(() => {
+    setMode('quick');
+    setHasFarm(false);
+    router.push('/(onboarding)/stables');
+  }, [router, setHasFarm, setMode]);
 
   const handleSelect = React.useCallback(
     (value: boolean) => {
+      setMode('guided');
       setHasFarm(value);
       router.push('/(onboarding)/stables');
     },
-    [router, setHasFarm],
+    [router, setHasFarm, setMode],
   );
 
   return (
     <OnboardingShell
-      title="Har ni en gård?"
-      subtitle="Välj gård bara om ni har flera stall på samma gård. Annars hoppar vi gård och går direkt till stallet."
+      title="Sätt upp stallet"
+      subtitle="Välj snabbstart för att skapa stallet och komma igång direkt. Guiden hjälper dig lägga in hästar, medlemmar och schema."
       step={1}
-      total={10}
+      total={2}
       onNext={undefined}
     >
       <View style={styles.optionGrid}>
-        <TouchableOpacity
-          style={styles.optionCard}
-          onPress={() => handleSelect(true)}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.optionTitle}>Ja, vi har gård</Text>
-          <Text style={styles.optionText}>Vi har flera stall på samma gård.</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.optionCard}
-          onPress={() => handleSelect(false)}
-          activeOpacity={0.9}
-        >
-          <Text style={styles.optionTitle}>Nej, bara ett stall</Text>
-          <Text style={styles.optionText}>Vi börjar direkt med stallet.</Text>
-        </TouchableOpacity>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Snabbstart</Text>
+          <TouchableOpacity
+            style={[styles.optionCard, styles.optionCardPrimary]}
+            onPress={handleQuickStart}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.optionTitlePrimary}>Skapa stall snabbt</Text>
+            <Text style={styles.optionTextPrimary}>Skapa ett stall och gå vidare direkt.</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Guidad onboarding</Text>
+          <TouchableOpacity
+            style={styles.optionCard}
+            onPress={() => handleSelect(true)}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.optionTitle}>Flera stall på samma gård</Text>
+            <Text style={styles.optionText}>Vi behöver skapa gård och flera stall.</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.optionCard}
+            onPress={() => handleSelect(false)}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.optionTitle}>Bara ett stall</Text>
+            <Text style={styles.optionText}>Vi börjar direkt med stallet.</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </OnboardingShell>
   );
@@ -52,7 +74,16 @@ export default function OnboardingStart() {
 
 const styles = StyleSheet.create({
   optionGrid: {
-    gap: 12,
+    gap: 16,
+  },
+  section: {
+    gap: 10,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    color: palette.secondaryText,
   },
   optionCard: {
     padding: 16,
@@ -60,6 +91,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
+  },
+  optionCardPrimary: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   optionTitle: {
     fontSize: 16,
@@ -69,6 +104,17 @@ const styles = StyleSheet.create({
   optionText: {
     fontSize: 13,
     color: palette.secondaryText,
+    marginTop: 6,
+  },
+  optionTitlePrimary: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.inverseText,
+  },
+  optionTextPrimary: {
+    fontSize: 13,
+    color: palette.inverseText,
+    opacity: 0.9,
     marginTop: 6,
   },
 });

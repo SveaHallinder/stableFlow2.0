@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -108,6 +108,8 @@ const roleOptions: RoleOption[] = [
 export default function OnboardingMembers() {
   const router = useRouter();
   const toast = useToast();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId, users } = state;
 
@@ -202,14 +204,23 @@ export default function OnboardingMembers() {
     }
   }, [actions, draft.email, draft.name, draft.phone, selectedRole, selectedStableIds, toast]);
 
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
+
   return (
     <OnboardingShell
       title="Medlemmar"
-      subtitle="Bjud in personer och välj deras roll och behörighet."
+      subtitle="Valfritt: Bjud in personer och välj deras roll. Du kan göra det senare."
       step={6}
       total={10}
-      onBack={() => router.back()}
-      onNext={() => router.push('/(onboarding)/day-logic')}
+      onNext={handleBack}
+      nextLabel="Klar"
+      showProgress={false}
     >
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Välj stall</Text>

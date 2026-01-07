@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -14,6 +14,8 @@ const palette = theme.colors;
 export default function OnboardingPaddocks() {
   const router = useRouter();
   const toast = useToast();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId, horses, paddocks } = state;
 
@@ -101,15 +103,23 @@ export default function OnboardingPaddocks() {
     [actions, toast],
   );
 
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
+
   return (
     <OnboardingShell
       title="Hagar"
       subtitle="Valfritt: Koppla hästar till hagar. Du kan göra det senare."
       step={8}
       total={10}
-      onBack={() => router.back()}
-      onNext={() => router.push('/(onboarding)/ride-types')}
-      onSkip={() => router.push('/(onboarding)/ride-types')}
+      onNext={handleBack}
+      nextLabel="Klar"
+      showProgress={false}
     >
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>

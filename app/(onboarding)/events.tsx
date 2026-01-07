@@ -1,6 +1,6 @@
 import React from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -23,7 +23,9 @@ const eventVisibilityOptions: { id: keyof StableEventVisibility; label: string }
 export default function OnboardingEvents() {
   const router = useRouter();
   const toast = useToast();
-  const { state, actions, derived } = useAppData();
+  const { state, actions } = useAppData();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { stables, currentStableId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
@@ -41,9 +43,6 @@ export default function OnboardingEvents() {
     vetAway: true,
     evening: true,
   });
-  const exitRoute =
-    derived.canManageOnboardingAny && Platform.OS === 'web' ? '/admin' : '/(tabs)';
-
   React.useEffect(() => {
     if (!stables.length) {
       router.replace('/(onboarding)/stables');
@@ -87,10 +86,21 @@ export default function OnboardingEvents() {
       toast.showToast(result.reason, 'error');
       return;
     }
-    actions.setOnboardingDismissed(true);
     toast.showToast('Inställningar sparade.', 'success');
-    router.replace(exitRoute);
-  }, [actions, activeStableId, exitRoute, router, toast, visibility]);
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [actions, activeStableId, returnTo, router, toast, visibility]);
+
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
 
   return (
     <OnboardingShell
@@ -98,13 +108,10 @@ export default function OnboardingEvents() {
       subtitle="Valfritt: Välj vilka händelser som ska synas i schemat."
       step={10}
       total={10}
-      onBack={() => router.back()}
+      onBack={handleBack}
       onNext={handleFinish}
-      onSkip={() => {
-        actions.setOnboardingDismissed(true);
-        router.replace(exitRoute);
-      }}
-      nextLabel="Klart"
+      nextLabel="Spara & tillbaka"
+      showProgress={false}
     >
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>

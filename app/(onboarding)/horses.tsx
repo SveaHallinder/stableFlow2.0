@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -21,6 +21,8 @@ const genderOptions: { id: NonNullable<Horse['gender']>; label: string }[] = [
 export default function OnboardingHorses() {
   const router = useRouter();
   const toast = useToast();
+  const params = useLocalSearchParams();
+  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId, horses } = state;
 
@@ -103,14 +105,23 @@ export default function OnboardingHorses() {
     [actions, toast],
   );
 
+  const handleBack = React.useCallback(() => {
+    if (returnTo) {
+      router.replace(returnTo);
+    } else {
+      router.back();
+    }
+  }, [returnTo, router]);
+
   return (
     <OnboardingShell
       title="Hästar"
-      subtitle="Lägg in hästarna i stallet. Du kan lägga till fler senare."
+      subtitle="Valfritt: Lägg in hästarna nu eller gör det senare."
       step={5}
       total={10}
-      onBack={() => router.back()}
-      onNext={() => router.push('/(onboarding)/members')}
+      onNext={handleBack}
+      nextLabel="Klar"
+      showProgress={false}
     >
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>

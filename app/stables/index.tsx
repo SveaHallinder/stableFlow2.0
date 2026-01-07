@@ -1775,7 +1775,7 @@ export default function StablesScreen() {
                             membership?.horseIds?.map((id) => horseNameById[id]).filter(Boolean).join(', ') || undefined;
                           const accessLabel =
                             membership?.access === 'owner'
-                              ? 'Full'
+                              ? 'Ägare'
                               : membership?.access === 'edit'
                                 ? 'Redigera'
                                 : membership?.access === 'view'
@@ -1920,7 +1920,7 @@ export default function StablesScreen() {
                       <View style={styles.chipRow}>
                         {(['owner', 'edit', 'view'] as const).map((level) => {
                           const active = inviteDraft.access === level;
-                          const labels: Record<typeof level, string> = { owner: 'Full', edit: 'Redigera', view: 'Läsa' };
+                          const labels: Record<typeof level, string> = { owner: 'Ägare', edit: 'Redigera', view: 'Läsa' };
                           return (
                             <TouchableOpacity
                               key={level}

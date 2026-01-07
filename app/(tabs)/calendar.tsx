@@ -788,7 +788,7 @@ export default function CalendarScreen() {
   }, []);
 
   const handleOpenProfile = React.useCallback(() => {
-    router.push('/(tabs)/profile');
+    router.push({ pathname: '/(tabs)/profile', params: { section: 'availability' } });
   }, [router]);
 
   const handleOpenRideTypes = React.useCallback(() => {
