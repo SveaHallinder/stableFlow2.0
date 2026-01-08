@@ -4,12 +4,23 @@
     "slug": "StableFlow",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.png",
+    "icon": "./assets/images/logo-splash.png",
+    "splash": {
+      "image": "./assets/images/logo-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8FAFD"
+    },
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.stableflow.app",
+      "splash": {
+        "image": "./assets/images/logo-splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#F8FAFD"
+      },
       "infoPlist": {
         "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
         "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar."
@@ -18,7 +29,7 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/logo.png",
+      "favicon": "./assets/images/logo-splash.png",
       "name": "StableFlow",
       "shortName": "StableFlow",
       "themeColor": "#2D6CF6",
@@ -32,7 +43,8 @@
       "expo-router",
       "expo-font",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-splash-screen"
     ],
     "extra": {
       "supabaseUrl": "https://zbcghmpjslasnxqcodqa.supabase.co",
@@ -40,6 +52,9 @@
     },
     "experiments": {
       "typedRoutes": true
+    },
+    "android": {
+      "package": "com.stableflow.app"
     }
   }
 }
