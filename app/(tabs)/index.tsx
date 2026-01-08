@@ -384,8 +384,47 @@ export default function OverviewScreen() {
   }, [router]);
   const handleOpenOnboarding = React.useCallback(() => {
     actions.setOnboardingDismissed(false);
-    router.push('/(onboarding)');
-  }, [actions, router]);
+    if (!stables.length) {
+      console.info('[onboarding] continue', { reason: 'no-stable' });
+      router.push('/(onboarding)');
+      return;
+    }
+    const stableId = currentStableId || stables[0]?.id || '';
+    const stableHorses = horses.filter((horse) => horse.stableId === stableId).length;
+    const stableMembers = Object.values(users).filter((user) =>
+      user.membership.some((entry) => entry.stableId === stableId),
+    ).length;
+    const stableAssignments = assignments.filter((assignment) => assignment.stableId === stableId).length;
+
+    let nextRoute = '/(onboarding)/setup';
+    let reason = 'optional';
+    if (!stableId) {
+      nextRoute = '/(onboarding)';
+      reason = 'missing-stable-id';
+    } else if (stableHorses === 0) {
+      nextRoute = '/(onboarding)/horses';
+      reason = 'horses';
+    } else if (stableMembers <= 1) {
+      nextRoute = '/(onboarding)/members';
+      reason = 'members';
+    } else if (stableAssignments === 0) {
+      nextRoute = '/calendar';
+      reason = 'assignments';
+    }
+
+    if (stableId) {
+      actions.setCurrentStable(stableId);
+    }
+    console.info('[onboarding] continue', {
+      reason,
+      stableId,
+      stableHorses,
+      stableMembers,
+      stableAssignments,
+      nextRoute,
+    });
+    router.push(nextRoute);
+  }, [actions, assignments, currentStableId, horses, router, stables, users]);
   const handleOpenAdmin = React.useCallback(() => {
     router.push('/admin');
   }, [router]);
