@@ -1115,20 +1115,20 @@ export default function CalendarScreen() {
       if (!canManageAssignments) {
         return null;
       }
-      return { label: 'Nytt pass', onPress: handleCreateSlot };
+      return { label: 'Nytt pass', onPress: handleCreateSlot, disabled: false };
     }
     if (activeFilter === 'Riddagar') {
       if (!canManageRideLogs) {
         return null;
       }
       const hasRideOptions = activeRideTypes.length > 0 && activeHorses.length > 0;
-      return hasRideOptions ? { label: 'Registrera', onPress: openRideLogModal } : null;
+      return hasRideOptions ? { label: 'Registrera', onPress: openRideLogModal, disabled: false } : null;
     }
     if (activeFilter === 'Ridhus') {
       if (!canManageArenaBookings) {
         return null;
       }
-      return { label: 'Ny bokning', onPress: openArenaModal };
+      return { label: 'Ny bokning', onPress: openArenaModal, disabled: false };
     }
     return null;
   }, [

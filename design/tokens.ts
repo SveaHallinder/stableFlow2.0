@@ -23,10 +23,6 @@ export const color = {
   textMuted: 'rgba(16, 22, 34, 0.55)',
   divider: 'rgba(16, 22, 34, 0.08)',
   tint: '#0A84FF',
-  tintSecondary: '#30D158',
-  glow: 'transparent',
-  glowGreen: 'transparent',
-  premium: 'transparent',
 };
 
 export const shadow = {

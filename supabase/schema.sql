@@ -300,11 +300,14 @@ begin
     and (i.expires_at is null or i.expires_at > now())
   on conflict (stable_id, user_id) do nothing;
 
+  get diagnostics v_count = row_count;
+
   update public.stable_invites
     set accepted_at = now()
-  where lower(email) = lower(v_email) and accepted_at is null;
+  where lower(email) = lower(v_email)
+    and accepted_at is null
+    and (expires_at is null or expires_at > now());
 
-  get diagnostics v_count = row_count;
   return v_count;
 end;
 $$;
@@ -540,7 +543,9 @@ alter table public.groups enable row level security;
 
 -- Posts (extend existing)
 alter table public.posts add column if not exists stable_id uuid references public.stables(id) on delete set null;
-alter table public.posts add column if not exists group_ids uuid[] default '{}'::uuid[];
+alter table public.posts add column if not exists group_ids text[] default '{}'::text[];
+alter table public.posts alter column group_ids type text[] using group_ids::text[];
+alter table public.posts alter column group_ids set default '{}'::text[];
 alter table public.posts add column if not exists content text;
 alter table public.posts enable row level security;
 
@@ -836,6 +841,7 @@ create policy "comments_delete" on public.comments
 
 drop policy if exists "conversations_select" on public.conversations;
 drop policy if exists "conversations_insert" on public.conversations;
+drop policy if exists "conversations_update" on public.conversations;
 create policy "conversations_select" on public.conversations
   for select using (
     (stable_id is not null and public.is_stable_member(stable_id))
@@ -858,6 +864,16 @@ create policy "conversations_insert" on public.conversations
         where s.id = stable_id and s.created_by = (select auth.uid())
       )
     )
+  );
+create policy "conversations_update" on public.conversations
+  for update
+  using (
+    (stable_id is not null and public.is_stable_owner(stable_id))
+    or created_by_user_id = (select auth.uid())
+  )
+  with check (
+    (stable_id is not null and public.is_stable_owner(stable_id))
+    or created_by_user_id = (select auth.uid())
   );
 
 drop policy if exists "conversation_members_select" on public.conversation_members;
@@ -937,6 +953,7 @@ create index if not exists likes_post_id_idx on public.likes(post_id);
 create index if not exists messages_author_id_idx on public.messages(author_id);
 create index if not exists messages_conversation_id_idx on public.messages(conversation_id);
 create index if not exists paddocks_stable_id_idx on public.paddocks(stable_id);
+create index if not exists posts_group_ids_gin_idx on public.posts using gin (group_ids);
 create index if not exists posts_stable_id_idx on public.posts(stable_id);
 create index if not exists posts_user_id_idx on public.posts(user_id);
 create index if not exists ride_logs_created_by_user_id_idx on public.ride_logs(created_by_user_id);

@@ -295,9 +295,9 @@ export default function OverviewScreen() {
   ];
 
   const memberChecklist = [
-    { id: 'passes', label: 'Se dina pass i kalendern' },
-    { id: 'chat', label: 'Säg hej i stallchatten' },
-    { id: 'profile', label: 'Uppdatera din profil' },
+    { id: 'passes', label: 'Se dina pass i kalendern', done: false },
+    { id: 'chat', label: 'Säg hej i stallchatten', done: false },
+    { id: 'profile', label: 'Uppdatera din profil', done: false },
   ];
 
   const startHereSubtitle = isOwner

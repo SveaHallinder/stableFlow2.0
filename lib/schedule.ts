@@ -6,10 +6,7 @@ export type GroupedAssignmentDay = {
   assignments: Assignment[];
 };
 
-const WEEKDAY_FORMATTER = new Intl.DateTimeFormat('en-GB', { weekday: 'long' });
 const SHORT_WEEKDAY_FORMATTER = new Intl.DateTimeFormat('en-GB', { weekday: 'short' });
-const MONTH_DAY_FORMATTER = new Intl.DateTimeFormat('en-GB', { month: 'short', day: 'numeric' });
-const WEEKDAY_DAY_FORMATTER = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 
 export function groupAssignmentsByDay(assignments: Assignment[]): GroupedAssignmentDay[] {
   const map = new Map<string, GroupedAssignmentDay>();
@@ -31,18 +28,6 @@ export function groupAssignmentsByDay(assignments: Assignment[]): GroupedAssignm
   });
 
   return Array.from(map.values()).sort((a, b) => a.date.getTime() - b.date.getTime());
-}
-
-export function formatPrimaryDay(date: Date) {
-  return WEEKDAY_FORMATTER.format(date).toUpperCase();
-}
-
-export function formatPrimaryDate(date: Date) {
-  return MONTH_DAY_FORMATTER.format(date).toUpperCase();
-}
-
-export function formatSecondaryLabel(date: Date) {
-  return WEEKDAY_DAY_FORMATTER.format(date).toUpperCase();
 }
 
 export function formatShortWeekday(date: Date) {

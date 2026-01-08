@@ -93,19 +93,6 @@ export const SearchBar = ({ style, ...props }: any) => (
   </View>
 );
 
-export const Divider = ({ style, vertical, ...props }: any) => (
-  <View
-    style={[
-      {
-        backgroundColor: color.divider,
-        [vertical ? 'width' : 'height']: 1,
-      },
-      style,
-    ]}
-    {...props}
-  />
-);
-
 const headerStyles = StyleSheet.create({
   container: {
     height: 68, // Fixed height instead of minHeight for consistency

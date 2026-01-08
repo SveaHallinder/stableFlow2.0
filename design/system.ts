@@ -1,4 +1,4 @@
-import { color, radius, shadow, space } from './tokens';
+import { radius, shadow, space } from './tokens';
 
 export const systemPalette = {
   background: '#F8FAFD',
@@ -6,7 +6,6 @@ export const systemPalette = {
   surface: '#FFFFFF',
   surfaceAlt: '#F3F6FC',
   surfaceTint: '#F6F8FC',
-  surfaceSoft: 'rgba(255, 255, 255, 0.85)',
   surfaceGlass: 'rgba(255, 255, 255, 0.3)',
   primary: '#2D6CF6',
   accent: '#1BA97A',
@@ -38,7 +37,6 @@ export const systemStatus = {
 
 export const systemGradients = {
   background: ['#F8FAFD', '#FFFFFF'] as const,
-  hero: ['#EEF3FF', '#FFFFFF'] as const,
   action: ['#3EDFAF', '#2D8BFF'] as const,
   weather: ['#3A73FF', '#5F96FF'] as const,
 };

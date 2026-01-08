@@ -88,15 +88,15 @@ export default function OnboardingStables() {
       location: stableDraft.location.trim() || undefined,
       farmId: hasFarm ? stableDraft.farmId || undefined : undefined,
     });
-    if (result.success) {
-      toast.showToast('Stall skapat.', 'success');
-      setStableDraft({ name: '', location: '', farmId: stableDraft.farmId });
-      actions.setCurrentStable(result.data.id);
-      if (!delegateStableId) {
-        setDelegateStableId(result.data.id);
-      }
-    } else {
-      toast.showToast(result.reason, 'error');
+    if (!result.success || !result.data) {
+      toast.showToast(result.success ? 'Kunde inte skapa stall.' : result.reason, 'error');
+      return;
+    }
+    toast.showToast('Stall skapat.', 'success');
+    setStableDraft({ name: '', location: '', farmId: stableDraft.farmId });
+    actions.setCurrentStable(result.data.id);
+    if (!delegateStableId) {
+      setDelegateStableId(result.data.id);
     }
   }, [
     actions,

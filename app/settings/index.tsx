@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton } from '@/components/Primitives';
@@ -76,7 +76,7 @@ export default function SettingsScreen() {
                 <TouchableOpacity
                   key={item.id}
                   style={styles.row}
-                  onPress={() => router.push(item.route)}
+                  onPress={() => router.push(item.route as Href)}
                   activeOpacity={0.85}
                 >
                   <View style={styles.rowLeft}>

@@ -39,13 +39,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     }
     const rootSegment = segments[0];
     const inAuthGroup = rootSegment === '(auth)';
-    const isRoot = segments.length === 0;
     const isNotFound = rootSegment === '+not-found';
     if (!session && !inAuthGroup) {
       router.replace('/(auth)');
       return;
     }
-    if (session && (inAuthGroup || isRoot || isNotFound)) {
+    if (session && (inAuthGroup || isNotFound)) {
       router.replace('/(tabs)');
     }
   }, [loading, router, segments, session]);

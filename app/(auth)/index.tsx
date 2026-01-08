@@ -16,7 +16,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { Card, Pill } from '@/components/Primitives';
+import { generateId } from '@/lib/ids';
 import { supabase, supabaseConfig } from '@/lib/supabase';
+import { savePendingJoinCode, savePendingOwnerStable } from '@/lib/pendingAuth';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 
@@ -138,6 +140,11 @@ export default function AuthScreen() {
     }
 
     if (!data.user || !data.session) {
+      if (isOwner && trimmedStableName.length > 0) {
+        await savePendingOwnerStable({ id: generateId(), name: trimmedStableName });
+      } else if (trimmedInviteCode.length > 0) {
+        await savePendingJoinCode(trimmedInviteCode);
+      }
       toast.showToast('Kontot är skapat. Kontrollera din e-post för att aktivera.', 'success');
       setSubmitting(false);
       return;

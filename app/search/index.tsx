@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -339,7 +339,8 @@ export default function SearchScreen() {
       if (stableId) {
         actions.setCurrentStable(stableId);
       }
-      router.push(params ? { pathname: route, params } : route);
+      const href = params ? ({ pathname: route, params } as Href) : (route as Href);
+      router.push(href);
     },
     [actions, router],
   );
@@ -349,7 +350,8 @@ export default function SearchScreen() {
       if (fallbackStableId) {
         actions.setCurrentStable(fallbackStableId);
       }
-      router.push(params ? { pathname: route, params } : route);
+      const href = params ? ({ pathname: route, params } as Href) : (route as Href);
+      router.push(href);
     },
     [actions, fallbackStableId, router],
   );

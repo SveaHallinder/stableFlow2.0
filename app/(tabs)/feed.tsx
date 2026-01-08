@@ -593,20 +593,27 @@ export default function FeedScreen() {
   ) : null;
 
   const hasActiveFilter = groupFilter !== 'all' || Boolean(customFilterId);
-  const emptyStateActions = [
-    ...(canPublishPost
-      ? [{ label: 'Skriv uppdatering', onPress: handleFocusComposer, variant: 'primary' as const }]
-      : []),
-    ...(hasActiveFilter
-      ? [
-          {
-            label: 'Rensa filter',
-            onPress: handleResetFilters,
-            variant: (canPublishPost ? 'secondary' : 'primary') as const,
-          },
-        ]
-      : []),
-  ];
+  type EmptyStateAction = {
+    label: string;
+    onPress: () => void;
+    variant: 'primary' | 'secondary';
+  };
+
+  const emptyStateActions: EmptyStateAction[] = [];
+  if (canPublishPost) {
+    emptyStateActions.push({
+      label: 'Skriv uppdatering',
+      onPress: handleFocusComposer,
+      variant: 'primary',
+    });
+  }
+  if (hasActiveFilter) {
+    emptyStateActions.push({
+      label: 'Rensa filter',
+      onPress: handleResetFilters,
+      variant: canPublishPost ? 'secondary' : 'primary',
+    });
+  }
   const emptyState = (
     <Card tone="muted" style={styles.emptyCard}>
       <Text style={styles.emptyTitle}>

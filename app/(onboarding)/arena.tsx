@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
@@ -21,7 +21,7 @@ export default function OnboardingArena() {
   const router = useRouter();
   const toast = useToast();
   const params = useLocalSearchParams();
-  const returnTo = typeof params.returnTo === 'string' ? params.returnTo : undefined;
+  const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId } = state;
 

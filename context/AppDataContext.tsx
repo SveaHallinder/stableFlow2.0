@@ -4,6 +4,13 @@ import type { ImageSourcePropType } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
 import { supabase } from '@/lib/supabase';
+import {
+  clearPendingJoinCode,
+  clearPendingOwnerStable,
+  loadPendingJoinCode,
+  loadPendingOwnerStable,
+} from '@/lib/pendingAuth';
+import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
 import { formatTimeAgo } from '@/lib/time';
 
@@ -42,6 +49,8 @@ export type StableSettings = {
   eventVisibility: StableEventVisibility;
   arena: StableArenaSettings;
 };
+
+export type StableSettingsInput = Partial<StableSettings>;
 
 export type Stable = {
   id: string;
@@ -452,6 +461,8 @@ export type UpsertPaddockInput = {
   season?: Paddock['season'];
 };
 
+export type StableUpdates = Partial<Omit<Stable, 'settings'>> & { settings?: StableSettingsInput };
+
 export type UpsertStableInput = {
   id?: string;
   name: string;
@@ -459,7 +470,7 @@ export type UpsertStableInput = {
   location?: string;
   farmId?: string;
   rideTypes?: RideType[];
-  settings?: StableSettings;
+  settings?: StableSettingsInput;
 };
 
 export type UpsertFarmInput = {
@@ -874,7 +885,7 @@ type AppDataContextValue = {
     upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
     deleteFarm: (farmId: string) => ActionResult;
     upsertStable: (input: UpsertStableInput) => ActionResult<Stable>;
-    updateStable: (input: { id: string; updates: Partial<Stable> }) => ActionResult<Stable>;
+    updateStable: (input: { id: string; updates: StableUpdates }) => ActionResult<Stable>;
     deleteStable: (stableId: string) => ActionResult;
     upsertHorse: (input: UpsertHorseInput) => ActionResult<Horse>;
     deleteHorse: (horseId: string) => ActionResult;
@@ -1836,7 +1847,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [hydrating, setHydrating] = React.useState(true);
+  const pendingOwnerStableErrorShown = React.useRef(false);
 
   React.useEffect(() => {
     stateRef.current = state;
@@ -2626,6 +2639,59 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     setHydrating(true);
 
     const hydrate = async () => {
+      const pendingOwnerStable = await loadPendingOwnerStable();
+      if (pendingOwnerStable) {
+        const stableInsert = await supabase.from('stables').insert({
+          id: pendingOwnerStable.id,
+          name: pendingOwnerStable.name,
+          created_by: user.id,
+        });
+        if (stableInsert.error && stableInsert.error.code !== '23505') {
+          console.warn('Kunde inte skapa stall', stableInsert.error);
+        }
+
+        const memberInsert = await supabase.from('stable_members').insert({
+          stable_id: pendingOwnerStable.id,
+          user_id: user.id,
+          role: 'admin',
+          access: 'owner',
+          rider_role: 'owner',
+        });
+        if (memberInsert.error && memberInsert.error.code !== '23505') {
+          console.warn('Kunde inte koppla dig till stallet', memberInsert.error);
+        }
+
+        const stableOk = !stableInsert.error || stableInsert.error.code === '23505';
+        const memberOk = !memberInsert.error || memberInsert.error.code === '23505';
+        if (stableOk && memberOk) {
+          await clearPendingOwnerStable();
+        } else if (!pendingOwnerStableErrorShown.current) {
+          showToast('Kunde inte skapa stallet automatiskt. Försök igen eller kontakta support.', 'error');
+          pendingOwnerStableErrorShown.current = true;
+        }
+      }
+
+      const pendingJoinCode = await loadPendingJoinCode();
+      if (pendingJoinCode) {
+        const joinResult = await supabase.rpc('accept_join_code', { p_code: pendingJoinCode });
+        if (joinResult.error) {
+          console.warn('Kunde inte använda inbjudningskod', joinResult.error);
+          if (
+            typeof joinResult.error.message === 'string' &&
+            joinResult.error.message.includes('Invalid join code')
+          ) {
+            await clearPendingJoinCode();
+          }
+        } else {
+          await clearPendingJoinCode();
+        }
+      }
+
+      const inviteResult = await supabase.rpc('accept_pending_invites');
+      if (inviteResult.error) {
+        console.warn('Kunde inte hämta inbjudan', inviteResult.error);
+      }
+
       const membershipResult = await supabase
         .from('stable_members')
         .select('*')
@@ -4543,16 +4609,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const id = input.id ?? generateId();
       const existing = input.id ? current.stables.find((stable) => stable.id === input.id) : undefined;
       const baseSettings = existing ? resolveStableSettings(existing) : createDefaultStableSettings();
-      const nextSettings = input.settings
+      const settingsUpdates = input.settings;
+      const nextSettings = settingsUpdates
         ? {
-            dayLogic: input.settings.dayLogic ?? baseSettings.dayLogic,
+            dayLogic: settingsUpdates.dayLogic ?? baseSettings.dayLogic,
             eventVisibility: {
               ...baseSettings.eventVisibility,
-              ...input.settings.eventVisibility,
+              ...(settingsUpdates.eventVisibility ?? {}),
             },
             arena: {
               ...baseSettings.arena,
-              ...input.settings.arena,
+              ...(settingsUpdates.arena ?? {}),
             },
           }
         : baseSettings;
@@ -4593,7 +4660,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const updateStable = React.useCallback(
-    (input: { id: string; updates: Partial<Stable> }): ActionResult<Stable> => {
+    (input: { id: string; updates: StableUpdates }): ActionResult<Stable> => {
       const accessCheck = ensurePermission(input.id, (permissions) => permissions.canManageOnboarding);
       if (!accessCheck.success) {
         return accessCheck;
@@ -4604,22 +4671,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Stallet kunde inte hittas.' };
       }
       const baseSettings = resolveStableSettings(existing);
-      const mergedSettings = input.updates.settings
+      const { settings: settingsUpdates, ...restUpdates } = input.updates;
+      const mergedSettings = settingsUpdates
         ? {
-            dayLogic: input.updates.settings.dayLogic ?? baseSettings.dayLogic,
+            dayLogic: settingsUpdates.dayLogic ?? baseSettings.dayLogic,
             eventVisibility: {
               ...baseSettings.eventVisibility,
-              ...input.updates.settings.eventVisibility,
+              ...(settingsUpdates.eventVisibility ?? {}),
             },
             arena: {
               ...baseSettings.arena,
-              ...input.updates.settings.arena,
+              ...(settingsUpdates.arena ?? {}),
             },
           }
         : existing.settings;
-      const updates = input.updates.settings
-        ? { ...input.updates, settings: mergedSettings }
-        : input.updates;
+      const updates: Partial<Stable> = settingsUpdates
+        ? { ...restUpdates, settings: mergedSettings }
+        : restUpdates;
       const updated: Stable = { ...existing, ...updates };
       if (!updated.name.trim()) {
         return { success: false, reason: 'Stallet måste ha ett namn.' };
