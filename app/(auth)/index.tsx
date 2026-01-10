@@ -15,10 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
-import { Card, Pill } from '@/components/Primitives';
-import { generateId } from '@/lib/ids';
+import { Card } from '@/components/Primitives';
 import { supabase, supabaseConfig } from '@/lib/supabase';
-import { savePendingJoinCode, savePendingOwnerStable } from '@/lib/pendingAuth';
+import { savePendingJoinCode } from '@/lib/pendingAuth';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 
@@ -35,25 +34,16 @@ export default function AuthScreen() {
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
-  const [isOwner, setIsOwner] = React.useState(false);
-  const [stableName, setStableName] = React.useState('');
   const [inviteCode, setInviteCode] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
 
-  const roleHintLines = isOwner
-    ? [
-        'Skapa första stallet och bjud in medlemmar direkt efteråt.',
-        'Du får tillgång till admin och den guidade uppstarten.',
-      ]
-    : [
-        'Du behöver en inbjudan via e-post eller en kod från admin.',
-        'När du skapat konto kopplas du automatiskt till stallet.',
-      ];
+  const roleHintLines = [
+    'Du behöver en inbjudningskod från en medlem.',
+    'Koden kopplar dig till rätt stall efter signup.',
+  ];
 
   React.useEffect(() => {
     if (mode === 'login') {
-      setIsOwner(false);
-      setStableName('');
       setInviteCode('');
     }
   }, [mode]);
@@ -64,7 +54,7 @@ export default function AuthScreen() {
       : name.trim().length > 0 &&
         email.trim().length > 0 &&
         password.trim().length > 0 &&
-        (isOwner ? stableName.trim().length > 0 : true);
+        inviteCode.trim().length > 0;
 
   const handleSubmit = React.useCallback(async () => {
     if (!canSubmit) {
@@ -81,7 +71,6 @@ export default function AuthScreen() {
     setSubmitting(true);
     const trimmedEmail = email.trim();
     const trimmedName = name.trim();
-    const trimmedStableName = stableName.trim();
     const trimmedInviteCode = inviteCode.trim();
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({
@@ -101,21 +90,19 @@ export default function AuthScreen() {
       return;
     }
 
-    if (!isOwner) {
-      const inviteCheck = await supabase.rpc('validate_invite', {
-        p_email: trimmedEmail,
-        p_code: trimmedInviteCode.length > 0 ? trimmedInviteCode : null,
-      });
-      if (inviteCheck.error) {
-        toast.showToast('Kunde inte verifiera inbjudan. Försök igen.', 'error');
-        setSubmitting(false);
-        return;
-      }
-      if (!inviteCheck.data) {
-        toast.showToast('Du måste vara inbjuden av en admin för att skapa konto.', 'error');
-        setSubmitting(false);
-        return;
-      }
+    const inviteCheck = await supabase.rpc('validate_invite', {
+      p_email: trimmedEmail,
+      p_code: trimmedInviteCode.length > 0 ? trimmedInviteCode : null,
+    });
+    if (inviteCheck.error) {
+      toast.showToast('Kunde inte verifiera inbjudan. Försök igen.', 'error');
+      setSubmitting(false);
+      return;
+    }
+    if (!inviteCheck.data) {
+      toast.showToast('Inbjudningskoden är ogiltig.', 'error');
+      setSubmitting(false);
+      return;
     }
 
     const { data, error } = await supabase.auth.signUp({
@@ -140,12 +127,8 @@ export default function AuthScreen() {
     }
 
     if (!data.user || !data.session) {
-      if (isOwner && trimmedStableName.length > 0) {
-        await savePendingOwnerStable({ id: generateId(), name: trimmedStableName });
-      } else if (trimmedInviteCode.length > 0) {
-        await savePendingJoinCode(trimmedInviteCode);
-      }
-      toast.showToast('Kontot är skapat. Kontrollera din e-post för att aktivera.', 'success');
+      await savePendingJoinCode(trimmedInviteCode);
+      toast.showToast('Kontot är skapat. Kontrollera din epost för att aktivera.', 'success');
       setSubmitting(false);
       return;
     }
@@ -159,50 +142,8 @@ export default function AuthScreen() {
       console.warn('Kunde inte uppdatera profil', profileUpdate.error);
     }
 
-    if (isOwner) {
-      const stableInsert = await supabase
-        .from('stables')
-        .insert({ name: trimmedStableName, created_by: data.user.id })
-        .select()
-        .single();
-      if (stableInsert.error || !stableInsert.data) {
-        toast.showToast('Kunde inte skapa stall. Försök igen.', 'error');
-        setSubmitting(false);
-        return;
-      }
-      const memberInsert = await supabase.from('stable_members').insert({
-        stable_id: stableInsert.data.id,
-        user_id: data.user.id,
-        role: 'admin',
-        access: 'owner',
-        rider_role: 'owner',
-      });
-      if (memberInsert.error) {
-        toast.showToast('Kunde inte koppla dig till stallet.', 'error');
-        setSubmitting(false);
-        return;
-      }
-      toast.showToast('Kontot är skapat.', 'success');
-      setSubmitting(false);
-      router.replace('/(onboarding)');
-      return;
-    }
-
-    let joined = false;
-    if (trimmedInviteCode.length > 0) {
-      const joinResult = await supabase.rpc('accept_join_code', {
-        p_code: trimmedInviteCode,
-      });
-      if (joinResult.error) {
-        toast.showToast('Inbjudningskoden är ogiltig.', 'error');
-        setSubmitting(false);
-        return;
-      }
-      joined = true;
-    }
-
     const inviteResult = await supabase.rpc('accept_pending_invites');
-    if (inviteResult.error && !joined) {
+    if (inviteResult.error) {
       toast.showToast('Kunde inte hämta inbjudan.', 'error');
       await supabase.auth.signOut();
       setSubmitting(false);
@@ -210,11 +151,16 @@ export default function AuthScreen() {
     }
     const acceptedCount = inviteResult.data ?? 0;
 
-    if (!joined && (!acceptedCount || acceptedCount === 0)) {
-      toast.showToast('Ingen inbjudan hittades för den e-posten.', 'error');
-      await supabase.auth.signOut();
-      setSubmitting(false);
-      return;
+    if (!acceptedCount) {
+      const joinResult = await supabase.rpc('accept_join_code', {
+        p_code: trimmedInviteCode,
+      });
+      if (joinResult.error) {
+        toast.showToast('Inbjudningskoden är ogiltig.', 'error');
+        await supabase.auth.signOut();
+        setSubmitting(false);
+        return;
+      }
     }
 
     toast.showToast('Kontot är skapat.', 'success');
@@ -224,15 +170,17 @@ export default function AuthScreen() {
     canSubmit,
     email,
     inviteCode,
-    isOwner,
     mode,
     name,
     password,
-    stableName,
     submitting,
     toast,
     router,
   ]);
+
+  const handleForgotPassword = React.useCallback(() => {
+    router.push('/(auth)/forgot-password');
+  }, [router]);
 
   const modeLabel = mode === 'login' ? 'Logga in' : 'Skapa konto';
 
@@ -309,7 +257,7 @@ export default function AuthScreen() {
         <Text style={[styles.title, isDesktop && styles.titleDesktop]}>{modeLabel}</Text>
         {mode === 'signup' ? (
           <Text style={[styles.helperText, isDesktop && styles.helperTextDesktop]}>
-            Skapa konto som stallägare/admin eller gå med via inbjudan (e-post eller kod).
+            Skapa konto med en inbjudningskod från en medlem.
           </Text>
         ) : null}
       </View>
@@ -329,29 +277,6 @@ export default function AuthScreen() {
 
       {mode === 'signup' ? (
         <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
-          <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Jag är</Text>
-          <View style={[styles.roleRow, isDesktop && styles.roleRowDesktop]}>
-            <TouchableOpacity onPress={() => setIsOwner(true)} activeOpacity={0.85}>
-              <Pill
-                active={isOwner}
-                style={[styles.roleChip, isOwner && styles.roleChipActive]}
-              >
-                <Text style={[styles.roleChipText, isOwner && styles.roleChipTextActive]}>
-                  Admin / stallägare
-                </Text>
-              </Pill>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setIsOwner(false)} activeOpacity={0.85}>
-              <Pill
-                active={!isOwner}
-                style={[styles.roleChip, !isOwner && styles.roleChipActive]}
-              >
-                <Text style={[styles.roleChipText, !isOwner && styles.roleChipTextActive]}>
-                  Inbjuden medlem
-                </Text>
-              </Pill>
-            </TouchableOpacity>
-          </View>
           <View style={styles.roleHint}>
             <Text style={styles.roleHintTitle}>Så funkar det</Text>
             {roleHintLines.map((line) => (
@@ -365,7 +290,7 @@ export default function AuthScreen() {
       ) : null}
 
       <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
-        <Text style={[styles.label, isDesktop && styles.labelDesktop]}>E-post</Text>
+        <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Epost</Text>
         <TextInput
           value={email}
           onChangeText={setEmail}
@@ -387,33 +312,28 @@ export default function AuthScreen() {
           style={[styles.input, isDesktop && styles.inputDesktop]}
           secureTextEntry
         />
+        {mode === 'login' ? (
+          <TouchableOpacity
+            style={styles.forgotPasswordLink}
+            onPress={handleForgotPassword}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.forgotPasswordText}>Glömt lösenord?</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
-      {mode === 'signup' && isOwner ? (
-        <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
-          <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Stallnamn</Text>
-          <TextInput
-            value={stableName}
-            onChangeText={setStableName}
-            placeholder="Ex. Stall Solgläntan"
-            placeholderTextColor={palette.secondaryText}
-            style={[styles.input, isDesktop && styles.inputDesktop]}
-          />
-        </View>
-      ) : null}
-
-      {mode === 'signup' && !isOwner ? (
+      {mode === 'signup' ? (
         <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
           <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Inbjudningskod</Text>
           <TextInput
             value={inviteCode}
             onChangeText={setInviteCode}
-            placeholder="Kod (lämna tomt om du fått e-postinbjudan)"
+            placeholder="Kod från admin"
             placeholderTextColor={palette.secondaryText}
             style={[styles.input, isDesktop && styles.inputDesktop]}
             autoCapitalize="characters"
           />
-          <Text style={styles.helperNote}>Har du e-postinbjudan? Lämna fältet tomt.</Text>
         </View>
       ) : null}
 
@@ -718,31 +638,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
   },
-  roleRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  roleRowDesktop: {
-    gap: 10,
-  },
-  roleChip: {
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-  },
-  roleChipActive: {
-    backgroundColor: theme.tints.primary,
-    borderColor: 'rgba(45, 108, 246, 0.3)',
-  },
-  roleChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: palette.secondaryText,
-  },
-  roleChipTextActive: {
-    color: palette.primary,
-  },
   roleHint: {
     marginTop: 12,
     padding: 12,
@@ -810,10 +705,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
   },
-  helperNote: {
-    marginTop: 6,
-    fontSize: 11,
-    lineHeight: 16,
-    color: palette.mutedText,
+  forgotPasswordLink: {
+    alignSelf: 'flex-start',
+  },
+  forgotPasswordText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.primary,
   },
 });
