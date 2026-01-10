@@ -90,6 +90,7 @@ export default function OnboardingSetup() {
   const hasAssignment = stableAssignments.length > 0;
   const resourcesComplete = Boolean(stableSettings.onboarding?.resourcesComplete);
   const layoutComplete = hasFarm || hasStable;
+  const resourcesLabel = hasFarm ? 'Ridhus och volt på gården' : 'Ridhus och volt';
 
   const memberCount = React.useMemo(() => {
     const memberIds = new Set<string>();
@@ -203,7 +204,7 @@ export default function OnboardingSetup() {
         />
         <TaskRow
           title="Resurser"
-          description={resourcesComplete ? 'Klart' : 'Ridhus och volt'}
+          description={resourcesComplete ? 'Klart' : resourcesLabel}
           done={resourcesComplete}
         />
         <TaskRow

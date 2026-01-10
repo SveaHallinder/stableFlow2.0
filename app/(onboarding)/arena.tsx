@@ -5,8 +5,7 @@ import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
-import { resolveStableSettings } from '@/context/AppDataContext';
-import { useAppData } from '@/context/AppDataContext';
+import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 
 const palette = theme.colors;
@@ -22,7 +21,7 @@ export default function OnboardingResources() {
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
   const { state, actions } = useAppData();
-  const { stables, currentStableId } = state;
+  const { stables, currentStableId, farms } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
@@ -30,6 +29,20 @@ export default function OnboardingResources() {
     () => stables.find((stable) => stable.id === activeStableId),
     [activeStableId, stables],
   );
+
+  const hasFarms = farms.length > 0;
+  const fallbackFarmId = activeStable?.farmId || farms[0]?.id || '';
+  const [activeFarmId, setActiveFarmId] = React.useState(fallbackFarmId);
+  const activeFarm = React.useMemo(
+    () => farms.find((farm) => farm.id === activeFarmId),
+    [activeFarmId, farms],
+  );
+  const farmStables = React.useMemo(
+    () => (activeFarmId ? stables.filter((stable) => stable.farmId === activeFarmId) : []),
+    [activeFarmId, stables],
+  );
+  const useFarmResources = Boolean(activeFarmId);
+  const scopeLabel = useFarmResources ? 'gården' : 'stallet';
 
   const [draft, setDraft] = React.useState<ResourceDraft>({
     hasArena: false,
@@ -50,12 +63,42 @@ export default function OnboardingResources() {
   }, [activeStableId, fallbackStableId, router, stables]);
 
   React.useEffect(() => {
+    if (!hasFarms) {
+      if (activeFarmId) {
+        setActiveFarmId('');
+      }
+      return;
+    }
+    const nextFarmId = activeStable?.farmId || farms[0]?.id || '';
+    if (!activeFarmId && nextFarmId) {
+      setActiveFarmId(nextFarmId);
+      return;
+    }
+    if (activeFarmId && !farms.some((farm) => farm.id === activeFarmId)) {
+      setActiveFarmId(nextFarmId);
+      return;
+    }
+    if (activeStable?.farmId && activeStable.farmId !== activeFarmId) {
+      setActiveFarmId(activeStable.farmId);
+    }
+  }, [activeFarmId, activeStable?.farmId, farms, hasFarms]);
+
+  React.useEffect(() => {
+    if (useFarmResources) {
+      const farmHasArena = activeFarm?.hasIndoorArena ?? false;
+      const farmRoundPen = farmStables.some((stable) => resolveStableSettings(stable).arena.hasRoundPen);
+      setDraft({
+        hasArena: farmHasArena,
+        hasRoundPen: farmRoundPen,
+      });
+      return;
+    }
     const settings = resolveStableSettings(activeStable);
     setDraft({
       hasArena: settings.arena.hasArena,
       hasRoundPen: settings.arena.hasRoundPen,
     });
-  }, [activeStable]);
+  }, [activeFarm, activeStable, farmStables, useFarmResources]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -65,35 +108,98 @@ export default function OnboardingResources() {
     [actions],
   );
 
+  const handleSelectFarm = React.useCallback((farmId: string) => {
+    setActiveFarmId(farmId);
+  }, []);
+
   const handleSave = React.useCallback(() => {
-    if (!activeStableId) {
+    if (useFarmResources && !activeFarmId) {
+      toast.showToast('Välj en gård först.', 'error');
+      return false;
+    }
+    if (!useFarmResources && !activeStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return false;
     }
-    const settings = resolveStableSettings(activeStable);
-    const result = actions.updateStable({
-      id: activeStableId,
-      updates: {
-        settings: {
-          arena: {
-            ...settings.arena,
-            hasArena: draft.hasArena,
-            hasRoundPen: draft.hasRoundPen,
+
+    if (useFarmResources && activeFarmId) {
+      const farmName = activeFarm?.name || 'Gård';
+      const farmResult = actions.upsertFarm({
+        id: activeFarmId,
+        name: farmName,
+        location: activeFarm?.location,
+        hasIndoorArena: draft.hasArena,
+        arenaNote: activeFarm?.arenaNote,
+      });
+      if (!farmResult.success) {
+        toast.showToast(farmResult.reason, 'error');
+        return false;
+      }
+      const targets = farmStables.length ? farmStables : stables.filter((stable) => stable.farmId === activeFarmId);
+      for (const stable of targets) {
+        const settings = resolveStableSettings(stable);
+        const result = actions.updateStable({
+          id: stable.id,
+          updates: {
+            settings: {
+              arena: {
+                ...settings.arena,
+                hasArena: draft.hasArena,
+                hasRoundPen: draft.hasRoundPen,
+              },
+              onboarding: {
+                ...settings.onboarding,
+                resourcesComplete: true,
+              },
+            },
           },
-          onboarding: {
-            ...settings.onboarding,
-            resourcesComplete: true,
+        });
+        if (!result.success) {
+          toast.showToast(result.reason, 'error');
+          return false;
+        }
+      }
+    } else {
+      const settings = resolveStableSettings(activeStable);
+      const result = actions.updateStable({
+        id: activeStableId,
+        updates: {
+          settings: {
+            arena: {
+              ...settings.arena,
+              hasArena: draft.hasArena,
+              hasRoundPen: draft.hasRoundPen,
+            },
+            onboarding: {
+              ...settings.onboarding,
+              resourcesComplete: true,
+            },
           },
         },
-      },
-    });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-      return false;
+      });
+      if (!result.success) {
+        toast.showToast(result.reason, 'error');
+        return false;
+      }
     }
+
     toast.showToast('Resurser sparade.', 'success');
     return true;
-  }, [actions, activeStable, activeStableId, draft.hasArena, draft.hasRoundPen, toast]);
+  }, [
+    actions,
+    activeFarm?.arenaNote,
+    activeFarm?.location,
+    activeFarm?.name,
+    activeFarmId,
+    activeStable,
+    activeStableId,
+    draft.hasArena,
+    draft.hasRoundPen,
+    farmStables,
+    stables,
+    toast,
+    useFarmResources,
+  ]);
 
   const handleNext = React.useCallback(() => {
     if (handleSave()) {
@@ -116,7 +222,7 @@ export default function OnboardingResources() {
   return (
     <OnboardingShell
       title="Resurser"
-      subtitle="Svara på två frågor om ridhus och volt."
+      subtitle={`Svara på två frågor om ridhus och volt för ${scopeLabel}.`}
       step={3}
       total={6}
       allowExit={false}
@@ -125,7 +231,33 @@ export default function OnboardingResources() {
       nextLabel="Spara och fortsätt"
       showProgress
     >
-      {stables.length > 1 ? (
+      {useFarmResources ? (
+        farms.length > 1 ? (
+          <Card tone="muted" style={styles.card}>
+            <Text style={styles.sectionTitle}>Välj gård</Text>
+            <View style={styles.chipRow}>
+              {farms.map((farm) => {
+                const active = farm.id === activeFarmId;
+                return (
+                  <TouchableOpacity
+                    key={farm.id}
+                    style={[styles.chip, active && styles.chipActive]}
+                    onPress={() => handleSelectFarm(farm.id)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{farm.name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Card>
+        ) : (
+          <Card tone="muted" style={styles.card}>
+            <Text style={styles.sectionTitle}>Gård</Text>
+            <Text style={styles.sectionHint}>{activeFarm?.name ?? 'Gård'}</Text>
+          </Card>
+        )
+      ) : stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
           <Text style={styles.sectionTitle}>Välj stall</Text>
           <View style={styles.chipRow}>
@@ -147,7 +279,7 @@ export default function OnboardingResources() {
       ) : null}
 
       <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Har stallet ridhus</Text>
+        <Text style={styles.sectionTitle}>Har {scopeLabel} ridhus</Text>
         <View style={styles.toggleRow}>
           {[
             { label: 'Ja', value: true },
@@ -168,7 +300,7 @@ export default function OnboardingResources() {
       </Card>
 
       <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Har stallet volt</Text>
+        <Text style={styles.sectionTitle}>Har {scopeLabel} volt</Text>
         <View style={styles.toggleRow}>
           {[
             { label: 'Ja', value: true },
@@ -204,6 +336,7 @@ export default function OnboardingResources() {
 const styles = StyleSheet.create({
   card: { padding: 16, gap: 12, borderRadius: radius.lg },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
+  sectionHint: { fontSize: 12, color: palette.secondaryText },
   summaryText: { fontSize: 13, color: palette.secondaryText },
   toggleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   toggleChip: {
