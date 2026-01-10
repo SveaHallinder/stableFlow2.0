@@ -39,15 +39,22 @@ export type ArenaBookingMode = 'open' | 'approval' | 'staff';
 
 export type StableArenaSettings = {
   hasArena: boolean;
+  hasRoundPen: boolean;
   hasSchedule: boolean;
   bookingMode: ArenaBookingMode;
   rules?: string;
+};
+
+export type StableOnboardingSettings = {
+  resourcesComplete?: boolean;
+  membersComplete?: boolean;
 };
 
 export type StableSettings = {
   dayLogic: StableDayLogic;
   eventVisibility: StableEventVisibility;
   arena: StableArenaSettings;
+  onboarding?: StableOnboardingSettings;
 };
 
 export type StableSettingsInput = Partial<StableSettings>;
@@ -60,6 +67,7 @@ export type Stable = {
   farmId?: string;
   rideTypes?: RideType[];
   settings?: StableSettings;
+  joinCode?: string;
 };
 
 export type RideType = {
@@ -259,6 +267,18 @@ export type CreateAssignmentInput = {
   labelOverride?: string;
 };
 
+export type CreateRecurringAssignmentsInput = {
+  dateFrom: string;
+  dateTo: string;
+  weekdays: WeekdayIndex[];
+  startTime: string;
+  durationMinutes?: number;
+  title: string;
+  slotsCount?: number;
+  stableId?: string;
+  assignToCurrentUser?: boolean;
+};
+
 export type UpdateAssignmentInput = {
   id: string;
   date?: string;
@@ -301,12 +321,15 @@ export type ConversationMessage = {
 
 export type Post = {
   id: string;
+  authorId?: string;
   author: string;
   avatar: ImageSourcePropType;
   timeAgo: string;
   createdAt?: string;
   content?: string;
   image?: string;
+  imagePath?: string;
+  imageSignedUrl?: string;
   likes: number;
   comments: number;
   likedByUserIds?: string[];
@@ -461,7 +484,7 @@ export type UpsertPaddockInput = {
   season?: Paddock['season'];
 };
 
-export type StableUpdates = Partial<Omit<Stable, 'settings'>> & { settings?: StableSettingsInput };
+export type StableUpdates = Partial<Omit<Stable, 'settings' | 'joinCode'>> & { settings?: StableSettingsInput };
 
 export type UpsertStableInput = {
   id?: string;
@@ -563,6 +586,11 @@ export type PermissionSet = {
   canManageGroups: boolean;
 };
 
+type PostsCursor = {
+  createdAt: string;
+  id: string;
+};
+
 type AppDataState = {
   currentStableId: string;
   stables: Stable[];
@@ -583,6 +611,10 @@ type AppDataState = {
   messages: MessagePreview[];
   conversations: Record<string, ConversationMessage[]>;
   posts: Post[];
+  postsCursor: PostsCursor | null;
+  postsHasMore: boolean;
+  postsLoadingMore: boolean;
+  postsLoadError: string | null;
   groups: Group[];
   ridingSchedule: RidingDay[];
   competitionEvents: CompetitionEvent[];
@@ -712,6 +744,16 @@ type PostUpdateAction = {
   payload: { id: string; updates: Partial<Post> };
 };
 
+type PostDeleteAction = {
+  type: 'POST_DELETE';
+  payload: { id: string };
+};
+
+type PostRestoreAction = {
+  type: 'POST_RESTORE';
+  payload: { post: Post; index: number };
+};
+
 type GroupAddAction = {
   type: 'GROUP_ADD';
   payload: Group;
@@ -804,6 +846,8 @@ type AppDataAction =
   | RideLogDeleteAction
   | PostAddAction
   | PostUpdateAction
+  | PostDeleteAction
+  | PostRestoreAction
   | GroupAddAction
   | GroupUpdateAction
   | GroupDeleteAction
@@ -824,12 +868,22 @@ export type ActionResult<T = void> =
   | { success: true; data?: T }
   | { success: false; reason: string };
 
+type RefreshReason = 'join' | 'leave' | 'switch' | 'manual' | 'init';
+
+type RefreshOptions = {
+  stableId?: string;
+  reason?: RefreshReason;
+};
+
 type AppDataContextValue = {
   state: AppDataState;
   hydrating: boolean;
+  refreshing: boolean;
+  refreshError?: string | null;
   derived: {
     isFirstTimeOnboarding: boolean;
     canManageOnboardingAny: boolean;
+    onboardingComplete: boolean;
     summary: {
       total: number;
       completed: number;
@@ -843,6 +897,9 @@ type AppDataContextValue = {
     upcomingAssignmentsForUser: Assignment[];
     nextAssignmentForUser?: Assignment;
     recentActivities: AppDataState['assignmentHistory'];
+    getMissedAssignmentsForStable: (stableId: string) => Assignment[];
+    getAssignmentEndTime: (assignment: Assignment) => string | null;
+    cleanAssignmentNote: (note?: string) => string | undefined;
     membership?: StableMembership;
     currentAccess: StableMembership['access'];
     currentRole: UserRole;
@@ -855,6 +912,9 @@ type AppDataContextValue = {
     declineAssignment: (assignmentId: string) => ActionResult<Assignment>;
     completeAssignment: (assignmentId: string) => ActionResult<Assignment>;
     createAssignment: (input: CreateAssignmentInput) => ActionResult<Assignment>;
+    createRecurringAssignments: (
+      input: CreateRecurringAssignmentsInput,
+    ) => Promise<ActionResult<{ createdCount: number; skippedCount: number }>>;
     updateAssignment: (input: UpdateAssignmentInput) => ActionResult<Assignment>;
     deleteAssignment: (assignmentId: string) => ActionResult;
     addEvent: (message: string, type?: AlertMessage['type']) => ActionResult<AlertMessage>;
@@ -874,12 +934,15 @@ type AppDataContextValue = {
     addPost: (input: CreatePostInput) => ActionResult<Post>;
     togglePostLike: (postId: string) => ActionResult<Post>;
     addPostComment: (postId: string, text: string) => ActionResult<PostComment>;
+    deletePost: (postId: string) => Promise<ActionResult>;
+    loadMorePosts: () => Promise<ActionResult>;
     createGroup: (input: CreateGroupInput) => ActionResult<Group>;
     renameGroup: (input: RenameGroupInput) => ActionResult<Group>;
     deleteGroup: (groupId: string) => ActionResult;
     markConversationRead: (conversationId: string) => void;
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
     setCurrentStable: (stableId: string) => void;
+    refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
     updateProfile: (input: UpdateProfileInput) => ActionResult<UserProfile>;
     upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
@@ -889,11 +952,13 @@ type AppDataContextValue = {
     deleteStable: (stableId: string) => ActionResult;
     upsertHorse: (input: UpsertHorseInput) => ActionResult<Horse>;
     deleteHorse: (horseId: string) => ActionResult;
-    addMember: (input: AddMemberInput) => ActionResult<UserProfile>;
+    addMember: (input: AddMemberInput) => ActionResult<{ inviteCode: string }>;
     updateMemberRole: (input: UpdateMemberRoleInput) => ActionResult<UserProfile>;
     updateMemberHorseIds: (input: UpdateMemberHorseIdsInput) => ActionResult<UserProfile>;
     toggleMemberDefaultPass: (input: ToggleMemberDefaultPassInput) => ActionResult<UserProfile>;
     removeMemberFromStable: (userId: string, stableId: string) => ActionResult<UserProfile>;
+    joinStableByCode: (code: string) => Promise<ActionResult<{ stableId: string }>>;
+    acceptPendingInvites: () => Promise<ActionResult<{ count: number }>>;
   };
 };
 
@@ -912,6 +977,17 @@ function toISODate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+const inviteCodeChars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function generateInviteCode(length = 6) {
+  let code = '';
+  for (let i = 0; i < length; i += 1) {
+    const index = Math.floor(Math.random() * inviteCodeChars.length);
+    code += inviteCodeChars[index];
+  }
+  return code;
+}
+
 const defaultEventVisibility: StableEventVisibility = {
   feeding: true,
   cleaning: true,
@@ -923,6 +999,7 @@ const defaultEventVisibility: StableEventVisibility = {
 
 const defaultArenaSettings: StableArenaSettings = {
   hasArena: false,
+  hasRoundPen: false,
   hasSchedule: false,
   bookingMode: 'open',
   rules: '',
@@ -933,6 +1010,7 @@ export function createDefaultStableSettings(): StableSettings {
     dayLogic: 'box',
     eventVisibility: { ...defaultEventVisibility },
     arena: { ...defaultArenaSettings },
+    onboarding: { resourcesComplete: false, membersComplete: false },
   };
 }
 
@@ -945,6 +1023,7 @@ export function resolveStableSettings(stable?: Stable): StableSettings {
     dayLogic: stable.settings.dayLogic ?? defaults.dayLogic,
     eventVisibility: { ...defaults.eventVisibility, ...stable.settings.eventVisibility },
     arena: { ...defaults.arena, ...stable.settings.arena },
+    onboarding: { ...defaults.onboarding, ...stable.settings.onboarding },
   };
 }
 
@@ -1110,6 +1189,10 @@ const initialState: AppDataState = {
   messages: [],
   conversations: {},
   posts: [],
+  postsCursor: null,
+  postsHasMore: true,
+  postsLoadingMore: false,
+  postsLoadError: null,
   groups: [],
   ridingSchedule: [],
   competitionEvents: [],
@@ -1257,6 +1340,21 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         ...state,
         posts: state.posts.map((post) => (post.id === id ? { ...post, ...updates } : post)),
       };
+    }
+    case 'POST_DELETE':
+      return {
+        ...state,
+        posts: state.posts.filter((post) => post.id !== action.payload.id),
+      };
+    case 'POST_RESTORE': {
+      const { post, index } = action.payload;
+      if (state.posts.some((item) => item.id === post.id)) {
+        return state;
+      }
+      const next = [...state.posts];
+      const insertAt = Math.max(0, Math.min(index, next.length));
+      next.splice(insertAt, 0, post);
+      return { ...state, posts: next };
     }
     case 'GROUP_ADD':
       return {
@@ -1610,6 +1708,107 @@ function getWeekdayIndex(isoDate: string): WeekdayIndex {
   return mondayFirst as WeekdayIndex;
 }
 
+function resolveSlotFromTime(value: string): AssignmentSlot {
+  const match = value.match(/^(\d{1,2})/);
+  const hour = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isFinite(hour)) {
+    return 'Morning';
+  }
+  if (hour < 10) {
+    return 'Morning';
+  }
+  if (hour < 15) {
+    return 'Lunch';
+  }
+  return 'Evening';
+}
+
+const ASSIGNMENT_NOTE_METADATA_REGEX = /\b(?:Till|Slut)\s*:?\s*(\d{1,2}:\d{2})/i;
+const DEFAULT_ASSIGNMENT_DURATION_MINUTES = 60;
+
+function parseTimeToMinutes(value: string) {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function formatMinutesToTime(totalMinutes: number) {
+  const normalized = ((totalMinutes % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function calculateDurationMinutes(startTime: string, endTime: string) {
+  const start = parseTimeToMinutes(startTime);
+  const end = parseTimeToMinutes(endTime);
+  if (start === null || end === null) {
+    return null;
+  }
+  const diff = end - start;
+  if (diff <= 0) {
+    return null;
+  }
+  return diff;
+}
+
+function addMinutesToTime(startTime: string, durationMinutes: number) {
+  const start = parseTimeToMinutes(startTime);
+  if (start === null) {
+    return null;
+  }
+  return formatMinutesToTime(start + durationMinutes);
+}
+
+function extractEndTimeFromNote(note?: string) {
+  if (!note) {
+    return null;
+  }
+  const match = note.match(ASSIGNMENT_NOTE_METADATA_REGEX);
+  return match?.[1]?.trim() ?? null;
+}
+
+export function stripAssignmentNoteMetadata(note?: string) {
+  if (!note) {
+    return undefined;
+  }
+  const cleaned = note.replace(ASSIGNMENT_NOTE_METADATA_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function resolvePostsCursor(rows: Array<{ created_at?: string; id?: string }>): PostsCursor | null {
+  if (!rows.length) {
+    return null;
+  }
+  const last = rows[rows.length - 1];
+  if (!last?.created_at || !last?.id) {
+    return null;
+  }
+  return { createdAt: last.created_at, id: last.id };
+}
+
+function buildRecurringAssignmentKey(
+  stableId: string,
+  date: string,
+  title: string,
+  startTime: string,
+  durationMinutes: number,
+) {
+  const normalizedTitle = title.trim().toLowerCase();
+  const normalizedStart = startTime.trim();
+  return `${stableId}|${date}|${normalizedTitle}|${normalizedStart}|${durationMinutes}`;
+}
+
 function hasDefaultPass(user: UserProfile, weekday: WeekdayIndex, slot: AssignmentSlot) {
   return user.defaultPasses.some((entry) => entry.weekday === weekday && entry.slot === slot);
 }
@@ -1753,6 +1952,11 @@ type UploadableImage = {
   mimeType?: string;
 };
 
+type StorageUploadResult = {
+  path: string;
+  publicUrl: string;
+};
+
 const imageContentTypes: Record<string, string> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -1790,6 +1994,112 @@ function isRemoteUri(uri: string) {
   return /^https?:\/\//i.test(uri);
 }
 
+function isLocalUri(uri: string) {
+  return /^(file|content):\/\//i.test(uri);
+}
+
+function hasUriScheme(uri: string) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(uri);
+}
+
+const POSTS_BUCKET = 'posts';
+const POSTS_PAGE_SIZE = 30;
+const POST_IMAGE_TTL_SECONDS = 60 * 60;
+const POST_IMAGE_TTL_MS = POST_IMAGE_TTL_SECONDS * 1000;
+const POST_IMAGE_REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const postImageUrlCache = new Map<
+  string,
+  { url: string; createdAt: number; expiresAt: number; version: number }
+>();
+const postImageUrlRequests = new Map<string, Promise<string | null>>();
+const warnedLegacyPostImageUrls = new Set<string>();
+
+function normalizePostImagePath(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:')) {
+    return null;
+  }
+  let path = trimmed.replace(/^\/+/, '');
+  const bucketPrefix = `${POSTS_BUCKET}/`;
+  if (path.toLowerCase().startsWith(bucketPrefix)) {
+    path = path.slice(bucketPrefix.length);
+  }
+  if (!path) {
+    return null;
+  }
+  return path;
+}
+
+function warnLegacyPostImageUrl(postId: string, value: string) {
+  if (warnedLegacyPostImageUrls.has(postId)) {
+    return;
+  }
+  warnedLegacyPostImageUrls.add(postId);
+  console.warn('Post image_url should be a storage path, got URL instead.', { postId, value });
+}
+
+function appendCacheBuster(url: string, version: number) {
+  if (!version) {
+    return url;
+  }
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${version}`;
+}
+
+function invalidateSignedUrl(path: string) {
+  const normalized = normalizePostImagePath(path);
+  if (!normalized) {
+    return;
+  }
+  postImageUrlCache.delete(normalized);
+  postImageUrlRequests.delete(normalized);
+}
+
+async function getSignedPostImageUrl(path: string) {
+  const normalized = normalizePostImagePath(path);
+  if (!normalized) {
+    return null;
+  }
+  const cached = postImageUrlCache.get(normalized);
+  const now = Date.now();
+  if (cached && now < cached.expiresAt - POST_IMAGE_REFRESH_BUFFER_MS) {
+    return cached.url;
+  }
+  const existingRequest = postImageUrlRequests.get(normalized);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = (async () => {
+    const { data, error } = await supabase
+      .storage
+      .from(POSTS_BUCKET)
+      .createSignedUrl(normalized, POST_IMAGE_TTL_SECONDS);
+    if (error || !data?.signedUrl) {
+      console.warn('Kunde inte skapa signed URL för postbild.', { path: normalized, error });
+      return null;
+    }
+    const nextVersion = (cached?.version ?? 0) + 1;
+    const signedUrl = appendCacheBuster(data.signedUrl, nextVersion);
+    const createdAt = Date.now();
+    const expiresAt = createdAt + POST_IMAGE_TTL_MS;
+    postImageUrlCache.set(normalized, { url: signedUrl, createdAt, expiresAt, version: nextVersion });
+    return signedUrl;
+  })();
+
+  postImageUrlRequests.set(normalized, request);
+  const resolved = await request;
+  postImageUrlRequests.delete(normalized);
+  return resolved;
+}
+
 function getExtensionFromUri(uri: string, mimeType?: string) {
   if (mimeType) {
     const mapped = Object.entries(imageContentTypes).find(([, value]) => value === mimeType);
@@ -1824,7 +2134,36 @@ async function resolveBlob(image: UploadableImage, contentType: string) {
   return response.blob();
 }
 
-async function uploadImageToStorage(bucket: string, pathPrefix: string, image: UploadableImage) {
+async function uploadPostImage(params: {
+  stableId: string;
+  userId: string;
+  postId: string;
+  image: UploadableImage;
+}): Promise<string> {
+  const { stableId, userId, postId, image } = params;
+  const extension = getExtensionFromUri(image.uri, image.mimeType);
+  const contentType = resolveContentType(extension, image.mimeType);
+  const filePath = `${stableId}/${userId}/${postId}/${generateId()}.${extension}`;
+  const blob = await resolveBlob(image, contentType);
+
+  const { error } = await supabase.storage.from(POSTS_BUCKET).upload(filePath, blob, {
+    contentType,
+    upsert: true,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  invalidateSignedUrl(filePath);
+  return filePath;
+}
+
+async function uploadImageToStorage(
+  bucket: string,
+  pathPrefix: string,
+  image: UploadableImage,
+): Promise<StorageUploadResult> {
   const extension = getExtensionFromUri(image.uri, image.mimeType);
   const contentType = resolveContentType(extension, image.mimeType);
   const filePath = `${pathPrefix || 'misc'}/${generateId()}.${extension}`;
@@ -1840,7 +2179,7 @@ async function uploadImageToStorage(bucket: string, pathPrefix: string, image: U
   }
 
   const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
-  return data.publicUrl;
+  return { path: filePath, publicUrl: data.publicUrl };
 }
 
 export function AppDataProvider({ children }: PropsWithChildren) {
@@ -1849,7 +2188,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
   const { showToast } = useToast();
   const [hydrating, setHydrating] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [refreshError, setRefreshError] = React.useState<string | null>(null);
+  const refreshRequestId = React.useRef(0);
   const pendingOwnerStableErrorShown = React.useRef(false);
+  const recurringDurationById = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
     stateRef.current = state;
@@ -1876,6 +2219,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (error) {
         console.warn('Kunde inte spara pass', error);
       }
+    },
+    [user],
+  );
+
+  const persistAssignmentBatchInsert = React.useCallback(
+    async (assignmentsToInsert: Assignment[]) => {
+      if (!user) return { error: new Error('Missing session') };
+      const payload = assignmentsToInsert.map(buildAssignmentInsertPayload);
+      const { error } = await supabase.from('assignments').insert(payload);
+      if (error) {
+        console.warn('Kunde inte spara återkommande pass', error);
+      }
+      return { error };
     },
     [user],
   );
@@ -1933,9 +2289,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         } else if (paddock.image) {
           const uploadable = getUploadableImage(paddock.image);
           if (uploadable) {
-            imageUrl = isRemoteUri(uploadable.uri)
-              ? uploadable.uri
-              : await uploadImageToStorage('paddocks', paddock.stableId, uploadable);
+            if (isRemoteUri(uploadable.uri)) {
+              imageUrl = uploadable.uri;
+            } else {
+              const uploadResult = await uploadImageToStorage('paddocks', paddock.stableId, uploadable);
+              imageUrl = uploadResult.publicUrl;
+            }
           }
         }
 
@@ -1989,9 +2348,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (horse.image) {
           const uploadable = getUploadableImage(horse.image);
           if (uploadable) {
-            imageUrl = isRemoteUri(uploadable.uri)
-              ? uploadable.uri
-              : await uploadImageToStorage('avatars', horse.stableId, uploadable);
+            if (isRemoteUri(uploadable.uri)) {
+              imageUrl = uploadable.uri;
+            } else {
+              const uploadResult = await uploadImageToStorage('avatars', horse.stableId, uploadable);
+              imageUrl = uploadResult.publicUrl;
+            }
           }
         }
 
@@ -2316,15 +2678,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     async (post: Post, rawImage?: string) => {
       if (!user || !post.stableId) return;
       try {
-        let imageUrl: string | null | undefined;
+        let imagePath: string | null | undefined;
         if (rawImage) {
           const uploadable = getUploadableImage(rawImage);
           if (uploadable) {
-            imageUrl = isRemoteUri(uploadable.uri)
-              ? uploadable.uri
-              : await uploadImageToStorage('posts', post.stableId, uploadable);
+            if (!hasUriScheme(uploadable.uri)) {
+              const normalized = normalizePostImagePath(uploadable.uri);
+              imagePath = normalized || null;
+            } else {
+              const lower = uploadable.uri.trim().toLowerCase();
+              const isHttp = lower.startsWith('http://') || lower.startsWith('https://');
+              if (isHttp) {
+                console.warn('Post image måste vara lokal fil eller storage path.', {
+                  uri: uploadable.uri,
+                });
+              } else {
+                try {
+                  imagePath = await uploadPostImage({
+                    stableId: post.stableId,
+                    userId: user.id,
+                    postId: post.id,
+                    image: uploadable,
+                  });
+                } catch (error) {
+                  console.warn('Kunde inte ladda upp postbild', error);
+                  imagePath = null;
+                }
+              }
+            }
           }
         }
+        const imageReference = imagePath ?? null;
+        const hasImage = Boolean(imagePath);
 
         const { error } = await supabase.from('posts').insert({
           id: post.id,
@@ -2332,18 +2717,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           user_id: user.id,
           content: post.content ?? null,
           group_ids: post.groupIds ?? [],
-          media_type: imageUrl ? 'image' : 'text',
-          image_url: imageUrl ?? null,
+          media_type: hasImage ? 'image' : 'text',
+          image_url: imageReference,
         });
         if (error) {
           console.warn('Kunde inte spara inlägg', error);
           return;
         }
 
-        if (imageUrl && imageUrl !== post.image) {
+        if (hasImage) {
+          invalidateSignedUrl(imageReference as string);
+          const signedUrl = imagePath ? await getSignedPostImageUrl(imagePath) : null;
+          const updates: Partial<Post> = { imagePath: imageReference as string };
+          if (signedUrl) {
+            updates.imageSignedUrl = signedUrl;
+            updates.image = signedUrl;
+          }
           dispatch({
             type: 'POST_UPDATE',
-            payload: { id: post.id, updates: { image: imageUrl } },
+            payload: { id: post.id, updates },
           });
         }
       } catch (error) {
@@ -2387,6 +2779,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (error) {
         console.warn('Kunde inte spara kommentar', error);
       }
+    },
+    [user],
+  );
+
+  const persistPostDelete = React.useCallback(
+    async (postId: string) => {
+      if (!user) return { error: null };
+      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      if (error) {
+        console.warn('Kunde inte ta bort inlägg', error);
+      }
+      return { error };
     },
     [user],
   );
@@ -2524,8 +2928,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistStableInvite = React.useCallback(
-    async (input: AddMemberInput, stableIds: string[]) => {
+    async (input: AddMemberInput, stableIds: string[], inviteCode?: string) => {
       if (!user) return;
+      const code = inviteCode ?? null;
       const invites = stableIds.map((stableId) => ({
         stable_id: stableId,
         email: input.email.trim(),
@@ -2534,7 +2939,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         access: input.access ?? 'view',
         rider_role: input.role === 'rider' ? input.riderRole ?? 'medryttare' : null,
         horse_ids: stableId === input.stableId ? input.horseIds ?? [] : [],
-        code: null,
+        code,
       }));
       const { error } = await supabase.from('stable_invites').insert(invites);
       if (error) {
@@ -2628,267 +3033,281 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [user],
   );
 
-  React.useEffect(() => {
-    if (!user) {
-      dispatch({ type: 'STATE_RESET' });
-      setHydrating(false);
-      return;
-    }
+  const loadAppData = React.useCallback(
+    async (options: RefreshOptions = {}): Promise<ActionResult> => {
+      const requestId = ++refreshRequestId.current;
+      const reason = options.reason ?? 'manual';
+      const isInit = reason === 'init';
 
-    let cancelled = false;
-    setHydrating(true);
-
-    const hydrate = async () => {
-      const pendingOwnerStable = await loadPendingOwnerStable();
-      if (pendingOwnerStable) {
-        const stableInsert = await supabase.from('stables').insert({
-          id: pendingOwnerStable.id,
-          name: pendingOwnerStable.name,
-          created_by: user.id,
-        });
-        if (stableInsert.error && stableInsert.error.code !== '23505') {
-          console.warn('Kunde inte skapa stall', stableInsert.error);
-        }
-
-        const memberInsert = await supabase.from('stable_members').insert({
-          stable_id: pendingOwnerStable.id,
-          user_id: user.id,
-          role: 'admin',
-          access: 'owner',
-          rider_role: 'owner',
-        });
-        if (memberInsert.error && memberInsert.error.code !== '23505') {
-          console.warn('Kunde inte koppla dig till stallet', memberInsert.error);
-        }
-
-        const stableOk = !stableInsert.error || stableInsert.error.code === '23505';
-        const memberOk = !memberInsert.error || memberInsert.error.code === '23505';
-        if (stableOk && memberOk) {
-          await clearPendingOwnerStable();
-        } else if (!pendingOwnerStableErrorShown.current) {
-          showToast('Kunde inte skapa stallet automatiskt. Försök igen eller kontakta support.', 'error');
-          pendingOwnerStableErrorShown.current = true;
-        }
+      if (isInit) {
+        setHydrating(true);
+      } else {
+        setRefreshing(true);
       }
+      setRefreshError(null);
 
-      const pendingJoinCode = await loadPendingJoinCode();
-      if (pendingJoinCode) {
-        const joinResult = await supabase.rpc('accept_join_code', { p_code: pendingJoinCode });
-        if (joinResult.error) {
-          console.warn('Kunde inte använda inbjudningskod', joinResult.error);
-          if (
-            typeof joinResult.error.message === 'string' &&
-            joinResult.error.message.includes('Invalid join code')
-          ) {
+      const fail = (message: string): ActionResult => {
+        if (requestId === refreshRequestId.current) {
+          setRefreshError(message);
+        }
+        return { success: false, reason: message };
+      };
+
+      try {
+        const sessionResult = await supabase.auth.getSession();
+        const sessionUser = sessionResult.data.session?.user ?? null;
+        const authUser = sessionUser ?? user;
+        if (!authUser) {
+          if (requestId === refreshRequestId.current) {
+            dispatch({ type: 'STATE_RESET' });
+          }
+          return fail('Ingen aktiv session.');
+        }
+        const sessionUserId = sessionUser?.id ?? authUser.id;
+
+        const pendingOwnerStable = await loadPendingOwnerStable();
+        if (pendingOwnerStable) {
+          const stableInsert = await supabase.from('stables').insert({
+            id: pendingOwnerStable.id,
+            name: pendingOwnerStable.name,
+            created_by: authUser.id,
+          });
+          if (stableInsert.error && stableInsert.error.code !== '23505') {
+            console.warn('Kunde inte skapa stall', stableInsert.error);
+          }
+
+          const memberInsert = await supabase.from('stable_members').insert({
+            stable_id: pendingOwnerStable.id,
+            user_id: authUser.id,
+            role: 'admin',
+            access: 'owner',
+            rider_role: 'owner',
+          });
+          if (memberInsert.error && memberInsert.error.code !== '23505') {
+            console.warn('Kunde inte koppla dig till stallet', memberInsert.error);
+          }
+
+          const stableOk = !stableInsert.error || stableInsert.error.code === '23505';
+          const memberOk = !memberInsert.error || memberInsert.error.code === '23505';
+          if (stableOk && memberOk) {
+            await clearPendingOwnerStable();
+          } else if (!pendingOwnerStableErrorShown.current) {
+            showToast('Kunde inte skapa stallet automatiskt. Försök igen eller kontakta support.', 'error');
+            pendingOwnerStableErrorShown.current = true;
+          }
+        }
+
+        const pendingJoinCode = await loadPendingJoinCode();
+        if (pendingJoinCode) {
+          const joinResult = await supabase.rpc('accept_join_code', { p_code: pendingJoinCode });
+          if (joinResult.error) {
+            console.warn('Kunde inte använda inbjudningskod', joinResult.error);
+            if (
+              typeof joinResult.error.message === 'string' &&
+              joinResult.error.message.includes('Invalid join code')
+            ) {
+              await clearPendingJoinCode();
+            }
+          } else {
             await clearPendingJoinCode();
           }
-        } else {
-          await clearPendingJoinCode();
         }
-      }
 
-      const inviteResult = await supabase.rpc('accept_pending_invites');
-      if (inviteResult.error) {
-        console.warn('Kunde inte hämta inbjudan', inviteResult.error);
-      }
-
-      const membershipResult = await supabase
-        .from('stable_members')
-        .select('*')
-        .eq('user_id', user.id);
-      if (membershipResult.error || !membershipResult.data) {
-        console.warn('Kunde inte hämta medlemskap', membershipResult.error);
-        setHydrating(false);
-        return;
-      }
-      const myMembership = membershipResult.data;
-      const stableIds = myMembership.map((row) => row.stable_id);
-      if (stableIds.length === 0) {
-        const profilesResult = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        const profile = profilesResult.data;
-        if (!profile) {
-          setHydrating(false);
-          return;
+        const inviteResult = await supabase.rpc('accept_pending_invites');
+        if (inviteResult.error) {
+          console.warn('Kunde inte hämta inbjudan', inviteResult.error);
         }
-        const draftDefaultPasses = await loadDefaultPassDraft(user.id);
-        const userProfile: UserProfile = {
-          id: user.id,
-          name: profile.full_name || profile.username || 'Okänd',
-          email: '',
-          membership: [],
-          horses: [],
-          location: profile.location ?? '',
-          phone: profile.phone ?? '',
-          responsibilities: profile.responsibilities ?? [],
-          defaultPasses: draftDefaultPasses,
-          awayNotices: [],
-          avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
-          onboardingDismissed: profile.onboarding_dismissed ?? false,
-        };
-        if (!cancelled) {
-          dispatch({
-            type: 'STATE_HYDRATE',
-            payload: {
-              users: { [user.id]: userProfile },
-              currentUserId: user.id,
-              sessionUserId: user.id,
-              messages: [],
-              conversations: {},
-            },
-          });
-          setHydrating(false);
+
+        const membershipResult = await supabase
+          .from('stable_members')
+          .select('*')
+          .eq('user_id', authUser.id);
+        if (membershipResult.error || !membershipResult.data) {
+          console.warn('Kunde inte hämta medlemskap', membershipResult.error);
+          return fail('Kunde inte hämta medlemskap.');
         }
-        return;
-      }
-      const allMembershipResult = await supabase
-        .from('stable_members')
-        .select('*')
-        .in('stable_id', stableIds);
-      const membership = allMembershipResult.data ?? myMembership;
-
-      const [
-        stablesResult,
-        farmsResult,
-        horsesResult,
-        paddocksResult,
-        assignmentsResult,
-        assignmentHistoryResult,
-        dayEventsResult,
-        arenaBookingsResult,
-        arenaStatusesResult,
-        rideLogsResult,
-        horseDayStatusesResult,
-        alertsResult,
-        ridingDaysResult,
-        competitionEventsResult,
-        groupsResult,
-        defaultPassesResult,
-        awayNoticesResult,
-        conversationsResult,
-      ] = await Promise.all([
-        supabase.from('stables').select('*').in('id', stableIds),
-        supabase.from('farms').select('*'),
-        supabase.from('horses').select('*').in('stable_id', stableIds),
-        supabase.from('paddocks').select('*').in('stable_id', stableIds),
-        supabase.from('assignments').select('*').in('stable_id', stableIds),
-        supabase.from('assignment_history').select('*').in('stable_id', stableIds),
-        supabase.from('day_events').select('*').in('stable_id', stableIds),
-        supabase.from('arena_bookings').select('*').in('stable_id', stableIds),
-        supabase.from('arena_statuses').select('*').in('stable_id', stableIds),
-        supabase.from('ride_logs').select('*').in('stable_id', stableIds),
-        supabase.from('horse_day_statuses').select('*').in('stable_id', stableIds),
-        supabase.from('alerts').select('*').in('stable_id', stableIds),
-        supabase.from('riding_days').select('*').in('stable_id', stableIds),
-        supabase.from('competition_events').select('*').in('stable_id', stableIds),
-        supabase.from('groups').select('*').in('stable_id', stableIds),
-        supabase.from('default_passes').select('*').in('stable_id', stableIds),
-        supabase.from('away_notices').select('*').in('stable_id', stableIds),
-        supabase.from('conversations').select('*').in('stable_id', stableIds).eq('is_group', true),
-      ]);
-
-      const stableRows = stablesResult.data ?? [];
-      const farmRows = farmsResult.data ?? [];
-      const horseRows = horsesResult.data ?? [];
-      const paddockRows = paddocksResult.data ?? [];
-      const assignmentRows = assignmentsResult.data ?? [];
-      const assignmentHistoryRows = assignmentHistoryResult.data ?? [];
-      const dayEventRows = dayEventsResult.data ?? [];
-      const arenaBookingRows = arenaBookingsResult.data ?? [];
-      const arenaStatusRows = arenaStatusesResult.data ?? [];
-      const rideLogRows = rideLogsResult.data ?? [];
-      const horseStatusRows = horseDayStatusesResult.data ?? [];
-      const alertRows = alertsResult.data ?? [];
-      const ridingDayRows = ridingDaysResult.data ?? [];
-      const competitionRows = competitionEventsResult.data ?? [];
-      const groupRows = groupsResult.data ?? [];
-      const defaultPassRows = defaultPassesResult.data ?? [];
-      const awayNoticeRows = awayNoticesResult.data ?? [];
-      let conversationRows = conversationsResult.data ?? [];
-
-      const stableById = stableRows.reduce<Record<string, (typeof stableRows)[number]>>(
-        (acc, stable) => {
-          acc[stable.id] = stable;
-          return acc;
-        },
-        {},
-      );
-      const conversationStableIds = new Set<string>(
-        conversationRows.map((row) => row.stable_id).filter((id): id is string => Boolean(id)),
-      );
-      const missingConversationStableIds = stableIds.filter((stableId) => !conversationStableIds.has(stableId));
-      if (missingConversationStableIds.length) {
-        const inserts = missingConversationStableIds.map((stableId) => ({
-          stable_id: stableId,
-          title: stableById[stableId]?.name ?? null,
-          is_group: true,
-          created_by_user_id: user.id,
-        }));
-        const insertResult = await supabase.from('conversations').insert(inserts).select('*');
-        if (insertResult.error && insertResult.error.code !== '23505') {
-          console.warn('Kunde inte skapa gruppkonversation', insertResult.error);
-        } else if (insertResult.data) {
-          conversationRows = [...conversationRows, ...insertResult.data];
+        const myMembership = membershipResult.data;
+        const stableIds = myMembership.map((row) => row.stable_id);
+        if (stableIds.length === 0) {
+          const profilesResult = await supabase.from('profiles').select('*').eq('id', authUser.id).single();
+          const profile = profilesResult.data;
+          if (!profile) {
+            return fail('Kunde inte hämta profilen.');
+          }
+          const draftDefaultPasses = await loadDefaultPassDraft(authUser.id);
+          const userProfile: UserProfile = {
+            id: authUser.id,
+            name: profile.full_name || profile.username || 'Okänd',
+            email: '',
+            membership: [],
+            horses: [],
+            location: profile.location ?? '',
+            phone: profile.phone ?? '',
+            responsibilities: profile.responsibilities ?? [],
+            defaultPasses: draftDefaultPasses,
+            awayNotices: [],
+            avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
+            onboardingDismissed: profile.onboarding_dismissed ?? false,
+          };
+          if (requestId === refreshRequestId.current) {
+            dispatch({
+              type: 'STATE_HYDRATE',
+              payload: {
+                users: { [authUser.id]: userProfile },
+                stables: [],
+                farms: [],
+                horses: [],
+                paddocks: [],
+                assignments: [],
+                assignmentHistory: [],
+                dayEvents: [],
+                arenaBookings: [],
+                arenaStatuses: [],
+                rideLogs: [],
+                horseDayStatuses: [],
+                alerts: [],
+                ridingSchedule: [],
+                competitionEvents: [],
+                posts: [],
+                postsCursor: null,
+                postsHasMore: false,
+                postsLoadingMore: false,
+                postsLoadError: null,
+                messages: [],
+                conversations: {},
+                groups: [],
+                currentStableId: '',
+                currentUserId: authUser.id,
+                sessionUserId,
+              },
+            });
+          }
+          return { success: true };
         }
-      }
+        const previousStableId = stateRef.current.currentStableId;
+        const requestedStableId = options.stableId;
+        const selectedStableId =
+          requestedStableId && stableIds.includes(requestedStableId)
+            ? requestedStableId
+            : stableIds.includes(previousStableId)
+              ? previousStableId
+              : stableIds[0] ?? '';
+        const allMembershipResult = await supabase
+          .from('stable_members')
+          .select('*')
+          .in('stable_id', stableIds);
+        const membership = allMembershipResult.data ?? myMembership;
 
-      const profileIds = new Set<string>([user.id]);
-      membership.forEach((row) => profileIds.add(row.user_id));
-      const profilesResult = await supabase
-        .from('profiles')
-        .select('*')
-        .in('id', Array.from(profileIds));
+        const [
+          stablesResult,
+          farmsResult,
+          horsesResult,
+          paddocksResult,
+          assignmentsResult,
+          assignmentHistoryResult,
+          dayEventsResult,
+          arenaBookingsResult,
+          arenaStatusesResult,
+          rideLogsResult,
+          horseDayStatusesResult,
+          alertsResult,
+          ridingDaysResult,
+          competitionEventsResult,
+          groupsResult,
+          defaultPassesResult,
+          awayNoticesResult,
+          conversationsResult,
+        ] = await Promise.all([
+          supabase.from('stables').select('*').in('id', stableIds),
+          supabase.from('farms').select('*'),
+          supabase.from('horses').select('*').in('stable_id', stableIds),
+          supabase.from('paddocks').select('*').in('stable_id', stableIds),
+          supabase.from('assignments').select('*').in('stable_id', stableIds),
+          supabase.from('assignment_history').select('*').in('stable_id', stableIds),
+          supabase.from('day_events').select('*').in('stable_id', stableIds),
+          supabase.from('arena_bookings').select('*').in('stable_id', stableIds),
+          supabase.from('arena_statuses').select('*').in('stable_id', stableIds),
+          supabase.from('ride_logs').select('*').in('stable_id', stableIds),
+          supabase.from('horse_day_statuses').select('*').in('stable_id', stableIds),
+          supabase.from('alerts').select('*').in('stable_id', stableIds),
+          supabase.from('riding_days').select('*').in('stable_id', stableIds),
+          supabase.from('competition_events').select('*').in('stable_id', stableIds),
+          supabase.from('groups').select('*').in('stable_id', stableIds),
+          supabase.from('default_passes').select('*').in('stable_id', stableIds),
+          supabase.from('away_notices').select('*').in('stable_id', stableIds),
+          supabase.from('conversations').select('*').in('stable_id', stableIds).eq('is_group', true),
+        ]);
 
-      const profiles = profilesResult.data ?? [];
-      const profilesById = profiles.reduce<Record<string, (typeof profiles)[number]>>(
-        (acc, profile) => {
-          acc[profile.id] = profile;
-          return acc;
-        },
-        {},
-      );
+        const stableRows = stablesResult.data ?? [];
+        const farmRows = farmsResult.data ?? [];
+        const horseRows = horsesResult.data ?? [];
+        const paddockRows = paddocksResult.data ?? [];
+        const assignmentRows = assignmentsResult.data ?? [];
+        const assignmentHistoryRows = assignmentHistoryResult.data ?? [];
+        const dayEventRows = dayEventsResult.data ?? [];
+        const arenaBookingRows = arenaBookingsResult.data ?? [];
+        const arenaStatusRows = arenaStatusesResult.data ?? [];
+        const rideLogRows = rideLogsResult.data ?? [];
+        const horseStatusRows = horseDayStatusesResult.data ?? [];
+        const alertRows = alertsResult.data ?? [];
+        const ridingDayRows = ridingDaysResult.data ?? [];
+        const competitionRows = competitionEventsResult.data ?? [];
+        const groupRows = groupsResult.data ?? [];
+        const defaultPassRows = defaultPassesResult.data ?? [];
+        const awayNoticeRows = awayNoticesResult.data ?? [];
+        let conversationRows = conversationsResult.data ?? [];
 
-      const userMap: Record<string, UserProfile> = {};
-      membership.forEach((row) => {
-        const profile = profilesById[row.user_id];
-        if (!profile) {
-          return;
-        }
-        const existing = userMap[row.user_id];
-        const base: UserProfile = existing ?? {
-          id: row.user_id,
-          name: profile.full_name || profile.username || 'Okänd',
-          email: '',
-          membership: [],
-          horses: [],
-          location: profile.location ?? '',
-          phone: profile.phone ?? '',
-          responsibilities: profile.responsibilities ?? [],
-          defaultPasses: [],
-          awayNotices: [],
-          avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
-          onboardingDismissed: profile.onboarding_dismissed ?? false,
-        };
-
-        base.membership = [
-          ...base.membership,
-          {
-            stableId: row.stable_id,
-            role: row.role ?? 'guest',
-            customRole: row.custom_role ?? undefined,
-            access: row.access ?? 'view',
-            horseIds: row.horse_ids ?? [],
-            riderRole: row.rider_role ?? undefined,
+        const stableById = stableRows.reduce<Record<string, (typeof stableRows)[number]>>(
+          (acc, stable) => {
+            acc[stable.id] = stable;
+            return acc;
           },
-        ];
+          {},
+        );
+        const conversationStableIds = new Set<string>(
+          conversationRows.map((row) => row.stable_id).filter((id): id is string => Boolean(id)),
+        );
+        const missingConversationStableIds = stableIds.filter((stableId) => !conversationStableIds.has(stableId));
+        if (missingConversationStableIds.length) {
+          const inserts = missingConversationStableIds.map((stableId) => ({
+            stable_id: stableId,
+            title: stableById[stableId]?.name ?? null,
+            is_group: true,
+            created_by_user_id: authUser.id,
+          }));
+          const insertResult = await supabase.from('conversations').insert(inserts).select('*');
+          if (insertResult.error && insertResult.error.code !== '23505') {
+            console.warn('Kunde inte skapa gruppkonversation', insertResult.error);
+          } else if (insertResult.data) {
+            conversationRows = [...conversationRows, ...insertResult.data];
+          }
+        }
 
-        userMap[row.user_id] = base;
-      });
+        const profileIds = new Set<string>([authUser.id]);
+        membership.forEach((row) => profileIds.add(row.user_id));
+        const profilesResult = await supabase
+          .from('profiles')
+          .select('*')
+          .in('id', Array.from(profileIds));
 
-      if (!userMap[user.id]) {
-        const profile = profilesById[user.id];
-        if (profile) {
-          userMap[user.id] = {
-            id: user.id,
+        const profiles = profilesResult.data ?? [];
+        const profilesById = profiles.reduce<Record<string, (typeof profiles)[number]>>(
+          (acc, profile) => {
+            acc[profile.id] = profile;
+            return acc;
+          },
+          {},
+        );
+
+        const userMap: Record<string, UserProfile> = {};
+        membership.forEach((row) => {
+          const profile = profilesById[row.user_id];
+          if (!profile) {
+            return;
+          }
+          const existing = userMap[row.user_id];
+          const base: UserProfile = existing ?? {
+            id: row.user_id,
             name: profile.full_name || profile.username || 'Okänd',
             email: '',
             membership: [],
@@ -2901,340 +3320,432 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
             onboardingDismissed: profile.onboarding_dismissed ?? false,
           };
-        }
-      }
 
-      defaultPassRows.forEach((entry) => {
-        const target = userMap[entry.user_id];
-        if (!target) return;
-        target.defaultPasses = [
-          ...target.defaultPasses,
-          { weekday: entry.weekday as WeekdayIndex, slot: entry.slot as AssignmentSlot },
-        ];
-      });
+          base.membership = [
+            ...base.membership,
+            {
+              stableId: row.stable_id,
+              role: row.role ?? 'guest',
+              customRole: row.custom_role ?? undefined,
+              access: row.access ?? 'view',
+              horseIds: row.horse_ids ?? [],
+              riderRole: row.rider_role ?? undefined,
+            },
+          ];
 
-      awayNoticeRows.forEach((entry) => {
-        const target = userMap[entry.user_id];
-        if (!target) return;
-        target.awayNotices = [
-          ...target.awayNotices,
-          { id: entry.id, start: entry.start, end: entry.end, note: entry.note ?? '' },
-        ];
-      });
-
-      horseRows.forEach((horse) => {
-        const ownerId = horse.owner_user_id;
-        if (!ownerId || !userMap[ownerId]) return;
-        const current = userMap[ownerId].horses;
-        if (!current.includes(horse.name)) {
-          userMap[ownerId].horses = [...current, horse.name];
-        }
-      });
-
-      const postsResult = await supabase
-        .from('posts')
-        .select('*')
-        .in('stable_id', stableIds)
-        .order('created_at', { ascending: false });
-      const postRows = postsResult.data ?? [];
-      const postIds = postRows.map((post) => post.id);
-
-      const [likesResult, commentsResult] = await Promise.all([
-        postIds.length ? supabase.from('likes').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
-        postIds.length ? supabase.from('comments').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
-      ]);
-
-      const likes = likesResult.data ?? [];
-      const comments = commentsResult.data ?? [];
-
-      const commentsByPost = comments.reduce<Record<string, PostComment[]>>((acc, comment) => {
-        const list = acc[comment.post_id] ?? [];
-        const authorProfile = profilesById[comment.user_id];
-        list.push({
-          id: comment.id.toString(),
-          postId: comment.post_id,
-          authorId: comment.user_id,
-          authorName: authorProfile?.full_name || authorProfile?.username || 'Okänd',
-          text: comment.content,
-          createdAt: comment.created_at,
+          userMap[row.user_id] = base;
         });
-        acc[comment.post_id] = list;
-        return acc;
-      }, {});
 
-      const likedByPost = likes.reduce<Record<string, string[]>>((acc, like) => {
-        const list = acc[like.post_id] ?? [];
-        list.push(like.user_id);
-        acc[like.post_id] = list;
-        return acc;
-      }, {});
+        if (!userMap[authUser.id]) {
+          const profile = profilesById[authUser.id];
+          if (profile) {
+            userMap[authUser.id] = {
+              id: authUser.id,
+              name: profile.full_name || profile.username || 'Okänd',
+              email: '',
+              membership: [],
+              horses: [],
+              location: profile.location ?? '',
+              phone: profile.phone ?? '',
+              responsibilities: profile.responsibilities ?? [],
+              defaultPasses: [],
+              awayNotices: [],
+              avatar: profile.avatar_url ? { uri: profile.avatar_url } : undefined,
+              onboardingDismissed: profile.onboarding_dismissed ?? false,
+            };
+          }
+        }
 
-      const posts = postRows.map((post) => {
-        const authorProfile = profilesById[post.user_id];
-        const likedByUserIds = likedByPost[post.id] ?? [];
-        const commentsData = commentsByPost[post.id] ?? [];
-        return {
-          id: post.id,
-          author: authorProfile?.full_name || authorProfile?.username || 'Okänd',
-          avatar: authorProfile?.avatar_url ? { uri: authorProfile.avatar_url } : require('@/assets/images/dummy-avatar.png'),
-          timeAgo: 'Nu',
-          createdAt: post.created_at,
-          content: post.content ?? post.caption ?? '',
-          image: post.image_url ?? post.image ?? undefined,
-          likes: likedByUserIds.length,
-          comments: commentsData.length,
-          likedByUserIds,
-          commentsData,
-          stableId: post.stable_id ?? undefined,
-          groupIds: post.group_ids ?? undefined,
-        } as Post;
-      });
-
-      const conversationIds = conversationRows.map((row) => row.id);
-      const messagesResult = conversationIds.length
-        ? await supabase
-            .from('messages')
-            .select('*')
-            .in('conversation_id', conversationIds)
-            .order('created_at', { ascending: true })
-        : { data: [] as any[] };
-      const messageRows = messagesResult.data ?? [];
-      const conversations = messageRows.reduce<Record<string, ConversationMessage[]>>((acc, row) => {
-        const list = acc[row.conversation_id] ?? [];
-        list.push({
-          id: row.id,
-          conversationId: row.conversation_id,
-          authorId: row.author_id,
-          text: row.text,
-          timestamp: row.created_at,
-          status: row.status ?? undefined,
+        defaultPassRows.forEach((entry) => {
+          const target = userMap[entry.user_id];
+          if (!target) return;
+          target.defaultPasses = [
+            ...target.defaultPasses,
+            { weekday: entry.weekday as WeekdayIndex, slot: entry.slot as AssignmentSlot },
+          ];
         });
-        acc[row.conversation_id] = list;
-        return acc;
-      }, {});
 
-      const messagePreviews = conversationRows
-        .map((row) => {
-          const stable = row.stable_id ? stableById[row.stable_id] : undefined;
-          const previewMessages = conversations[row.id] ?? [];
-          const lastMessage = previewMessages.length
-            ? previewMessages[previewMessages.length - 1]
-            : undefined;
-          const sortTime = lastMessage?.timestamp ?? row.created_at ?? '';
-          const sortMs = sortTime ? new Date(sortTime).getTime() : 0;
-          const preview: MessagePreview = {
+        awayNoticeRows.forEach((entry) => {
+          const target = userMap[entry.user_id];
+          if (!target) return;
+          target.awayNotices = [
+            ...target.awayNotices,
+            { id: entry.id, start: entry.start, end: entry.end, note: entry.note ?? '' },
+          ];
+        });
+
+        horseRows.forEach((horse) => {
+          const ownerId = horse.owner_user_id;
+          if (!ownerId || !userMap[ownerId]) return;
+          const current = userMap[ownerId].horses;
+          if (!current.includes(horse.name)) {
+            userMap[ownerId].horses = [...current, horse.name];
+          }
+        });
+
+        const postsResult = selectedStableId
+          ? await supabase
+              .from('posts')
+              .select('*')
+              .eq('stable_id', selectedStableId)
+              .order('created_at', { ascending: false })
+              .order('id', { ascending: false })
+              .limit(POSTS_PAGE_SIZE)
+          : { data: [] as any[] };
+        if ('error' in postsResult && postsResult.error) {
+          console.warn('Kunde inte hämta inlägg', postsResult.error);
+        }
+        const postRows = postsResult.data ?? [];
+        const postIds = postRows.map((post) => post.id);
+
+        const [likesResult, commentsResult] = await Promise.all([
+          postIds.length ? supabase.from('likes').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+          postIds.length ? supabase.from('comments').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+        ]);
+
+        const likes = likesResult.data ?? [];
+        const comments = commentsResult.data ?? [];
+
+        const commentsByPost = comments.reduce<Record<string, PostComment[]>>((acc, comment) => {
+          const list = acc[comment.post_id] ?? [];
+          const authorProfile = profilesById[comment.user_id];
+          list.push({
+            id: comment.id.toString(),
+            postId: comment.post_id,
+            authorId: comment.user_id,
+            authorName: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+            text: comment.content,
+            createdAt: comment.created_at,
+          });
+          acc[comment.post_id] = list;
+          return acc;
+        }, {});
+
+        const likedByPost = likes.reduce<Record<string, string[]>>((acc, like) => {
+          const list = acc[like.post_id] ?? [];
+          list.push(like.user_id);
+          acc[like.post_id] = list;
+          return acc;
+        }, {});
+
+        const posts = await Promise.all(
+          postRows.map(async (post) => {
+            const authorProfile = profilesById[post.user_id];
+            const likedByUserIds = likedByPost[post.id] ?? [];
+            const commentsData = commentsByPost[post.id] ?? [];
+            const rawImage = post.image_url ?? null;
+            const normalizedPath = normalizePostImagePath(rawImage);
+            if (!normalizedPath && rawImage && rawImage.trim()) {
+              const lower = rawImage.trim().toLowerCase();
+              if (
+                lower.startsWith('http://') ||
+                lower.startsWith('https://') ||
+                lower.startsWith('data:')
+              ) {
+                warnLegacyPostImageUrl(post.id, rawImage);
+              }
+            }
+            const imageSignedUrl = normalizedPath ? await getSignedPostImageUrl(normalizedPath) : undefined;
+            return {
+              id: post.id,
+              authorId: post.user_id,
+              author: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+              avatar: authorProfile?.avatar_url
+                ? { uri: authorProfile.avatar_url }
+                : require('@/assets/images/dummy-avatar.png'),
+              timeAgo: 'Nu',
+              createdAt: post.created_at,
+              content: post.content ?? post.caption ?? '',
+              imageSignedUrl,
+              image: imageSignedUrl,
+              imagePath: normalizedPath || undefined,
+              likes: likedByUserIds.length,
+              comments: commentsData.length,
+              likedByUserIds,
+              commentsData,
+              stableId: post.stable_id ?? undefined,
+              groupIds: post.group_ids ?? undefined,
+            } as Post;
+          }),
+        );
+        const postsCursor = resolvePostsCursor(postRows);
+        const postsHasMore = postRows.length === POSTS_PAGE_SIZE;
+
+        const conversationIds = conversationRows.map((row) => row.id);
+        const messagesResult = conversationIds.length
+          ? await supabase
+              .from('messages')
+              .select('*')
+              .in('conversation_id', conversationIds)
+              .order('created_at', { ascending: true })
+          : { data: [] as any[] };
+        const messageRows = messagesResult.data ?? [];
+        const conversations = messageRows.reduce<Record<string, ConversationMessage[]>>((acc, row) => {
+          const list = acc[row.conversation_id] ?? [];
+          list.push({
             id: row.id,
-            title: row.title ?? stable?.name ?? 'Konversation',
-            subtitle: stable?.location ?? (row.is_group ? 'Gruppchatt' : ''),
-            description: lastMessage?.text ?? 'Inga meddelanden ännu',
-            timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
-            unreadCount: 0,
-            group: row.is_group ?? false,
-            stableId: row.stable_id ?? undefined,
-          };
-          return { preview, sortMs };
-        })
-        .sort((a, b) => b.sortMs - a.sortMs)
-        .map((entry) => entry.preview);
+            conversationId: row.conversation_id,
+            authorId: row.author_id,
+            text: row.text,
+            timestamp: row.created_at,
+            status: row.status ?? undefined,
+          });
+          acc[row.conversation_id] = list;
+          return acc;
+        }, {});
 
-      const formattedStables: Stable[] = stableRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        description: row.description ?? undefined,
-        location: row.location ?? undefined,
-        farmId: row.farm_id ?? undefined,
-        rideTypes: (row.ride_types as RideType[] | null) ?? undefined,
-        settings: (row.settings as StableSettings | null) ?? undefined,
-      }));
+        const messagePreviews = conversationRows
+          .map((row) => {
+            const stable = row.stable_id ? stableById[row.stable_id] : undefined;
+            const previewMessages = conversations[row.id] ?? [];
+            const lastMessage = previewMessages.length
+              ? previewMessages[previewMessages.length - 1]
+              : undefined;
+            const sortTime = lastMessage?.timestamp ?? row.created_at ?? '';
+            const sortMs = sortTime ? new Date(sortTime).getTime() : 0;
+            const preview: MessagePreview = {
+              id: row.id,
+              title: row.title ?? stable?.name ?? 'Konversation',
+              subtitle: stable?.location ?? (row.is_group ? 'Gruppchatt' : ''),
+              description: lastMessage?.text ?? 'Inga meddelanden ännu',
+              timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
+              unreadCount: 0,
+              group: row.is_group ?? false,
+              stableId: row.stable_id ?? undefined,
+            };
+            return { preview, sortMs };
+          })
+          .sort((a, b) => b.sortMs - a.sortMs)
+          .map((entry) => entry.preview);
 
-      const formattedFarms: Farm[] = farmRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        location: row.location ?? undefined,
-        hasIndoorArena: row.has_indoor_arena ?? undefined,
-        arenaNote: row.arena_note ?? undefined,
-      }));
-
-      const formattedHorses: Horse[] = horseRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        stableId: row.stable_id,
-        ownerUserId: row.owner_user_id ?? undefined,
-        boxNumber: row.box_number ?? undefined,
-        canSleepInside: row.can_sleep_inside ?? undefined,
-        gender: row.gender ?? undefined,
-        age: row.age ?? undefined,
-        note: row.note ?? undefined,
-        image: row.image_url ? { uri: row.image_url } : undefined,
-      }));
-
-      const formattedPaddocks: Paddock[] = paddockRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        stableId: row.stable_id,
-        horseNames: row.horse_names ?? [],
-        updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
-        season: row.season ?? 'yearRound',
-        image: row.image_url ? { uri: row.image_url } : undefined,
-      }));
-
-      const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        date: row.date,
-        label: row.label,
-        slot: row.slot,
-        icon: row.icon,
-        time: row.time,
-        note: row.note ?? undefined,
-        status: row.status,
-        assigneeId: row.assignee_id ?? undefined,
-        completedAt: row.completed_at ?? undefined,
-        assignedVia: row.assigned_via ?? undefined,
-        declinedByUserIds: row.declined_by_user_ids ?? [],
-      }));
-
-      const formattedAssignmentHistory = assignmentHistoryRows
-        .map((row) => ({
+        const formattedStables: Stable[] = stableRows.map((row) => ({
           id: row.id,
-          assignmentId: row.assignment_id,
+          name: row.name,
+          description: row.description ?? undefined,
+          location: row.location ?? undefined,
+          farmId: row.farm_id ?? undefined,
+          rideTypes: (row.ride_types as RideType[] | null) ?? undefined,
+          settings: (row.settings as StableSettings | null) ?? undefined,
+          joinCode: row.join_code ?? undefined,
+        }));
+
+        const formattedFarms: Farm[] = farmRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          location: row.location ?? undefined,
+          hasIndoorArena: row.has_indoor_arena ?? undefined,
+          arenaNote: row.arena_note ?? undefined,
+        }));
+
+        const formattedHorses: Horse[] = horseRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          stableId: row.stable_id,
+          ownerUserId: row.owner_user_id ?? undefined,
+          boxNumber: row.box_number ?? undefined,
+          canSleepInside: row.can_sleep_inside ?? undefined,
+          gender: row.gender ?? undefined,
+          age: row.age ?? undefined,
+          note: row.note ?? undefined,
+          image: row.image_url ? { uri: row.image_url } : undefined,
+        }));
+
+        const formattedPaddocks: Paddock[] = paddockRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          stableId: row.stable_id,
+          horseNames: row.horse_names ?? [],
+          updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
+          season: row.season ?? 'yearRound',
+          image: row.image_url ? { uri: row.image_url } : undefined,
+        }));
+
+        const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          date: row.date,
           label: row.label,
-          timestamp: row.created_at,
-          action: row.action as AssignmentHistoryAction,
-        }))
-        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          slot: row.slot,
+          icon: row.icon,
+          time: row.time,
+          note: row.note ?? undefined,
+          status: row.status,
+          assigneeId: row.assignee_id ?? undefined,
+          completedAt: row.completed_at ?? undefined,
+          assignedVia: row.assigned_via ?? undefined,
+          declinedByUserIds: row.declined_by_user_ids ?? [],
+        }));
 
-      const formattedDayEvents: DayEvent[] = dayEventRows.map((row) => ({
-        id: row.id,
-        date: row.date,
-        stableId: row.stable_id,
-        label: row.label,
-        tone: row.tone,
-      }));
+        const formattedAssignmentHistory = assignmentHistoryRows
+          .map((row) => ({
+            id: row.id,
+            assignmentId: row.assignment_id,
+            label: row.label,
+            timestamp: row.created_at,
+            action: row.action as AssignmentHistoryAction,
+          }))
+          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-      const formattedArenaBookings: ArenaBooking[] = arenaBookingRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        date: row.date,
-        startTime: row.start_time,
-        endTime: row.end_time,
-        purpose: row.purpose,
-        note: row.note ?? undefined,
-        bookedByUserId: row.booked_by_user_id,
-      }));
+        const formattedDayEvents: DayEvent[] = dayEventRows.map((row) => ({
+          id: row.id,
+          date: row.date,
+          stableId: row.stable_id,
+          label: row.label,
+          tone: row.tone,
+        }));
 
-      const formattedArenaStatuses: ArenaStatus[] = arenaStatusRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        date: row.date,
-        label: row.label,
-        createdByUserId: row.created_by_user_id,
-        createdAt: row.created_at,
-      }));
+        const formattedArenaBookings: ArenaBooking[] = arenaBookingRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          date: row.date,
+          startTime: row.start_time,
+          endTime: row.end_time,
+          purpose: row.purpose,
+          note: row.note ?? undefined,
+          bookedByUserId: row.booked_by_user_id,
+        }));
 
-      const formattedRideLogs: RideLogEntry[] = rideLogRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        horseId: row.horse_id,
-        date: row.date,
-        rideTypeId: row.ride_type_id,
-        length: row.length ?? undefined,
-        note: row.note ?? undefined,
-        createdByUserId: row.created_by_user_id,
-      }));
+        const formattedArenaStatuses: ArenaStatus[] = arenaStatusRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          date: row.date,
+          label: row.label,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+        }));
 
-      const formattedHorseStatuses: HorseDayStatus[] = horseStatusRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        horseId: row.horse_id,
-        date: row.date,
-        dayStatus: row.day_status ?? undefined,
-        nightStatus: row.night_status ?? undefined,
-        checked: row.checked ?? undefined,
-        water: row.water ?? undefined,
-        hay: row.hay ?? undefined,
-      }));
+        const formattedRideLogs: RideLogEntry[] = rideLogRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          date: row.date,
+          rideTypeId: row.ride_type_id,
+          length: row.length ?? undefined,
+          note: row.note ?? undefined,
+          createdByUserId: row.created_by_user_id,
+        }));
 
-      const formattedAlerts: AlertMessage[] = alertRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        message: row.message,
-        type: row.type,
-        createdAt: row.created_at,
-      }));
+        const formattedHorseStatuses: HorseDayStatus[] = horseStatusRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          date: row.date,
+          dayStatus: row.day_status ?? undefined,
+          nightStatus: row.night_status ?? undefined,
+          checked: row.checked ?? undefined,
+          water: row.water ?? undefined,
+          hay: row.hay ?? undefined,
+        }));
 
-      const formattedRidingDays: RidingDay[] = ridingDayRows.map((row) => ({
-        id: row.id,
-        stableId: row.stable_id,
-        label: row.label,
-        upcomingRides: row.upcoming_rides ?? undefined,
-        isToday: row.is_today ?? undefined,
-      }));
+        const formattedAlerts: AlertMessage[] = alertRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          message: row.message,
+          type: row.type,
+          createdAt: row.created_at,
+        }));
 
-      const formattedCompetitionEvents: CompetitionEvent[] = competitionRows.map((row) => ({
-        id: row.id,
-        start: row.start,
-        end: row.end,
-        title: row.title,
-        status: row.status,
-      }));
+        const formattedRidingDays: RidingDay[] = ridingDayRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          label: row.label,
+          upcomingRides: row.upcoming_rides ?? undefined,
+          isToday: row.is_today ?? undefined,
+        }));
 
-      const formattedGroups: Group[] = groupRows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        type: row.type,
-        stableId: row.stable_id ?? undefined,
-        farmId: row.farm_id ?? undefined,
-        horseId: row.horse_id ?? undefined,
-        createdAt: row.created_at,
-        createdByUserId: row.created_by_user_id ?? undefined,
-      }));
+        const formattedCompetitionEvents: CompetitionEvent[] = competitionRows.map((row) => ({
+          id: row.id,
+          start: row.start,
+          end: row.end,
+          title: row.title,
+          status: row.status,
+        }));
 
-      if (cancelled) {
-        return;
+        const formattedGroups: Group[] = groupRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          type: row.type,
+          stableId: row.stable_id ?? undefined,
+          farmId: row.farm_id ?? undefined,
+          horseId: row.horse_id ?? undefined,
+          createdAt: row.created_at,
+          createdByUserId: row.created_by_user_id ?? undefined,
+        }));
+
+        if (requestId !== refreshRequestId.current) {
+          return { success: false, reason: 'Avbruten uppdatering.' };
+        }
+
+        dispatch({
+          type: 'STATE_HYDRATE',
+          payload: {
+            farms: formattedFarms,
+            stables: formattedStables,
+            horses: formattedHorses,
+            paddocks: formattedPaddocks,
+            assignments: formattedAssignments,
+            assignmentHistory: formattedAssignmentHistory,
+            dayEvents: formattedDayEvents,
+            arenaBookings: formattedArenaBookings,
+            arenaStatuses: formattedArenaStatuses,
+            rideLogs: formattedRideLogs,
+            horseDayStatuses: formattedHorseStatuses,
+            alerts: formattedAlerts,
+            ridingSchedule: formattedRidingDays,
+            competitionEvents: formattedCompetitionEvents,
+            posts,
+            postsCursor,
+            postsHasMore,
+            postsLoadingMore: false,
+            postsLoadError: null,
+            messages: messagePreviews,
+            conversations,
+            groups: formattedGroups,
+            users: userMap,
+            currentStableId: selectedStableId,
+            currentUserId: authUser.id,
+            sessionUserId,
+          },
+        });
+        return { success: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Ett okänt fel inträffade.';
+        return fail(message);
+      } finally {
+        if (requestId === refreshRequestId.current) {
+          setHydrating(false);
+          setRefreshing(false);
+        }
       }
+    },
+    [showToast, user],
+  );
 
-      const previousStableId = stateRef.current.currentStableId;
-      const currentStableId = stableIds.includes(previousStableId) ? previousStableId : stableIds[0] ?? '';
-      dispatch({
-        type: 'STATE_HYDRATE',
-        payload: {
-          farms: formattedFarms,
-          stables: formattedStables,
-          horses: formattedHorses,
-          paddocks: formattedPaddocks,
-          assignments: formattedAssignments,
-          assignmentHistory: formattedAssignmentHistory,
-          dayEvents: formattedDayEvents,
-          arenaBookings: formattedArenaBookings,
-          arenaStatuses: formattedArenaStatuses,
-          rideLogs: formattedRideLogs,
-          horseDayStatuses: formattedHorseStatuses,
-          alerts: formattedAlerts,
-          ridingSchedule: formattedRidingDays,
-          competitionEvents: formattedCompetitionEvents,
-          posts,
-          messages: messagePreviews,
-          conversations,
-          groups: formattedGroups,
-          users: userMap,
-          currentStableId,
-          currentUserId: user.id,
-          sessionUserId: user.id,
-        },
-      });
-      setHydrating(false);
-    };
-
-    void hydrate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  const refreshData = React.useCallback(
+    async (options: RefreshOptions = {}): Promise<ActionResult> =>
+      loadAppData({ ...options, reason: options.reason ?? 'manual' }),
+    [loadAppData],
+  );
 
   React.useEffect(() => {
-    if (hydrating) {
+    if (!user) {
+      refreshRequestId.current += 1;
+      dispatch({ type: 'STATE_RESET' });
+      setHydrating(false);
+      setRefreshing(false);
+      setRefreshError(null);
+      return;
+    }
+
+    void loadAppData({ reason: 'init' });
+
+    return () => {
+      refreshRequestId.current += 1;
+    };
+  }, [loadAppData, user]);
+
+  React.useEffect(() => {
+    if (hydrating || refreshing) {
       return;
     }
     const stableId = state.currentStableId;
@@ -3277,10 +3788,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, [hydrating, persistDefaultPassToggle, state.currentStableId, state.currentUserId]);
+  }, [hydrating, persistDefaultPassToggle, refreshing, state.currentStableId, state.currentUserId]);
 
   React.useEffect(() => {
-    if (hydrating) {
+    if (hydrating || refreshing) {
       return;
     }
     const todayIso = toISODate(new Date());
@@ -3375,21 +3886,63 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
       }
     });
-  }, [hydrating, persistAssignmentUpdate, state.assignments, state.users]);
+  }, [hydrating, persistAssignmentUpdate, refreshing, state.assignments, state.users]);
 
   const derived = React.useMemo(() => {
-    const { assignments, alerts, currentUserId, currentStableId } = state;
+    const { assignments, alerts, currentUserId, currentStableId, horses } = state;
     const currentUser = state.users[currentUserId];
     const membership = state.users[currentUserId]?.membership.find((m) => m.stableId === currentStableId);
     const currentAccess = membership?.access ?? 'view';
     const currentRole = membership?.role ?? 'guest';
     const permissions = resolvePermissions(state, currentStableId, currentUserId);
     const activeAssignments = assignments.filter((assignment) => assignment.stableId === currentStableId);
+    const todayIso = toISODate(new Date());
+    const missedAssignments = assignments.filter(
+      (assignment) => assignment.status !== 'completed' && assignment.date < todayIso,
+    );
+    const getMissedAssignmentsForStable = (stableId: string) =>
+      missedAssignments
+        .filter((assignment) => assignment.stableId === stableId)
+        .sort((a, b) => compareAssignmentDateTime(b, a));
+    const getAssignmentEndTime = (assignment: Assignment) => {
+      const storedDuration = recurringDurationById.current.get(assignment.id);
+      if (storedDuration) {
+        return addMinutesToTime(assignment.time, storedDuration);
+      }
+      const endTimeFromNote = extractEndTimeFromNote(assignment.note);
+      if (!endTimeFromNote) {
+        return null;
+      }
+      const durationFromNote = calculateDurationMinutes(assignment.time, endTimeFromNote);
+      if (durationFromNote) {
+        return addMinutesToTime(assignment.time, durationFromNote);
+      }
+      const endMinutes = parseTimeToMinutes(endTimeFromNote);
+      return endMinutes !== null ? formatMinutesToTime(endMinutes) : null;
+    };
+    const cleanAssignmentNote = (note?: string) => stripAssignmentNoteMetadata(note);
     const stableAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
     const completed = activeAssignments.filter((assignment) => assignment.status === 'completed').length;
     const open = activeAssignments.filter((assignment) => assignment.status === 'open').length;
     const isFirstTimeOnboarding =
       state.stables.length === 0 && (currentUser?.membership.length ?? 0) === 0;
+    const onboardingStableId = currentStableId || state.stables[0]?.id || '';
+    const onboardingHasStable = Boolean(onboardingStableId);
+    const onboardingStable = onboardingStableId
+      ? state.stables.find((stable) => stable.id === onboardingStableId)
+      : undefined;
+    const onboardingSettings = resolveStableSettings(onboardingStable);
+    const onboardingResourcesComplete = onboardingHasStable
+      ? Boolean(onboardingSettings.onboarding?.resourcesComplete)
+      : false;
+    const onboardingHasHorse = onboardingStableId
+      ? horses.some((horse) => horse.stableId === onboardingStableId)
+      : false;
+    const onboardingHasAssignment = onboardingStableId
+      ? assignments.some((assignment) => assignment.stableId === onboardingStableId)
+      : false;
+    const onboardingComplete =
+      onboardingHasStable && onboardingResourcesComplete && onboardingHasHorse && onboardingHasAssignment;
     const canManageOnboardingAny =
       isFirstTimeOnboarding ||
       (currentUser?.membership ?? []).some(
@@ -3418,12 +3971,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return {
       isFirstTimeOnboarding,
       canManageOnboardingAny,
+      onboardingComplete,
       summary,
       loggableAssignment,
       claimableAssignment,
       upcomingAssignmentsForUser,
       nextAssignmentForUser: loggableAssignment ?? claimableAssignment,
       recentActivities: state.assignmentHistory.slice(0, 5),
+      getMissedAssignmentsForStable,
+      getAssignmentEndTime,
+      cleanAssignmentNote,
       membership,
       currentAccess,
       currentRole,
@@ -3712,6 +4269,141 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: true, data: assignment };
     },
     [ensurePermission, persistAssignmentHistory, persistAssignmentInsert],
+  );
+
+  const createRecurringAssignments = React.useCallback(
+    async (
+      input: CreateRecurringAssignmentsInput,
+    ): Promise<ActionResult<{ createdCount: number; skippedCount: number }>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageAssignments);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+
+      const title = input.title.trim();
+      const startTime = input.startTime.trim();
+      const durationMinutes =
+        input.durationMinutes && input.durationMinutes > 0
+          ? input.durationMinutes
+          : DEFAULT_ASSIGNMENT_DURATION_MINUTES;
+      if (!title) {
+        return { success: false, reason: 'Titel saknas.' };
+      }
+      if (!input.dateFrom || !input.dateTo) {
+        return { success: false, reason: 'Datum saknas.' };
+      }
+      if (!startTime) {
+        return { success: false, reason: 'Ange starttid.' };
+      }
+      if (!input.weekdays.length) {
+        return { success: false, reason: 'Välj minst en veckodag.' };
+      }
+
+      const startDate = new Date(`${input.dateFrom}T00:00:00`);
+      const endDate = new Date(`${input.dateTo}T00:00:00`);
+      if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+        return { success: false, reason: 'Ogiltigt datumintervall.' };
+      }
+      if (startDate > endDate) {
+        return { success: false, reason: 'Startdatum måste vara före slutdatum.' };
+      }
+
+      const slotCount = Math.max(1, Math.floor(input.slotsCount ?? 1));
+      const weekdays = new Set(input.weekdays);
+      const existingKeys = new Set<string>();
+      current.assignments
+        .filter((assignment) => assignment.stableId === stableId)
+        .forEach((assignment) => {
+          const storedDuration = recurringDurationById.current.get(assignment.id);
+          const endTimeFromNote = extractEndTimeFromNote(assignment.note);
+          const durationFromNote =
+            endTimeFromNote ? calculateDurationMinutes(assignment.time, endTimeFromNote) : null;
+          const resolvedDuration =
+            storedDuration ?? durationFromNote ?? DEFAULT_ASSIGNMENT_DURATION_MINUTES;
+          existingKeys.add(
+            buildRecurringAssignmentKey(
+              stableId,
+              assignment.date,
+              assignment.label,
+              assignment.time,
+              resolvedDuration,
+            ),
+          );
+        });
+
+      const assignmentsToCreate: Assignment[] = [];
+      let skippedCount = 0;
+      const status: AssignmentStatus = input.assignToCurrentUser ? 'assigned' : 'open';
+      const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
+      const assignedVia: AssignmentAssignedVia | undefined = input.assignToCurrentUser ? 'manual' : undefined;
+      const slot = resolveSlotFromTime(startTime);
+
+      for (let cursor = startDate; cursor <= endDate; cursor = addDays(cursor, 1)) {
+        const isoDate = toISODate(cursor);
+        if (!weekdays.has(getWeekdayIndex(isoDate))) {
+          continue;
+        }
+        for (let index = 1; index <= slotCount; index += 1) {
+          const label = slotCount > 1 ? `${title} #${index}` : title;
+          const key = buildRecurringAssignmentKey(
+            stableId,
+            isoDate,
+            label,
+            startTime,
+            durationMinutes,
+          );
+          if (existingKeys.has(key)) {
+            skippedCount += 1;
+            continue;
+          }
+          existingKeys.add(key);
+          assignmentsToCreate.push({
+            id: generateId(),
+            date: isoDate,
+            stableId,
+            label,
+            slot,
+            icon: slotIcons[slot],
+            time: startTime,
+            status,
+            assigneeId,
+            assignedVia,
+          });
+        }
+      }
+
+      if (!assignmentsToCreate.length) {
+        return { success: true, data: { createdCount: 0, skippedCount } };
+      }
+
+      assignmentsToCreate.forEach((assignment) =>
+        dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment }),
+      );
+      assignmentsToCreate.forEach((assignment) => {
+        recurringDurationById.current.set(assignment.id, durationMinutes);
+      });
+      const { error } = await persistAssignmentBatchInsert(assignmentsToCreate);
+      if (error) {
+        assignmentsToCreate.forEach((assignment) =>
+          dispatch({ type: 'ASSIGNMENT_REMOVE', payload: { id: assignment.id } }),
+        );
+        assignmentsToCreate.forEach((assignment) => {
+          recurringDurationById.current.delete(assignment.id);
+        });
+        return { success: false, reason: 'Kunde inte skapa återkommande pass.' };
+      }
+      assignmentsToCreate.forEach((assignment) => {
+        void persistAssignmentHistory(assignment, 'created');
+      });
+
+      return {
+        success: true,
+        data: { createdCount: assignmentsToCreate.length, skippedCount },
+      };
+    },
+    [ensurePermission, persistAssignmentBatchInsert, persistAssignmentHistory],
   );
 
   const updateAssignment = React.useCallback(
@@ -4122,6 +4814,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (input.startTime >= input.endTime) {
         return { success: false, reason: 'Sluttiden måste vara efter starttiden.' };
       }
+      const hasOverlap = current.arenaBookings.some((booking) => {
+        if (booking.stableId !== stableId || booking.date !== input.date) {
+          return false;
+        }
+        return input.startTime < booking.endTime && booking.startTime < input.endTime;
+      });
+      if (hasOverlap) {
+        return { success: false, reason: 'Tiden krockar med en annan bokning' };
+      }
 
       const booking: ArenaBooking = {
         id: generateId(),
@@ -4157,6 +4858,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: input.updates.note?.trim() ?? existing.note,
       };
       const updated = { ...existing, ...updates };
+      const hasOverlap = current.arenaBookings.some((booking) => {
+        if (booking.id === existing.id) {
+          return false;
+        }
+        if (booking.stableId !== updated.stableId || booking.date !== updated.date) {
+          return false;
+        }
+        return updated.startTime < booking.endTime && booking.startTime < updated.endTime;
+      });
+      if (hasOverlap) {
+        return { success: false, reason: 'Tiden krockar med en annan bokning' };
+      }
       dispatch({ type: 'ARENA_BOOKING_UPDATE', payload: { id: input.id, updates } });
       void persistArenaBookingUpdate(input.id, updates);
       return { success: true, data: updated };
@@ -4314,14 +5027,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const defaultGroupId = `stable:${stableId}`;
       const groupIds = input.groupIds?.length ? input.groupIds : [defaultGroupId];
+      const imagePath =
+        input.image && !hasUriScheme(input.image) ? normalizePostImagePath(input.image) : undefined;
       const post: Post = {
         id: generateId(),
+        authorId: current.currentUserId,
         author: user.name,
         avatar: user.avatar ?? require('@/assets/images/dummy-avatar.png'),
         timeAgo: 'Nu',
         createdAt: new Date().toISOString(),
         content,
-        image: input.image,
+        imagePath: imagePath || undefined,
         likes: 0,
         comments: 0,
         likedByUserIds: [],
@@ -4404,6 +5120,205 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     [ensurePermission, persistPostCommentInsert],
   );
+
+  const deletePost = React.useCallback(
+    async (postId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const postIndex = current.posts.findIndex((post) => post.id === postId);
+      if (postIndex === -1) {
+        return { success: false, reason: 'Inlägget kunde inte hittas.' };
+      }
+      const post = current.posts[postIndex];
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      const membership = post.stableId
+        ? current.users[userId]?.membership.find((entry) => entry.stableId === post.stableId)
+        : undefined;
+      const isAdmin = membership?.role === 'admin' || membership?.access === 'owner';
+      const isAuthor = post.authorId === userId;
+      if (!isAuthor && !isAdmin) {
+        return { success: false, reason: 'Du saknar behörighet att ta bort inlägget.' };
+      }
+      dispatch({ type: 'POST_DELETE', payload: { id: postId } });
+      const { error } = await persistPostDelete(postId);
+      if (error) {
+        dispatch({ type: 'POST_RESTORE', payload: { post, index: postIndex } });
+        return { success: false, reason: 'Kunde inte ta bort inlägget.' };
+      }
+      const imagePath = post.imagePath ?? '';
+      if (imagePath) {
+        invalidateSignedUrl(imagePath);
+      }
+      if (isAuthor && imagePath) {
+        const { error: storageError } = await supabase
+          .storage
+          .from(POSTS_BUCKET)
+          .remove([imagePath]);
+        if (storageError) {
+          console.warn('Kunde inte ta bort inläggsbild', storageError);
+        }
+      }
+      return { success: true };
+    },
+    [persistPostDelete],
+  );
+
+  const loadMorePosts = React.useCallback(async (): Promise<ActionResult> => {
+    const current = stateRef.current;
+    const stableId = current.currentStableId;
+    if (!stableId) {
+      return { success: false, reason: 'Inget aktivt stall.' };
+    }
+    if (current.postsLoadingMore || !current.postsHasMore) {
+      return { success: true };
+    }
+    const cursor = current.postsCursor;
+    if (!cursor) {
+      return { success: true };
+    }
+
+    dispatch({
+      type: 'STATE_HYDRATE',
+      payload: { postsLoadingMore: true, postsLoadError: null },
+    });
+
+    try {
+      let query = supabase
+        .from('posts')
+        .select('*')
+        .eq('stable_id', stableId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(POSTS_PAGE_SIZE);
+      if (cursor) {
+        query = query.or(
+          `created_at.lt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.lt.${cursor.id})`,
+        );
+      }
+      const { data, error } = await query;
+      if (error) {
+        console.warn('Kunde inte ladda fler inlägg', error);
+        dispatch({
+          type: 'STATE_HYDRATE',
+          payload: { postsLoadingMore: false, postsLoadError: 'Kunde inte ladda fler inlägg.' },
+        });
+        return { success: false, reason: 'Kunde inte ladda fler inlägg.' };
+      }
+
+      const postRows = data ?? [];
+      if (!postRows.length) {
+        dispatch({
+          type: 'STATE_HYDRATE',
+          payload: { postsLoadingMore: false, postsHasMore: false },
+        });
+        return { success: true };
+      }
+
+      const existingIds = new Set(current.posts.map((post) => post.id));
+      const newPostRows = postRows.filter((post) => !existingIds.has(post.id));
+      const nextCursor = resolvePostsCursor(postRows);
+      const hasMore = postRows.length === POSTS_PAGE_SIZE;
+      if (!newPostRows.length) {
+        dispatch({
+          type: 'STATE_HYDRATE',
+          payload: {
+            postsCursor: nextCursor,
+            postsHasMore: hasMore,
+            postsLoadingMore: false,
+            postsLoadError: null,
+          },
+        });
+        return { success: true };
+      }
+
+      const postIds = newPostRows.map((post) => post.id);
+      const [likesResult, commentsResult] = await Promise.all([
+        postIds.length ? supabase.from('likes').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+        postIds.length ? supabase.from('comments').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
+      ]);
+      const likes = likesResult.data ?? [];
+      const comments = commentsResult.data ?? [];
+
+      const commentsByPost = comments.reduce<Record<string, PostComment[]>>((acc, comment) => {
+        const list = acc[comment.post_id] ?? [];
+        const authorProfile = current.users[comment.user_id];
+        list.push({
+          id: comment.id.toString(),
+          postId: comment.post_id,
+          authorId: comment.user_id,
+          authorName: authorProfile?.name ?? 'Okänd',
+          text: comment.content,
+          createdAt: comment.created_at,
+        });
+        acc[comment.post_id] = list;
+        return acc;
+      }, {});
+
+      const likedByPost = likes.reduce<Record<string, string[]>>((acc, like) => {
+        const list = acc[like.post_id] ?? [];
+        list.push(like.user_id);
+        acc[like.post_id] = list;
+        return acc;
+      }, {});
+
+      const formattedPosts = await Promise.all(
+        newPostRows.map(async (post) => {
+          const authorProfile = current.users[post.user_id];
+          const likedByUserIds = likedByPost[post.id] ?? [];
+          const commentsData = commentsByPost[post.id] ?? [];
+          const rawImage = post.image_url ?? null;
+          const normalizedPath = normalizePostImagePath(rawImage);
+          if (!normalizedPath && rawImage && rawImage.trim()) {
+            const lower = rawImage.trim().toLowerCase();
+            if (lower.startsWith('http://') || lower.startsWith('https://') || lower.startsWith('data:')) {
+              warnLegacyPostImageUrl(post.id, rawImage);
+            }
+          }
+          const imageSignedUrl = normalizedPath ? await getSignedPostImageUrl(normalizedPath) : undefined;
+          return {
+            id: post.id,
+            authorId: post.user_id,
+            author: authorProfile?.name ?? 'Okänd',
+            avatar: authorProfile?.avatar ?? require('@/assets/images/dummy-avatar.png'),
+            timeAgo: 'Nu',
+            createdAt: post.created_at,
+            content: post.content ?? post.caption ?? '',
+            imageSignedUrl,
+            image: imageSignedUrl,
+            imagePath: normalizedPath || undefined,
+            likes: likedByUserIds.length,
+            comments: commentsData.length,
+            likedByUserIds,
+            commentsData,
+            stableId: post.stable_id ?? undefined,
+            groupIds: post.group_ids ?? undefined,
+          } as Post;
+        }),
+      );
+
+      const nextPosts = [...current.posts, ...formattedPosts];
+      dispatch({
+        type: 'STATE_HYDRATE',
+        payload: {
+          posts: nextPosts,
+          postsCursor: nextCursor,
+          postsHasMore: hasMore,
+          postsLoadingMore: false,
+          postsLoadError: null,
+        },
+      });
+      return { success: true };
+    } catch (error) {
+      console.warn('Kunde inte ladda fler inlägg', error);
+      dispatch({
+        type: 'STATE_HYDRATE',
+        payload: { postsLoadingMore: false, postsLoadError: 'Kunde inte ladda fler inlägg.' },
+      });
+      return { success: false, reason: 'Kunde inte ladda fler inlägg.' };
+    }
+  }, []);
 
   const createGroup = React.useCallback(
     (input: CreateGroupInput): ActionResult<Group> => {
@@ -4501,6 +5416,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     [persistProfileUpdate],
   );
+
+  React.useEffect(() => {
+    const current = stateRef.current;
+    const profile = current.users[current.currentUserId];
+    if (!profile || profile.onboardingDismissed) {
+      return;
+    }
+    if (derived.onboardingComplete) {
+      setOnboardingDismissed(true);
+    }
+  }, [derived.onboardingComplete, setOnboardingDismissed]);
 
   const updateProfile = React.useCallback(
     (input: UpdateProfileInput): ActionResult<UserProfile> => {
@@ -4621,6 +5547,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               ...baseSettings.arena,
               ...(settingsUpdates.arena ?? {}),
             },
+            onboarding: {
+              ...baseSettings.onboarding,
+              ...(settingsUpdates.onboarding ?? {}),
+            },
           }
         : baseSettings;
       const stable: Stable = {
@@ -4682,6 +5612,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             arena: {
               ...baseSettings.arena,
               ...(settingsUpdates.arena ?? {}),
+            },
+            onboarding: {
+              ...baseSettings.onboarding,
+              ...(settingsUpdates.onboarding ?? {}),
             },
           }
         : existing.settings;
@@ -4764,7 +5698,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [ensurePermission, persistHorseDelete]);
 
   const addMember = React.useCallback(
-    (input: AddMemberInput): ActionResult<UserProfile> => {
+    (input: AddMemberInput): ActionResult<{ inviteCode: string }> => {
       const stableIds = Array.from(new Set([input.stableId, ...(input.stableIds ?? [])]));
       if (!stableIds.length) {
         return { success: false, reason: 'Välj minst ett stall.' };
@@ -4781,10 +5715,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Namn krävs.' };
       }
       if (!email) {
-        return { success: false, reason: 'E-post krävs.' };
+        return { success: false, reason: 'Epost krävs.' };
       }
-      void persistStableInvite(input, stableIds);
-      return { success: true };
+      const inviteCode = generateInviteCode();
+      void persistStableInvite(input, stableIds, inviteCode);
+      return { success: true, data: { inviteCode } };
     },
     [ensurePermission, persistStableInvite],
   );
@@ -4931,16 +5866,71 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'USER_UPDATE',
         payload: { id: userId, updates: { membership } },
       });
-      void persistStableMemberDelete(stableId, userId);
+      const deletePromise = persistStableMemberDelete(stableId, userId);
+      if (userId === current.currentUserId) {
+        void deletePromise.then(() => refreshData({ reason: 'leave' }));
+      }
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission, persistStableMemberDelete],
+    [ensurePermission, persistStableMemberDelete, refreshData],
+  );
+
+  const joinStableByCode = React.useCallback(
+    async (code: string): Promise<ActionResult<{ stableId: string }>> => {
+      const trimmed = code.trim().toUpperCase();
+      if (!trimmed) {
+        return { success: false, reason: 'Ange en giltig inbjudningskod.' };
+      }
+      const extractStableId = (value: unknown): string | null => {
+        if (!value) {
+          return null;
+        }
+        if (typeof value === 'string') {
+          return value;
+        }
+        if (Array.isArray(value)) {
+          return extractStableId(value[0]);
+        }
+        if (typeof value === 'object') {
+          const record = value as Record<string, unknown>;
+          const candidate = record.stableId ?? record.stable_id ?? record.id;
+          return typeof candidate === 'string' ? candidate : null;
+        }
+        return null;
+      };
+      const { data, error } = await supabase.rpc('accept_join_code', { p_code: trimmed });
+      const stableId = extractStableId(data);
+      if (error || !stableId) {
+        console.warn('Kunde inte använda inbjudningskod', error);
+        return { success: false, reason: 'Inbjudningskoden är ogiltig.' };
+      }
+      return { success: true, data: { stableId } };
+    },
+    [],
+  );
+
+  const acceptPendingInvites = React.useCallback(
+    async (): Promise<ActionResult<{ count: number }>> => {
+      const { data, error } = await supabase.rpc('accept_pending_invites');
+      if (error) {
+        console.warn('Kunde inte acceptera inbjudningar', error);
+        return { success: false, reason: 'Kunde inte acceptera inbjudningar.' };
+      }
+      const count = typeof data === 'number' ? data : 0;
+      if (count <= 0) {
+        return { success: false, reason: 'Ingen inbjudan hittades.' };
+      }
+      return { success: true, data: { count } };
+    },
+    [],
   );
 
   const value = React.useMemo<AppDataContextValue>(
     () => ({
       state,
       hydrating,
+      refreshing,
+      refreshError,
       derived,
       actions: {
         logNextAssignment,
@@ -4949,6 +5939,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         declineAssignment,
         completeAssignment,
         createAssignment,
+        createRecurringAssignments,
         updateAssignment,
         deleteAssignment,
         addEvent,
@@ -4968,12 +5959,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         addPost,
         togglePostLike,
         addPostComment,
+        deletePost,
+        loadMorePosts,
         createGroup,
         renameGroup,
         deleteGroup,
         markConversationRead,
         sendConversationMessage,
         setCurrentStable,
+        refreshData,
         setOnboardingDismissed,
         updateProfile,
         upsertFarm,
@@ -4988,11 +5982,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updateMemberHorseIds,
         toggleMemberDefaultPass,
         removeMemberFromStable,
+        joinStableByCode,
+        acceptPendingInvites,
       },
     }),
     [
       state,
       hydrating,
+      refreshing,
+      refreshError,
       derived,
       logNextAssignment,
       claimNextOpenAssignment,
@@ -5000,6 +5998,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       declineAssignment,
       completeAssignment,
       createAssignment,
+      createRecurringAssignments,
       updateAssignment,
       deleteAssignment,
       addEvent,
@@ -5019,12 +6018,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       addPost,
       togglePostLike,
       addPostComment,
+      deletePost,
+      loadMorePosts,
       createGroup,
       renameGroup,
       deleteGroup,
       markConversationRead,
       sendConversationMessage,
       setCurrentStable,
+      refreshData,
       setOnboardingDismissed,
       updateProfile,
       upsertFarm,
@@ -5039,6 +6041,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       updateMemberHorseIds,
       toggleMemberDefaultPass,
       removeMemberFromStable,
+      joinStableByCode,
+      acceptPendingInvites,
     ],
   );
 

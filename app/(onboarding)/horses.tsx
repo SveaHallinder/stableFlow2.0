@@ -24,7 +24,7 @@ export default function OnboardingHorses() {
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
   const { state, actions } = useAppData();
-  const { stables, currentStableId, horses } = state;
+  const { stables, currentStableId, horses, currentUserId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
@@ -40,6 +40,8 @@ export default function OnboardingHorses() {
     age: '',
     note: '',
   });
+  const [ownerMode, setOwnerMode] = React.useState<'self' | 'invite'>('self');
+  const [ownerDraft, setOwnerDraft] = React.useState({ name: '', email: '' });
 
   React.useEffect(() => {
     if (!stables.length) {
@@ -72,6 +74,14 @@ export default function OnboardingHorses() {
       toast.showToast('Hästens namn krävs.', 'error');
       return;
     }
+    if (ownerMode === 'invite') {
+      const ownerName = ownerDraft.name.trim();
+      const ownerEmail = ownerDraft.email.trim();
+      if (!ownerName || !ownerEmail) {
+        toast.showToast('Namn och epost krävs för ägare.', 'error');
+        return;
+      }
+    }
     const trimmedAge = draft.age.trim();
     const ageValue = trimmedAge ? Number(trimmedAge) : undefined;
     if (trimmedAge && Number.isNaN(ageValue)) {
@@ -81,17 +91,46 @@ export default function OnboardingHorses() {
     const result = actions.upsertHorse({
       name,
       stableId: activeStableId,
+      ownerUserId: ownerMode === 'self' ? currentUserId || undefined : undefined,
       gender: draft.gender,
       age: ageValue,
       note: draft.note.trim() || undefined,
     });
     if (result.success) {
+      if (ownerMode === 'invite' && result.data?.id) {
+        const inviteResult = actions.addMember({
+          name: ownerDraft.name.trim(),
+          email: ownerDraft.email.trim(),
+          stableId: activeStableId,
+          role: 'rider',
+          customRole: 'Hästägare',
+          access: 'view',
+          horseIds: [result.data.id],
+        });
+        if (inviteResult.success && inviteResult.data?.inviteCode) {
+          toast.showToast(`Inbjudningskod ${inviteResult.data.inviteCode}`, 'success');
+        }
+      }
       toast.showToast('Häst sparad.', 'success');
       setDraft({ name: '', gender: 'unknown', age: '', note: '' });
+      setOwnerDraft({ name: '', email: '' });
+      setOwnerMode('self');
     } else {
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, activeStableId, draft.age, draft.gender, draft.name, draft.note, toast]);
+  }, [
+    actions,
+    activeStableId,
+    currentUserId,
+    draft.age,
+    draft.gender,
+    draft.name,
+    draft.note,
+    ownerDraft.email,
+    ownerDraft.name,
+    ownerMode,
+    toast,
+  ]);
 
   const handleDeleteHorse = React.useCallback(
     (horseId: string) => {
@@ -116,12 +155,13 @@ export default function OnboardingHorses() {
   return (
     <OnboardingShell
       title="Hästar"
-      subtitle="Valfritt: Lägg in hästarna nu eller gör det senare."
-      step={5}
-      total={10}
+      subtitle="Lägg till minst en häst för att gå vidare."
+      step={4}
+      total={6}
+      allowExit={false}
       onNext={handleBack}
-      nextLabel="Klar"
-      showProgress={false}
+      nextLabel="Tillbaka"
+      showProgress
     >
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
@@ -184,6 +224,49 @@ export default function OnboardingHorses() {
           style={[styles.input, styles.multilineInput]}
           multiline
         />
+        <View style={styles.ownerSection}>
+          <Text style={styles.sectionLabel}>Ägare</Text>
+          <View style={styles.toggleRow}>
+            <TouchableOpacity
+              style={[styles.toggleChip, ownerMode === 'self' && styles.toggleChipActive]}
+              onPress={() => setOwnerMode('self')}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.toggleText, ownerMode === 'self' && styles.toggleTextActive]}>
+                Jag är ägare
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.toggleChip, ownerMode === 'invite' && styles.toggleChipActive]}
+              onPress={() => setOwnerMode('invite')}
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.toggleText, ownerMode === 'invite' && styles.toggleTextActive]}>
+                Bjud in ägare
+              </Text>
+            </TouchableOpacity>
+          </View>
+          {ownerMode === 'invite' ? (
+            <>
+              <TextInput
+                placeholder="Namn på ägare"
+                placeholderTextColor={palette.mutedText}
+                value={ownerDraft.name}
+                onChangeText={(text) => setOwnerDraft((prev) => ({ ...prev, name: text }))}
+                style={styles.input}
+              />
+              <TextInput
+                placeholder="Epost till ägare"
+                placeholderTextColor={palette.mutedText}
+                value={ownerDraft.email}
+                onChangeText={(text) => setOwnerDraft((prev) => ({ ...prev, email: text }))}
+                style={styles.input}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+            </>
+          ) : null}
+        </View>
         <TouchableOpacity style={styles.primaryButton} onPress={handleAddHorse} activeOpacity={0.9}>
           <Text style={styles.primaryLabel}>Lägg till häst</Text>
         </TouchableOpacity>
@@ -223,6 +306,7 @@ export default function OnboardingHorses() {
 const styles = StyleSheet.create({
   card: { padding: 16, gap: 12, borderRadius: radius.lg },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
+  sectionLabel: { fontSize: 13, fontWeight: '600', color: palette.primaryText },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
@@ -237,6 +321,19 @@ const styles = StyleSheet.create({
     minHeight: 80,
     textAlignVertical: 'top',
   },
+  ownerSection: { gap: 10 },
+  toggleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  toggleChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+  },
+  toggleChipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  toggleText: { fontSize: 12, color: palette.primaryText },
+  toggleTextActive: { color: palette.inverseText, fontWeight: '600' },
   primaryButton: {
     backgroundColor: palette.primary,
     paddingVertical: 12,

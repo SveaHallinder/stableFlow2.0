@@ -182,7 +182,7 @@ export default function OnboardingMembers() {
     const name = draft.name.trim();
     const email = draft.email.trim();
     if (!name || !email) {
-      toast.showToast('Namn och e-post krävs.', 'error');
+      toast.showToast('Namn och epost krävs.', 'error');
       return;
     }
     const result = actions.addMember({
@@ -197,8 +197,19 @@ export default function OnboardingMembers() {
       riderRole: selectedRole.riderRole,
     });
     if (result.success) {
-      toast.showToast('Inbjudan skickad.', 'success');
+      if (result.data?.inviteCode) {
+        toast.showToast(`Inbjudningskod ${result.data.inviteCode}`, 'success');
+      } else {
+        toast.showToast('Inbjudan skapad.', 'success');
+      }
       setDraft({ name: '', email: '', phone: '' });
+      const settingsUpdate = actions.updateStable({
+        id: selectedStableIds[0],
+        updates: { settings: { onboarding: { membersComplete: true } } },
+      });
+      if (!settingsUpdate.success) {
+        console.warn('Kunde inte uppdatera onboardingstatus', settingsUpdate.reason);
+      }
     } else {
       toast.showToast(result.reason, 'error');
     }
@@ -215,12 +226,13 @@ export default function OnboardingMembers() {
   return (
     <OnboardingShell
       title="Medlemmar"
-      subtitle="Valfritt: Bjud in personer och välj deras roll. Du kan göra det senare."
-      step={6}
-      total={10}
+      subtitle="Valfritt: Bjud in personer och välj deras roll."
+      step={5}
+      total={6}
+      allowExit={false}
       onNext={handleBack}
-      nextLabel="Klar"
-      showProgress={false}
+      nextLabel="Tillbaka"
+      showProgress
     >
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -281,7 +293,7 @@ export default function OnboardingMembers() {
           style={styles.input}
         />
         <TextInput
-          placeholder="E-post"
+          placeholder="Epost"
           placeholderTextColor={palette.mutedText}
           value={draft.email}
           onChangeText={(text) => setDraft((prev) => ({ ...prev, email: text }))}

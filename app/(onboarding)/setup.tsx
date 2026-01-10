@@ -6,21 +6,19 @@ import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
-import { resolveStableSettings } from '@/context/AppDataContext';
-import { useAppData } from '@/context/AppDataContext';
+import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 
 type TaskRowProps = {
   title: string;
   description: string;
-  onPress: () => void;
   done?: boolean;
 };
 
-function TaskRow({ title, description, onPress, done }: TaskRowProps) {
+function TaskRow({ title, description, done }: TaskRowProps) {
   return (
-    <TouchableOpacity style={styles.taskRow} onPress={onPress} activeOpacity={0.85}>
+    <View style={styles.taskRow}>
       <View style={styles.taskLeft}>
         <View style={[styles.taskIcon, done && styles.taskIconDone]}>
           <Feather
@@ -34,16 +32,14 @@ function TaskRow({ title, description, onPress, done }: TaskRowProps) {
           <Text style={styles.taskDescription}>{description}</Text>
         </View>
       </View>
-      <Feather name="chevron-right" size={18} color={palette.secondaryText} />
-    </TouchableOpacity>
+    </View>
   );
 }
 
 export default function OnboardingSetup() {
   const router = useRouter();
   const { state, actions, derived } = useAppData();
-  const { stables, currentStableId, horses, paddocks, users } = state;
-  const [showMore, setShowMore] = React.useState(false);
+  const { farms, stables, currentStableId, horses, users, assignments } = state;
   const returnTo = '/(onboarding)/setup';
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
@@ -52,10 +48,16 @@ export default function OnboardingSetup() {
     () => stables.find((stable) => stable.id === activeStableId),
     [activeStableId, stables],
   );
+  const stableSettings = React.useMemo(
+    () => resolveStableSettings(activeStable),
+    [activeStable],
+  );
 
   React.useEffect(() => {
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      if (activeStableId) {
+        setActiveStableId('');
+      }
       return;
     }
     if (!activeStableId && fallbackStableId) {
@@ -64,7 +66,7 @@ export default function OnboardingSetup() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, stables]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -78,10 +80,16 @@ export default function OnboardingSetup() {
     () => horses.filter((horse) => horse.stableId === activeStableId),
     [activeStableId, horses],
   );
-  const stablePaddocks = React.useMemo(
-    () => paddocks.filter((paddock) => paddock.stableId === activeStableId),
-    [activeStableId, paddocks],
+  const stableAssignments = React.useMemo(
+    () => assignments.filter((assignment) => assignment.stableId === activeStableId),
+    [activeStableId, assignments],
   );
+  const hasFarm = farms.length > 0;
+  const hasStable = stables.length > 0;
+  const hasHorse = stableHorses.length > 0;
+  const hasAssignment = stableAssignments.length > 0;
+  const resourcesComplete = Boolean(stableSettings.onboarding?.resourcesComplete);
+  const layoutComplete = hasFarm || hasStable;
 
   const memberCount = React.useMemo(() => {
     const memberIds = new Set<string>();
@@ -93,16 +101,6 @@ export default function OnboardingSetup() {
     return memberIds.size;
   }, [activeStableId, users]);
 
-  const settings = resolveStableSettings(activeStable);
-  const hasDetails = Boolean(activeStable?.description || activeStable?.location);
-  const rideTypes = activeStable?.rideTypes ?? [];
-  const visibleEvents = Object.values(settings.eventVisibility).filter(Boolean).length;
-  const dayLogicLabel = settings.dayLogic === 'box' ? 'Box' : 'Lösdrift';
-  const arenaLabel = settings.arena.hasArena
-    ? settings.arena.hasSchedule
-      ? 'Ridhus: bokning på'
-      : 'Ridhus: ja'
-    : 'Ridhus: ej valt';
   const exitRoute =
     derived.canManageOnboardingAny && Platform.OS === 'web' ? '/admin' : '/(tabs)';
 
@@ -111,13 +109,63 @@ export default function OnboardingSetup() {
     router.replace(exitRoute);
   }, [actions, exitRoute, router]);
 
+  const nextSectionTitle = derived.onboardingComplete ? 'Klar att börja' : 'Nästa steg';
+
+  const primaryAction = React.useMemo(() => {
+    if (!hasStable) {
+      if (hasFarm) {
+        return {
+          label: 'Lägg till stall',
+          onPress: () => router.push({ pathname: '/(onboarding)/farm', params: { returnTo } }),
+        };
+      }
+      return {
+        label: 'Välj upplägg',
+        onPress: () => router.push({ pathname: '/(onboarding)/layout', params: { returnTo } }),
+      };
+    }
+    if (!resourcesComplete) {
+      return {
+        label: 'Fyll i resurser',
+        onPress: () => router.push({ pathname: '/(onboarding)/arena', params: { returnTo } }),
+      };
+    }
+    if (!hasHorse) {
+      return {
+        label: 'Lägg till häst',
+        onPress: () =>
+          router.push({ pathname: '/(onboarding)/horses', params: { returnTo } }),
+      };
+    }
+    if (!hasAssignment) {
+      return {
+        label: 'Skapa första pass',
+        onPress: () =>
+          router.push({
+            pathname: '/calendar',
+            params: { fromOnboarding: '1', returnTo },
+          }),
+      };
+    }
+    return { label: 'Gå till appen', onPress: handleFinish };
+  }, [
+    handleFinish,
+    hasAssignment,
+    hasFarm,
+    hasHorse,
+    hasStable,
+    resourcesComplete,
+    returnTo,
+    router,
+  ]);
+
   return (
     <OnboardingShell
-      title="Klart att börja"
-      subtitle="Stallet är skapat. Välj vad ni vill lägga in nu eller gå direkt till appen."
+      title="Kom igång"
+      subtitle="Onboarding är klar när du har stall, resurser, en häst och ett pass."
       step={1}
       total={1}
-      onBack={() => router.replace('/(onboarding)/stables')}
+      allowExit={false}
       showProgress={false}
     >
       {stables.length > 1 ? (
@@ -142,82 +190,62 @@ export default function OnboardingSetup() {
       ) : null}
 
       <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Du kan börja nu</Text>
-        <Text style={styles.sectionHint}>
-          Du kan fylla i detaljer senare i Admin. Det viktigaste är att stallet finns.
-        </Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={handleFinish} activeOpacity={0.9}>
-          <Text style={styles.primaryLabel}>Gå till appen</Text>
+        <Text style={styles.sectionTitle}>Status</Text>
+        <TaskRow
+          title="Upplägg valt"
+          description={layoutComplete ? 'Klart' : 'Välj upplägg'}
+          done={layoutComplete}
+        />
+        <TaskRow
+          title="Stall skapat"
+          description={hasStable ? 'Klart' : 'Skapa stall'}
+          done={hasStable}
+        />
+        <TaskRow
+          title="Resurser"
+          description={resourcesComplete ? 'Klart' : 'Ridhus och volt'}
+          done={resourcesComplete}
+        />
+        <TaskRow
+          title="Minst en häst"
+          description={hasHorse ? `${stableHorses.length} hästar` : 'Lägg till häst'}
+          done={hasHorse}
+        />
+        <TaskRow
+          title="Första passet"
+          description={hasAssignment ? `${stableAssignments.length} pass` : 'Skapa första pass'}
+          done={hasAssignment}
+        />
+        <TaskRow
+          title="Klar"
+          description={derived.onboardingComplete ? 'Redo' : 'Ej klar'}
+          done={derived.onboardingComplete}
+        />
+      </Card>
+
+      <Card tone="muted" style={styles.card}>
+        <Text style={styles.sectionTitle}>{nextSectionTitle}</Text>
+        <TouchableOpacity style={styles.primaryButton} onPress={primaryAction.onPress} activeOpacity={0.9}>
+          <Text style={styles.primaryLabel}>{primaryAction.label}</Text>
         </TouchableOpacity>
       </Card>
 
-      <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Lägg in det viktigaste</Text>
-        <TaskRow
-          title="Hästar"
-          description={stableHorses.length ? `${stableHorses.length} hästar` : 'Lägg till hästar'}
-          onPress={() => router.push({ pathname: '/(onboarding)/horses', params: { returnTo } })}
-          done={stableHorses.length > 0}
-        />
-        <TaskRow
-          title="Medlemmar"
-          description={memberCount > 1 ? `${memberCount} medlemmar` : 'Bara du än så länge'}
-          onPress={() => router.push({ pathname: '/(onboarding)/members', params: { returnTo } })}
-          done={memberCount > 1}
-        />
-        <TaskRow
-          title="Stalluppgifter"
-          description={hasDetails ? 'Info ifylld' : 'Lägg till plats och beskrivning'}
-          onPress={() => router.push({ pathname: '/(onboarding)/stable-details', params: { returnTo } })}
-          done={hasDetails}
-        />
-      </Card>
-
-      <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Mer inställningar</Text>
-        {!showMore ? (
-          <TouchableOpacity style={styles.secondaryButton} onPress={() => setShowMore(true)} activeOpacity={0.85}>
-            <Text style={styles.secondaryLabel}>Visa fler inställningar</Text>
+      {hasStable ? (
+        <Card tone="muted" style={styles.card}>
+          <Text style={styles.sectionTitle}>Valfritt</Text>
+          <Text style={styles.sectionHint}>
+            Bjud in fler när du vill. Detta påverkar inte onboarding.
+          </Text>
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={() => router.push({ pathname: '/(onboarding)/members', params: { returnTo } })}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryLabel}>Bjud in medlemmar</Text>
           </TouchableOpacity>
-        ) : (
-          <View style={styles.taskList}>
-            <TaskRow
-              title="Box eller lösdrift"
-              description={`Nu: ${dayLogicLabel}`}
-              onPress={() => router.push({ pathname: '/(onboarding)/day-logic', params: { returnTo } })}
-            />
-            <TaskRow
-              title="Ridhus"
-              description={arenaLabel}
-              onPress={() => router.push({ pathname: '/(onboarding)/arena', params: { returnTo } })}
-            />
-            <TaskRow
-              title="Hagar"
-              description={stablePaddocks.length ? `${stablePaddocks.length} hagar` : 'Valfritt'}
-              onPress={() => router.push({ pathname: '/(onboarding)/paddocks', params: { returnTo } })}
-              done={stablePaddocks.length > 0}
-            />
-            <TaskRow
-              title="Ridpass-typer"
-              description={rideTypes.length ? `${rideTypes.length} typer` : 'Valfritt'}
-              onPress={() => router.push({ pathname: '/(onboarding)/ride-types', params: { returnTo } })}
-              done={rideTypes.length > 0}
-            />
-            <TaskRow
-              title="Händelser i schema"
-              description={`${visibleEvents} aktiva`}
-              onPress={() => router.push({ pathname: '/(onboarding)/events', params: { returnTo } })}
-            />
-            <TouchableOpacity
-              style={styles.secondaryButton}
-              onPress={() => setShowMore(false)}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.secondaryLabel}>Visa färre inställningar</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-      </Card>
+          <Text style={styles.sectionHint}>{memberCount} medlem(ar) kopplade till stallet.</Text>
+        </Card>
+      ) : null}
     </OnboardingShell>
   );
 }
@@ -231,6 +259,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
+  },
+  primaryButtonDisabled: {
+    opacity: 0.5,
   },
   primaryLabel: { color: palette.inverseText, fontWeight: '600' },
   secondaryButton: {
