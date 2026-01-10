@@ -58,7 +58,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
-  const { state, hydrating, derived } = useAppData();
+  const { hydrating, derived } = useAppData();
   const segments = useSegments();
   const searchParams = useGlobalSearchParams();
   const router = useRouter();
@@ -70,9 +70,9 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     const rootSegment = segments[0];
     const childSegment = segments[1];
     const inOnboarding = rootSegment === '(onboarding)';
-    const currentUser = state.users[state.currentUserId];
     const needsOnboarding =
-      derived.canManageOnboardingAny && !currentUser?.onboardingDismissed;
+      derived.canManageOnboardingAny && !derived.onboardingComplete;
+    const isJoinRoute = inOnboarding && childSegment === 'join';
     const nextRoute = '/(onboarding)/setup';
     const fromOnboardingRaw = searchParams.fromOnboarding;
     const fromOnboarding = Array.isArray(fromOnboardingRaw)
@@ -86,6 +86,11 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
         return;
       }
       router.replace(nextRoute);
+      return;
+    }
+
+    if (inOnboarding && !derived.canManageOnboardingAny && !isJoinRoute) {
+      router.replace('/(tabs)');
     }
   }, [
     loading,
@@ -93,10 +98,8 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     session,
     segments,
     router,
-    state.currentUserId,
-    state.users,
-    state.stables.length,
     derived.canManageOnboardingAny,
+    derived.onboardingComplete,
     searchParams.fromOnboarding,
   ]);
 

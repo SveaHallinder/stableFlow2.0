@@ -15,7 +15,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -150,6 +150,8 @@ export default function OverviewScreen() {
   const stableName =
     stables.find((stable) => stable.id === currentStableId)?.name ?? 'stallet';
   const isOwner = permissions.canManageOnboarding;
+  const onboardingComplete = derived.onboardingComplete;
+  const showOnboardingEntry = isOwner && !onboardingComplete;
 
   const activeMessages = React.useMemo(
     () => messageItems.filter((item) => !item.stableId || item.stableId === currentStableId),
@@ -209,6 +211,18 @@ export default function OverviewScreen() {
   }, [assignments, currentUserId, todayIso]);
 
   const myNextAssignment = myAssignedUpcoming[0];
+  const myNextAssignmentTimeLabel = React.useMemo(() => {
+    if (!myNextAssignment) {
+      return undefined;
+    }
+    const endTime = derived.getAssignmentEndTime(myNextAssignment);
+    return endTime ? `${myNextAssignment.time}–${endTime}` : myNextAssignment.time;
+  }, [derived, myNextAssignment]);
+  const missedAssignments = React.useMemo(
+    () => derived.getMissedAssignmentsForStable(currentStableId),
+    [derived, currentStableId],
+  );
+  const missedPreview = React.useMemo(() => missedAssignments.slice(0, 5), [missedAssignments]);
   const openUpcomingCount = React.useMemo(
     () =>
       calendarPreviewGroups.reduce(
@@ -239,7 +253,7 @@ export default function OverviewScreen() {
         id: 'my-passes',
         label: 'Mina pass',
         caption: myNextAssignment
-          ? `Nästa: ${myNextAssignment.label} · ${myNextAssignment.time}`
+          ? `Nästa: ${myNextAssignment.label} · ${myNextAssignmentTimeLabel ?? myNextAssignment.time}`
           : 'Inga tilldelade pass',
         icon: 'clock',
         tint: 'primary',
@@ -281,27 +295,15 @@ export default function OverviewScreen() {
   }, [
     canManageDayEvents,
     myNextAssignment,
+    myNextAssignmentTimeLabel,
     myAssignedUpcoming.length,
     openUpcomingCount,
     latestEvent,
     paddockSummary,
   ]);
 
-  const adminChecklist = [
-    { id: 'stable', label: 'Skapa stall', done: stables.length > 0 },
-    { id: 'horses', label: 'Lägg till hästar', done: activeHorses.length > 0 },
-    { id: 'members', label: 'Bjud in medlemmar', done: memberCount > 1 },
-    { id: 'assignments', label: 'Skapa första pass', done: activeAssignments.length > 0 },
-  ];
-
-  const memberChecklist = [
-    { id: 'passes', label: 'Se dina pass i kalendern', done: false },
-    { id: 'chat', label: 'Säg hej i stallchatten', done: false },
-    { id: 'profile', label: 'Uppdatera din profil', done: false },
-  ];
-
   const startHereSubtitle = isOwner
-    ? 'Fyll i grunderna så att stallet blir tydligt för alla.'
+    ? 'Skapa stall, fyll i resurser, lägg till häst och första pass för att komma igång.'
     : `Du är ${roleLabel} i ${stableName}. Här är snabbaste vägen in.`;
   const isEventValid = eventText.trim().length >= 3;
 
@@ -383,53 +385,19 @@ export default function OverviewScreen() {
     router.push('/search');
   }, [router]);
   const handleOpenOnboarding = React.useCallback(() => {
-    actions.setOnboardingDismissed(false);
-    if (!stables.length) {
-      console.info('[onboarding] continue', { reason: 'no-stable' });
-      router.push('/(onboarding)');
-      return;
-    }
-    const stableId = currentStableId || stables[0]?.id || '';
-    const stableHorses = horses.filter((horse) => horse.stableId === stableId).length;
-    const stableMembers = Object.values(users).filter((user) =>
-      user.membership.some((entry) => entry.stableId === stableId),
-    ).length;
-    const stableAssignments = assignments.filter((assignment) => assignment.stableId === stableId).length;
-
-    let nextRoute = '/(onboarding)/setup';
-    let reason = 'optional';
-    if (!stableId) {
-      nextRoute = '/(onboarding)';
-      reason = 'missing-stable-id';
-    } else if (stableHorses === 0) {
-      nextRoute = '/(onboarding)/horses';
-      reason = 'horses';
-    } else if (stableMembers <= 1) {
-      nextRoute = '/(onboarding)/members';
-      reason = 'members';
-    } else if (stableAssignments === 0) {
-      nextRoute = '/calendar';
-      reason = 'assignments';
-    }
-
-    if (stableId) {
-      actions.setCurrentStable(stableId);
-    }
-    console.info('[onboarding] continue', {
-      reason,
-      stableId,
-      stableHorses,
-      stableMembers,
-      stableAssignments,
-      nextRoute,
+    router.push('/(onboarding)/setup');
+    requestAnimationFrame(() => {
+      actions.setOnboardingDismissed(false);
     });
-    router.push(nextRoute);
-  }, [actions, assignments, currentStableId, horses, router, stables, users]);
+  }, [actions, router]);
   const handleOpenAdmin = React.useCallback(() => {
     router.push('/admin');
   }, [router]);
   const handleOpenMyPasses = React.useCallback(() => {
     router.push('/calendar?view=mine');
+  }, [router]);
+  const handleOpenCalendar = React.useCallback(() => {
+    router.push('/calendar?view=all');
   }, [router]);
   const handleStartTour = React.useCallback(() => {
     setTourStep(0);
@@ -455,7 +423,7 @@ export default function OverviewScreen() {
     }
   }, [actions, canManageDayEvents, eventText, toast]);
 
-  const startHereSection = (
+  const startHereSection = showOnboardingEntry ? (
     <Card
       tone="muted"
       elevated={!isDesktopWeb}
@@ -470,74 +438,30 @@ export default function OverviewScreen() {
           <Text style={styles.startHereBadgeText}>{roleLabel}</Text>
         </View>
       </View>
-      <View style={styles.startHereList}>
-        {(isOwner ? adminChecklist : memberChecklist).map((item) => (
-          <View key={item.id} style={styles.startHereRow}>
-            {isOwner ? (
-              <Feather
-                name={item.done ? 'check-circle' : 'circle'}
-                size={16}
-                color={item.done ? palette.primary : palette.border}
-              />
-            ) : (
-              <View style={styles.startHereDot} />
-            )}
-            <Text
-              style={[
-                styles.startHereText,
-                isOwner && item.done && styles.startHereTextDone,
-              ]}
-            >
-              {item.label}
-            </Text>
-          </View>
-        ))}
-      </View>
       <View style={styles.startHereActions}>
-        {isOwner ? (
-          <>
-            <TouchableOpacity
-              style={styles.startHerePrimary}
-              onPress={handleOpenOnboarding}
-              activeOpacity={0.9}
-            >
-              <Text style={styles.startHerePrimaryText}>Fortsätt uppstart</Text>
-            </TouchableOpacity>
-            {isWeb ? (
-              <TouchableOpacity
-                style={styles.startHereSecondary}
-                onPress={handleOpenAdmin}
-                activeOpacity={0.9}
-              >
-                <Text style={styles.startHereSecondaryText}>Öppna admin</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.startHereHint}>
-                <Text style={styles.startHereHintText}>Admin finns i webben.</Text>
-              </View>
-            )}
-          </>
+        <TouchableOpacity
+          style={styles.startHerePrimary}
+          onPress={handleOpenOnboarding}
+          activeOpacity={0.9}
+        >
+          <Text style={styles.startHerePrimaryText}>Starta onboarding</Text>
+        </TouchableOpacity>
+        {isWeb ? (
+          <TouchableOpacity
+            style={styles.startHereSecondary}
+            onPress={handleOpenAdmin}
+            activeOpacity={0.9}
+          >
+            <Text style={styles.startHereSecondaryText}>Öppna admin</Text>
+          </TouchableOpacity>
         ) : (
-          <>
-            <TouchableOpacity
-              style={styles.startHerePrimary}
-              onPress={handleOpenMyPasses}
-              activeOpacity={0.9}
-            >
-              <Text style={styles.startHerePrimaryText}>Se mina pass</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.startHereSecondary}
-              onPress={handleStartTour}
-              activeOpacity={0.9}
-            >
-              <Text style={styles.startHereSecondaryText}>Guidad tur</Text>
-            </TouchableOpacity>
-          </>
+          <View style={styles.startHereHint}>
+            <Text style={styles.startHereHintText}>Admin finns i webben.</Text>
+          </View>
         )}
       </View>
     </Card>
-  );
+  ) : null;
 
   const eventsSection = recentEvents.length ? (
     <Card
@@ -576,6 +500,49 @@ export default function OverviewScreen() {
       </View>
     </Card>
   ) : null;
+
+  const missedSection = (
+    <Card
+      tone="muted"
+      elevated={!isDesktopWeb}
+      style={[styles.missedCard, !isDesktopWeb && styles.missedCardMobile]}
+    >
+      <View style={styles.missedHeader}>
+        <Text style={[styles.missedTitle, !isDesktopWeb && styles.missedTitleMobile]}>
+          Missade pass
+        </Text>
+        <Text style={[styles.missedMeta, !isDesktopWeb && styles.missedMetaMobile]}>
+          {`${missedAssignments.length} totalt`}
+        </Text>
+      </View>
+      {missedPreview.length ? (
+        <View style={styles.missedList}>
+          {missedPreview.map((assignment) => {
+            const endTime = derived.getAssignmentEndTime(assignment);
+            const timeLabel = endTime ? `${assignment.time}–${endTime}` : assignment.time;
+            return (
+              <View key={assignment.id} style={styles.missedRow}>
+                <View style={styles.missedDot} />
+                <View style={styles.missedBody}>
+                  <Text style={styles.missedLabel} numberOfLines={1}>
+                    {assignment.label}
+                  </Text>
+                  <Text style={styles.missedTime}>
+                    {formatShortDate(assignment.date)} · {timeLabel}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : (
+        <Text style={styles.missedEmpty}>Inga missade pass just nu.</Text>
+      )}
+      <TouchableOpacity style={styles.missedAction} onPress={handleOpenCalendar} activeOpacity={0.85}>
+        <Text style={styles.missedActionText}>Öppna kalendern</Text>
+      </TouchableOpacity>
+    </Card>
+  );
 
   const quickActionsSection = (
     <View style={styles.quickActionGrid}>
@@ -778,6 +745,7 @@ export default function OverviewScreen() {
               {eventsSection}
               {quickActionsSection}
               {summarySection}
+              {missedSection}
               <WeatherPanel />
             </View>
             <View style={[styles.desktopColumn, styles.desktopColumnSecondary]}>
@@ -791,6 +759,7 @@ export default function OverviewScreen() {
               {eventsSection}
               {quickActionsSection}
               {summarySection}
+              {missedSection}
               <WeatherPanel />
               {messagesSection}
               {postsSection}
@@ -1282,6 +1251,84 @@ const styles = StyleSheet.create({
   eventTime: {
     fontSize: 12,
     color: palette.secondaryText,
+  },
+  missedCard: {
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    borderWidth: 0,
+    gap: 12,
+  },
+  missedCardMobile: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.08)',
+    backgroundColor: palette.surface,
+  },
+  missedHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+  },
+  missedTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  missedTitleMobile: {
+    fontSize: 17,
+    fontWeight: '600',
+  },
+  missedMeta: {
+    fontSize: 12,
+    color: palette.secondaryText,
+    fontWeight: '600',
+  },
+  missedMetaMobile: {
+    fontSize: 11,
+  },
+  missedList: {
+    gap: 10,
+  },
+  missedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  missedDot: {
+    width: 10,
+    height: 10,
+    borderRadius: radius.full,
+    backgroundColor: palette.warning,
+  },
+  missedBody: {
+    flex: 1,
+    gap: 2,
+  },
+  missedLabel: {
+    fontSize: 13,
+    color: palette.primaryText,
+    fontWeight: '500',
+  },
+  missedTime: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  missedEmpty: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  missedAction: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+  },
+  missedActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.primary,
   },
   quickActionCard: {
     flexGrow: 0,

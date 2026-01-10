@@ -14,13 +14,13 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { theme } from '@/components/theme';
 import { Card, Pill } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
-import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
+import { useAppData, resolveStableSettings, stripAssignmentNoteMetadata } from '@/context/AppDataContext';
 import type {
   ArenaBooking,
   ArenaStatus,
@@ -29,11 +29,13 @@ import type {
   AssignmentSlot,
   CompetitionEvent,
   CreateAssignmentInput,
+  CreateRecurringAssignmentsInput,
   DayEvent,
   DayEventTone,
   RideLogEntry,
   RideType,
   UpdateAssignmentInput,
+  WeekdayIndex,
 } from '@/context/AppDataContext';
 import {
   groupAssignmentsByDay,
@@ -97,6 +99,7 @@ type RegularSlot = {
   time?: string;
   status: AssignmentStatus;
   slotType: AssignmentSlot;
+  isMissed: boolean;
 };
 
 type RegularDayView = {
@@ -210,6 +213,35 @@ function isDefaultForUser(
   return defaultPasses.some((entry) => entry.weekday === weekday && entry.slot === slot);
 }
 
+function parseTimeToMinutes(value: string) {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return null;
+  }
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+    return null;
+  }
+  return hours * 60 + minutes;
+}
+
+function calculateDurationMinutes(startTime: string, endTime: string) {
+  const start = parseTimeToMinutes(startTime);
+  const end = parseTimeToMinutes(endTime);
+  if (start === null || end === null) {
+    return null;
+  }
+  const diff = end - start;
+  if (diff <= 0) {
+    return null;
+  }
+  return diff;
+}
+
 export default function CalendarScreen() {
   const { state, actions, derived } = useAppData();
   const router = useRouter();
@@ -227,10 +259,12 @@ export default function CalendarScreen() {
     currentUserId,
     currentStableId,
   } = state;
-  const { view, date, section } = useLocalSearchParams<{
+  const { view, date, section, fromOnboarding, returnTo } = useLocalSearchParams<{
     view?: string | string[];
     date?: string | string[];
     section?: string | string[];
+    fromOnboarding?: string | string[];
+    returnTo?: string | string[];
   }>();
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
@@ -244,6 +278,22 @@ export default function CalendarScreen() {
   const canManageArenaBookings = permissions.canManageArenaBookings;
   const canManageArenaStatus = permissions.canManageArenaStatus;
   const canManageDayEvents = permissions.canManageDayEvents;
+  const buildRecurringDefaults = () => {
+    const start = new Date();
+    const end = new Date(start);
+    end.setDate(end.getDate() + 14);
+    const weekday = weekdayIndexFromDate(start) as WeekdayIndex;
+    return {
+      dateFrom: toISODate(start),
+      dateTo: toISODate(end),
+      weekdays: [weekday],
+      startTime: '',
+      endTime: '',
+      title: '',
+      slotsCount: '1',
+      assignToMe: false,
+    };
+  };
   const [assignmentModal, setAssignmentModal] = React.useState<{
     visible: boolean;
     mode: 'create' | 'edit';
@@ -255,6 +305,8 @@ export default function CalendarScreen() {
     note?: string;
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
+  const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
+  const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
   const toast = useToast();
   const focusDate = React.useMemo(() => {
     const raw = Array.isArray(date) ? date[0] : date;
@@ -288,6 +340,16 @@ export default function CalendarScreen() {
     tone: 'info' as DayEventTone,
   }));
   const [arenaStatusModalVisible, setArenaStatusModalVisible] = React.useState(false);
+
+  const fromOnboardingValue = Array.isArray(fromOnboarding) ? fromOnboarding[0] : fromOnboarding;
+  const showOnboardingBack = fromOnboardingValue === '1';
+  const safeReturnTo = React.useMemo<Href>(() => {
+    const target = Array.isArray(returnTo) ? returnTo[0] : returnTo;
+    if (typeof target === 'string' && target.startsWith('/')) {
+      return target as Href;
+    }
+    return '/(onboarding)/setup' as Href;
+  }, [returnTo]);
   const [arenaStatusForm, setArenaStatusForm] = React.useState(() => ({
     date: toISODate(new Date()),
     label: 'Harvat',
@@ -662,6 +724,9 @@ export default function CalendarScreen() {
         const formattedNote = formatPassNote(assignment.note, assignment.status);
         const noteHidden = formattedNote && eventLabels.includes(formattedNote);
         const isMine = assignment.assigneeId === currentUserId;
+        const isMissed = assignment.status !== 'completed' && assignment.date < todayIso;
+        const endTime = derived.getAssignmentEndTime(assignment);
+        const timeLabel = endTime ? `${assignment.time}–${endTime}` : assignment.time;
         return {
           id: assignment.id,
           label: assignment.label,
@@ -678,9 +743,10 @@ export default function CalendarScreen() {
             ? isDefaultForUser(defaultPasses, weekdayIndex, assignment.slot)
             : false,
           assignedVia: assignment.assignedVia,
-          time: assignment.time,
+          time: timeLabel,
           status: assignment.status,
           slotType: assignment.slot,
+          isMissed,
         };
       });
 
@@ -716,6 +782,7 @@ export default function CalendarScreen() {
     focusDate,
     arenaBookingsByDateMap,
     arenaStatusByDateMap,
+    derived,
   ]);
 
   const visibleRegularDays = React.useMemo(() => {
@@ -787,6 +854,50 @@ export default function CalendarScreen() {
     setAssignmentModal({ visible: true, mode: 'create' });
   }, []);
 
+  const openRecurringModal = React.useCallback(() => {
+    setRecurringForm(buildRecurringDefaults());
+    setRecurringModalVisible(true);
+  }, [buildRecurringDefaults]);
+
+  const toggleRecurringWeekday = React.useCallback((weekday: WeekdayIndex) => {
+    setRecurringForm((prev) => {
+      const exists = prev.weekdays.includes(weekday);
+      const nextWeekdays = exists
+        ? prev.weekdays.filter((day) => day !== weekday)
+        : [...prev.weekdays, weekday].sort((a, b) => a - b);
+      return { ...prev, weekdays: nextWeekdays };
+    });
+  }, []);
+
+  const handleCreateRecurringAssignments = React.useCallback(async () => {
+    const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
+    const slotsCount =
+      Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
+    const durationMinutes = recurringForm.endTime
+      ? calculateDurationMinutes(recurringForm.startTime, recurringForm.endTime)
+      : null;
+    const payload: CreateRecurringAssignmentsInput = {
+      dateFrom: recurringForm.dateFrom,
+      dateTo: recurringForm.dateTo,
+      weekdays: recurringForm.weekdays,
+      startTime: recurringForm.startTime,
+      durationMinutes: durationMinutes ?? undefined,
+      title: recurringForm.title,
+      slotsCount,
+      assignToCurrentUser: recurringForm.assignToMe,
+    };
+    const result = await actions.createRecurringAssignments(payload);
+    if (result.success) {
+      const created = result.data?.createdCount ?? 0;
+      const skipped = result.data?.skippedCount ?? 0;
+      const skippedLabel = skipped ? `, hoppade över ${skipped}` : '';
+      toast.showToast(`Skapade ${created} pass${skippedLabel}.`, 'success');
+      setRecurringModalVisible(false);
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, recurringForm, toast]);
+
   const handleOpenProfile = React.useCallback(() => {
     router.push({ pathname: '/(tabs)/profile', params: { section: 'availability' } });
   }, [router]);
@@ -839,7 +950,7 @@ export default function CalendarScreen() {
         slot: assignment.slot,
         label: assignment.label,
         time: assignment.time,
-        note: assignment.note,
+        note: stripAssignmentNoteMetadata(assignment.note),
         assignToMe: assignment.assigneeId === currentUserId && assignment.status === 'assigned',
       });
     },
@@ -1154,6 +1265,15 @@ export default function CalendarScreen() {
           primaryActionDisabled={headerAction?.disabled}
         />
         {!isDesktopWeb ? <StableSwitcher /> : null}
+        {showOnboardingBack ? (
+          <TouchableOpacity
+            style={styles.onboardingBackButton}
+            onPress={() => router.replace(safeReturnTo as Href)}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.onboardingBackText}>Tillbaka till onboarding</Text>
+          </TouchableOpacity>
+        ) : null}
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
@@ -1201,6 +1321,18 @@ export default function CalendarScreen() {
               ))}
             </Card>
           )}
+          {activeFilter === 'Pass' && canManageAssignments ? (
+            <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
+              <TouchableOpacity
+                style={styles.recurringButton}
+                onPress={openRecurringModal}
+                activeOpacity={0.85}
+              >
+                <Feather name="repeat" size={14} color={palette.primary} />
+                <Text style={styles.recurringButtonText}>Skapa återkommande pass</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {activeFilter === 'Pass' && isDesktopWeb && passView === 'all' ? (
             <View style={styles.monthSection}>
@@ -2205,6 +2337,165 @@ export default function CalendarScreen() {
         </View>
       </Modal>
 
+      <Modal
+        transparent
+        animationType="fade"
+        visible={recurringModalVisible}
+        onRequestClose={() => setRecurringModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboard}
+          >
+            <Card tone="muted" style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+              <View style={styles.modalRow}>
+                <View style={styles.modalFieldFlex}>
+                  <Text style={styles.modalLabel}>Startdatum</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="ÅÅÅÅ-MM-DD"
+                    placeholderTextColor={palette.secondaryText}
+                    keyboardType="numbers-and-punctuation"
+                    value={recurringForm.dateFrom}
+                    onChangeText={(value) =>
+                      setRecurringForm((prev) => ({ ...prev, dateFrom: value }))
+                    }
+                    autoCapitalize="none"
+                  />
+                </View>
+                <View style={styles.modalFieldFlex}>
+                  <Text style={styles.modalLabel}>Slutdatum</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="ÅÅÅÅ-MM-DD"
+                    placeholderTextColor={palette.secondaryText}
+                    keyboardType="numbers-and-punctuation"
+                    value={recurringForm.dateTo}
+                    onChangeText={(value) =>
+                      setRecurringForm((prev) => ({ ...prev, dateTo: value }))
+                    }
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Veckodagar</Text>
+                <View style={styles.weekdayRow}>
+                  {WEEKDAY_LABELS.map((label, index) => {
+                    const weekday = index as WeekdayIndex;
+                    const active = recurringForm.weekdays.includes(weekday);
+                    return (
+                      <TouchableOpacity
+                        key={label}
+                        onPress={() => toggleRecurringWeekday(weekday)}
+                      >
+                        <Pill
+                          active={active}
+                          style={[styles.weekdayChip, active && styles.weekdayChipActive]}
+                        >
+                          <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
+                            {label}
+                          </Text>
+                        </Pill>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+              <View style={styles.modalRow}>
+                <View style={styles.modalFieldFlex}>
+                  <Text style={styles.modalLabel}>Start</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="07:00"
+                    placeholderTextColor={palette.secondaryText}
+                    keyboardType="numbers-and-punctuation"
+                    value={recurringForm.startTime}
+                    onChangeText={(value) =>
+                      setRecurringForm((prev) => ({ ...prev, startTime: value }))
+                    }
+                    autoCapitalize="none"
+                  />
+                </View>
+                <View style={styles.modalFieldFlex}>
+                  <Text style={styles.modalLabel}>Slut</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="08:00"
+                    placeholderTextColor={palette.secondaryText}
+                    keyboardType="numbers-and-punctuation"
+                    value={recurringForm.endTime}
+                    onChangeText={(value) =>
+                      setRecurringForm((prev) => ({ ...prev, endTime: value }))
+                    }
+                    autoCapitalize="none"
+                  />
+                </View>
+              </View>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Benämning</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="Mockning"
+                  placeholderTextColor={palette.secondaryText}
+                  value={recurringForm.title}
+                  onChangeText={(value) =>
+                    setRecurringForm((prev) => ({ ...prev, title: value }))
+                  }
+                />
+              </View>
+              <View style={styles.modalField}>
+                <Text style={styles.modalLabel}>Antal pass</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="1"
+                  placeholderTextColor={palette.secondaryText}
+                  keyboardType="number-pad"
+                  value={recurringForm.slotsCount}
+                  onChangeText={(value) =>
+                    setRecurringForm((prev) => ({ ...prev, slotsCount: value }))
+                  }
+                />
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.recurringAssignToggle,
+                  recurringForm.assignToMe && styles.recurringAssignToggleActive,
+                ]}
+                onPress={() =>
+                  setRecurringForm((prev) => ({ ...prev, assignToMe: !prev.assignToMe }))
+                }
+              >
+                <Text
+                  style={[
+                    styles.recurringAssignText,
+                    recurringForm.assignToMe && styles.recurringAssignTextActive,
+                  ]}
+                >
+                  {recurringForm.assignToMe ? 'Tilldelas mig direkt' : 'Låt passen vara öppna'}
+                </Text>
+              </TouchableOpacity>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalGhostButton}
+                  onPress={() => setRecurringModalVisible(false)}
+                >
+                  <Text style={styles.modalGhostText}>Avbryt</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.modalPrimaryButton}
+                  onPress={handleCreateRecurringAssignments}
+                >
+                  <Text style={styles.modalPrimaryText}>Skapa</Text>
+                </TouchableOpacity>
+              </View>
+            </Card>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
       <NewAssignmentModal
         visible={assignmentModal.visible}
         mode={assignmentModal.mode}
@@ -2381,6 +2672,7 @@ function RegularDayCard({
             time={slot.time}
             isLast={index === visibleSlots.length - 1}
             status={slot.status}
+            isMissed={slot.isMissed}
             onTake={
               slot.status === 'open'
                 ? () =>
@@ -2451,6 +2743,7 @@ function ScheduleIcon({
   time,
   isLast,
   status,
+  isMissed,
   onTake,
   onManage,
   onDecline,
@@ -2467,6 +2760,7 @@ function ScheduleIcon({
   time?: string;
   isLast?: boolean;
   status: AssignmentStatus;
+  isMissed: boolean;
   onTake?: () => void;
   onManage?: () => void;
   onDecline?: () => void;
@@ -2475,6 +2769,7 @@ function ScheduleIcon({
   const noteColor = note ? resolveNoteColor(note) : undefined;
   const isOpen = status === 'open';
   const isCompleted = status === 'completed';
+  const showOpenTag = !note && isOpen && !isMissed;
   const showDefaultTag =
     isMine && status === 'assigned' && (assignedVia === 'default' || isDefault);
 
@@ -2518,7 +2813,15 @@ function ScheduleIcon({
                   <Text style={styles.scheduleTagText}>{note}</Text>
                 </View>
               ) : null}
-              {!note && isOpen ? (
+              {isMissed ? (
+                <View style={[styles.scheduleTag, styles.scheduleTagMissed]}>
+                  <Feather name="alert-triangle" size={12} color={palette.warning} />
+                  <Text style={[styles.scheduleTagText, styles.scheduleTagMissedText]}>
+                    Missat
+                  </Text>
+                </View>
+              ) : null}
+              {showOpenTag ? (
                 <View style={[styles.scheduleTag, styles.scheduleTagOpen]}>
                   <Feather name="alert-circle" size={12} color={palette.primary} />
                   <Text style={[styles.scheduleTagText, styles.scheduleTagOpenText]}>
@@ -2790,11 +3093,12 @@ function formatWeekRange(start: Date, end: Date) {
 }
 
 function formatPassNote(note?: string, status?: AssignmentStatus) {
-  if (!note) {
+  const cleanedNote = stripAssignmentNoteMetadata(note);
+  if (!cleanedNote) {
     return undefined;
   }
 
-  let cleaned = note.trim();
+  let cleaned = cleanedNote.trim();
   if (!cleaned) {
     return undefined;
   }
@@ -2870,6 +3174,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     marginBottom: 12,
   },
+  onboardingBackButton: {
+    marginTop: 12,
+    marginHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    backgroundColor: palette.primary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.primary,
+  },
+  onboardingBackText: {
+    color: palette.inverseText,
+    fontWeight: '600',
+  },
   filterRow: {
     flexDirection: 'row',
     padding: space.xs,
@@ -2939,6 +3257,29 @@ const styles = StyleSheet.create({
   },
   legendCardDesktop: {
     justifyContent: 'flex-start',
+  },
+  recurringRow: {
+    alignItems: 'flex-start',
+    paddingHorizontal: 4,
+  },
+  recurringRowDesktop: {
+    paddingHorizontal: 6,
+  },
+  recurringButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  recurringButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primary,
   },
   legendItem: {
     flexDirection: 'row',
@@ -3368,6 +3709,9 @@ const styles = StyleSheet.create({
   scheduleTagOpen: {
     backgroundColor: 'rgba(10,132,255,0.12)',
   },
+  scheduleTagMissed: {
+    backgroundColor: 'rgba(255,149,0,0.14)',
+  },
   scheduleTagComplete: {
     backgroundColor: 'rgba(27,169,122,0.14)',
   },
@@ -3381,6 +3725,9 @@ const styles = StyleSheet.create({
   },
   scheduleTagOpenText: {
     color: palette.primary,
+  },
+  scheduleTagMissedText: {
+    color: palette.warning,
   },
   scheduleTagCompleteText: {
     color: palette.success,
@@ -3711,6 +4058,49 @@ const styles = StyleSheet.create({
   modalFieldFlex: {
     flex: 1,
     gap: 6,
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  weekdayChip: {
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weekdayChipActive: {
+    backgroundColor: palette.primary,
+  },
+  weekdayText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
+  weekdayTextActive: {
+    color: palette.inverseText,
+  },
+  recurringAssignToggle: {
+    marginTop: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  recurringAssignToggleActive: {
+    backgroundColor: palette.primary,
+  },
+  recurringAssignText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
+  recurringAssignTextActive: {
+    color: palette.inverseText,
   },
   modalActions: {
     flexDirection: 'row',
