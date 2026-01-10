@@ -1,4 +1,4 @@
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import React from 'react';
 import { AppDataProvider, useAppData } from '@/context/AppDataContext';
@@ -60,6 +60,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const { state, hydrating, derived } = useAppData();
   const segments = useSegments();
+  const searchParams = useGlobalSearchParams();
   const router = useRouter();
 
   React.useEffect(() => {
@@ -67,13 +68,24 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
       return;
     }
     const rootSegment = segments[0];
+    const childSegment = segments[1];
     const inOnboarding = rootSegment === '(onboarding)';
     const currentUser = state.users[state.currentUserId];
     const needsOnboarding =
       derived.canManageOnboardingAny && !currentUser?.onboardingDismissed;
+    const nextRoute = '/(onboarding)/setup';
+    const fromOnboardingRaw = searchParams.fromOnboarding;
+    const fromOnboarding = Array.isArray(fromOnboardingRaw)
+      ? fromOnboardingRaw[0]
+      : fromOnboardingRaw;
+    const allowCalendar =
+      rootSegment === '(tabs)' && childSegment === 'calendar' && fromOnboarding === '1';
 
     if (needsOnboarding && !inOnboarding) {
-      router.replace('/(onboarding)');
+      if (allowCalendar) {
+        return;
+      }
+      router.replace(nextRoute);
     }
   }, [
     loading,
@@ -83,7 +95,9 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     router,
     state.currentUserId,
     state.users,
+    state.stables.length,
     derived.canManageOnboardingAny,
+    searchParams.fromOnboarding,
   ]);
 
   return <>{children}</>;

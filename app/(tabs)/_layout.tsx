@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tabs } from 'expo-router';
+import { Tabs, useGlobalSearchParams } from 'expo-router';
 import { View, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
@@ -25,6 +25,12 @@ export default function TabLayout() {
   const { session, loading } = useAuth();
   const { width } = useWindowDimensions();
   const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const searchParams = useGlobalSearchParams();
+  const fromOnboardingRaw = searchParams.fromOnboarding;
+  const fromOnboarding = Array.isArray(fromOnboardingRaw)
+    ? fromOnboardingRaw[0]
+    : fromOnboardingRaw;
+  const hideTabs = fromOnboarding === '1';
 
   if (loading) {
     return null;
@@ -38,7 +44,11 @@ export default function TabLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: isDesktopWeb ? [styles.tabBar, styles.tabBarHidden] : styles.tabBar,
+        tabBarStyle: hideTabs
+          ? styles.tabBarHidden
+          : isDesktopWeb
+            ? [styles.tabBar, styles.tabBarHidden]
+            : styles.tabBar,
         tabBarBackground: isDesktopWeb
           ? undefined
           : () => <BlurView intensity={12.5} style={styles.blurBackground} />,
@@ -110,7 +120,7 @@ export default function TabLayout() {
     </Tabs>
   );
 
-  if (!isDesktopWeb) {
+  if (!isDesktopWeb || hideTabs) {
     return tabs;
   }
 
