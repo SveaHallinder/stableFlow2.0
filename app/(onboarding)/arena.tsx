@@ -123,6 +123,11 @@ export default function OnboardingResources() {
     }
 
     if (useFarmResources && activeFarmId) {
+      const accessStableId = farmStables[0]?.id || activeStableId || stables[0]?.id;
+      if (!accessStableId) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return false;
+      }
       const farmName = activeFarm?.name || 'Gård';
       const farmResult = actions.upsertFarm({
         id: activeFarmId,
@@ -130,6 +135,7 @@ export default function OnboardingResources() {
         location: activeFarm?.location,
         hasIndoorArena: draft.hasArena,
         arenaNote: activeFarm?.arenaNote,
+        accessStableId,
       });
       if (!farmResult.success) {
         toast.showToast(farmResult.reason, 'error');

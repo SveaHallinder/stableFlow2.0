@@ -502,6 +502,7 @@ export type UpsertFarmInput = {
   location?: string;
   hasIndoorArena?: boolean;
   arenaNote?: string;
+  accessStableId?: string;
 };
 
 export type UpsertHorseInput = {
@@ -5479,7 +5480,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     (input: UpsertFarmInput): ActionResult<Farm> => {
       const current = stateRef.current;
       const accessCheck = ensurePermission(
-        current.currentStableId,
+        input.accessStableId ?? current.currentStableId,
         (permissions) => permissions.canManageOnboarding,
       );
       if (!accessCheck.success) {
