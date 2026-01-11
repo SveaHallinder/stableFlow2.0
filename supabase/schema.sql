@@ -51,6 +51,8 @@ create table if not exists public.farms (
   has_indoor_arena boolean default false,
   arena_note text
 );
+alter table public.farms add column if not exists created_by uuid references public.profiles(id) on delete set null;
+alter table public.farms alter column created_by set default auth.uid();
 alter table public.farms enable row level security;
 
 -- Stables
@@ -132,7 +134,8 @@ create or replace function public.is_stable_member(p_stable_id uuid)
 returns boolean
 language sql
 stable
-set search_path = public
+security definer set search_path = public
+set row_security = off
 as $$
   select exists (
     select 1
@@ -265,7 +268,8 @@ create or replace function public.is_stable_owner(p_stable_id uuid)
 returns boolean
 language sql
 stable
-set search_path = public
+security definer set search_path = public
+set row_security = off
 as $$
   select exists (
     select 1
@@ -274,6 +278,21 @@ as $$
       and m.user_id = auth.uid()
       and m.role = 'admin'
       and coalesce(m.access, 'view') = 'owner'
+  );
+$$;
+
+create or replace function public.is_stable_creator(p_stable_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stables s
+    where s.id = p_stable_id
+      and s.created_by = auth.uid()
   );
 $$;
 
@@ -628,42 +647,57 @@ create policy "profiles_insert_self" on public.profiles
 
 drop policy if exists "farms_select" on public.farms;
 create policy "farms_select" on public.farms
-  for select using (
-    exists (
-      select 1 from public.stables s
-      join public.stable_members m on m.stable_id = s.id
-      where s.farm_id = farms.id and m.user_id = (select auth.uid())
-    )
-  );
+  for select using (created_by = auth.uid());
 drop policy if exists "farms_insert" on public.farms;
-create policy "farms_insert" on public.farms for insert with check ((select auth.uid()) is not null);
+create policy "farms_insert" on public.farms for insert with check (created_by = auth.uid());
 drop policy if exists "farms_update" on public.farms;
-create policy "farms_update" on public.farms for update using ((select auth.uid()) is not null);
+create policy "farms_update" on public.farms for update using (created_by = auth.uid());
 drop policy if exists "farms_delete" on public.farms;
-create policy "farms_delete" on public.farms for delete using ((select auth.uid()) is not null);
+create policy "farms_delete" on public.farms for delete using (created_by = auth.uid());
 
 drop policy if exists "stables_select" on public.stables;
-create policy "stables_select" on public.stables for select using (public.is_stable_member(id));
+create policy "stables_select" on public.stables
+  for select using (
+    created_by = auth.uid()
+    or exists (
+      select 1
+      from public.stable_members m
+      where m.stable_id = stables.id
+        and m.user_id = auth.uid()
+    )
+  );
 drop policy if exists "stables_insert" on public.stables;
-create policy "stables_insert" on public.stables for insert with check ((select auth.uid()) is not null);
+create policy "stables_insert" on public.stables for insert with check (created_by = auth.uid());
 drop policy if exists "stables_update" on public.stables;
-create policy "stables_update" on public.stables for update using (public.is_stable_owner(id));
+create policy "stables_update" on public.stables
+  for update using (
+    created_by = auth.uid()
+    or exists (
+      select 1
+      from public.stable_members m
+      where m.stable_id = stables.id
+        and m.user_id = auth.uid()
+    )
+  );
 drop policy if exists "stables_delete" on public.stables;
-create policy "stables_delete" on public.stables for delete using (public.is_stable_owner(id));
+create policy "stables_delete" on public.stables for delete using (created_by = auth.uid());
 
 drop policy if exists "stable_members_select" on public.stable_members;
 create policy "stable_members_select" on public.stable_members for select using (public.is_stable_member(stable_id));
 drop policy if exists "stable_members_insert" on public.stable_members;
+drop policy if exists "stable_members_insert_owner_bootstrap" on public.stable_members;
+drop policy if exists "stable_members_insert_bootstrap_creator" on public.stable_members;
 create policy "stable_members_insert" on public.stable_members
   for insert with check (
     public.is_stable_owner(stable_id)
-    or exists (
-      select 1
-      from public.stables s
-      where s.id = stable_id and s.created_by = (select auth.uid())
+    or (
+      (select auth.uid()) = user_id
+      and public.is_stable_creator(stable_id)
     )
   );
 drop policy if exists "stable_members_update" on public.stable_members;
+drop policy if exists "stable_members_update_owner_bootstrap" on public.stable_members;
+drop policy if exists "stable_members_update_bootstrap_creator" on public.stable_members;
 create policy "stable_members_update" on public.stable_members for update using (public.is_stable_owner(stable_id));
 drop policy if exists "stable_members_delete" on public.stable_members;
 create policy "stable_members_delete" on public.stable_members for delete using (public.is_stable_owner(stable_id));
@@ -945,60 +979,6 @@ create policy "messages_insert" on public.messages
             where cm.conversation_id = c.id and cm.user_id = (select auth.uid())
           )
         )
-    )
-  );
-
--- Storage policies require supabase_admin (storage.objects owned by supabase_storage_admin).
--- Run this block in SQL Editor with role = supabase_admin.
-alter table storage.objects enable row level security;
-
-insert into storage.buckets (id, name, public)
-values ('posts', 'posts', false)
-on conflict (id) do update set public = false;
-
-drop policy if exists "posts_storage_read" on storage.objects;
-create policy "posts_storage_read" on storage.objects
-  for select using (
-    bucket_id = 'posts'
-    and public.is_stable_member(public.storage_stable_id(name))
-  );
-
-drop policy if exists "posts_storage_insert" on storage.objects;
-create policy "posts_storage_insert" on storage.objects
-  for insert with check (
-    bucket_id = 'posts'
-    and owner = (select auth.uid())
-    and public.is_stable_member(public.storage_stable_id(name))
-  );
-
-drop policy if exists "posts_storage_update" on storage.objects;
-create policy "posts_storage_update" on storage.objects
-  for update
-  using (
-    bucket_id = 'posts'
-    and public.is_stable_member(public.storage_stable_id(name))
-    and (
-      owner = (select auth.uid())
-      or public.is_stable_owner(public.storage_stable_id(name))
-    )
-  )
-  with check (
-    bucket_id = 'posts'
-    and public.is_stable_member(public.storage_stable_id(name))
-    and (
-      owner = (select auth.uid())
-      or public.is_stable_owner(public.storage_stable_id(name))
-    )
-  );
-
-drop policy if exists "posts_storage_delete" on storage.objects;
-create policy "posts_storage_delete" on storage.objects
-  for delete using (
-    bucket_id = 'posts'
-    and public.is_stable_member(public.storage_stable_id(name))
-    and (
-      owner = (select auth.uid())
-      or public.is_stable_owner(public.storage_stable_id(name))
     )
   );
 

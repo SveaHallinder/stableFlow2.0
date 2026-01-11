@@ -8,6 +8,7 @@ import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
+import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
 
@@ -23,7 +24,7 @@ export default function OnboardingFarm() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : '/(onboarding)/setup';
-  const { actions } = useAppData();
+  const { actions, state } = useAppData();
 
   const [farmName, setFarmName] = React.useState('');
   const [stablesDraft, setStablesDraft] = React.useState<StableDraft[]>([
@@ -46,7 +47,7 @@ export default function OnboardingFarm() {
     setStablesDraft((prev) => prev.map((item) => (item.id === id ? { ...item, ...updates } : item)));
   }, []);
 
-  const handleSave = React.useCallback(() => {
+  const handleSave = React.useCallback(async () => {
     if (saving) {
       return;
     }
@@ -70,63 +71,181 @@ export default function OnboardingFarm() {
     }
 
     setSaving(true);
-    const farmResult = actions.upsertFarm({
-      name,
-      location: undefined,
-      hasIndoorArena: false,
-      arenaNote: '',
-    });
-    if (!farmResult.success || !farmResult.data) {
-      toast.showToast(farmResult.success ? 'Kunde inte skapa gård.' : farmResult.reason, 'error');
-      setSaving(false);
-      return;
-    }
-
-    const createdStableIds: { id: string; adminType: 'self' | 'invite'; adminEmail: string }[] = [];
-    for (const item of trimmedStables) {
-      const stableResult = actions.upsertStable({
-        name: item.name,
-        farmId: farmResult.data.id,
-      });
-      if (!stableResult.success || !stableResult.data) {
-        toast.showToast('Kunde inte skapa stall.', 'error');
-        setSaving(false);
+    try {
+      let userId = state.currentUserId;
+      if (!userId) {
+        const userResult = await supabase.auth.getUser();
+        userId = userResult.data.user?.id ?? '';
+      }
+      if (!userId) {
+        toast.showToast('Du måste logga in igen.', 'error');
         return;
       }
-      createdStableIds.push({
-        id: stableResult.data.id,
-        adminType: item.adminType,
-        adminEmail: item.adminEmail,
-      });
-    }
 
-    for (const item of createdStableIds) {
-      if (item.adminType === 'invite' && item.adminEmail) {
-        const inviteResult = actions.addMember({
-          name: 'Admin',
-          email: item.adminEmail,
-          stableId: item.id,
-          role: 'admin',
-          customRole: 'Stallansvarig',
-          access: 'owner',
+      const farmId = generateId();
+      const farmPayload = {
+        id: farmId,
+        name,
+        location: null,
+        has_indoor_arena: false,
+        arena_note: null,
+        created_by: userId,
+      };
+      console.info('[supabase] farms insert (onboarding farm)', { userId, payload: farmPayload });
+      const farmInsert = await supabase.from('farms').insert(farmPayload);
+      console.info('[supabase] farms insert result (onboarding farm)', {
+        userId,
+        status: farmInsert.status,
+        statusText: farmInsert.statusText,
+        error: farmInsert.error,
+      });
+      if (farmInsert.error) {
+        toast.showToast(`Kunde inte skapa gård. ${farmInsert.error.message}`, 'error');
+        return;
+      }
+
+      const farmResult = actions.upsertFarm(
+        {
+          id: farmId,
+          name,
+          location: undefined,
+          hasIndoorArena: false,
+          arenaNote: '',
+        },
+        { skipPersist: true, skipPermission: true },
+      );
+      if (!farmResult.success || !farmResult.data) {
+        toast.showToast(farmResult.success ? 'Kunde inte skapa gård.' : farmResult.reason, 'error');
+        return;
+      }
+
+      const createdStableIds: { id: string; adminType: 'self' | 'invite'; adminEmail: string }[] = [];
+      for (const item of trimmedStables) {
+        const stableId = generateId();
+        const stablePayload = {
+          id: stableId,
+          name: item.name,
+          description: null,
+          location: null,
+          farm_id: farmId,
+          created_by: userId,
+          ride_types: [],
+          settings: null,
+        };
+        console.info('[supabase] stables insert (onboarding farm)', {
+          userId,
+          stableId,
+          payload: stablePayload,
         });
-        if (inviteResult.success && inviteResult.data?.inviteCode) {
-          toast.showToast(`Inbjudningskod ${inviteResult.data.inviteCode}`, 'success');
+        const stableInsert = await supabase.from('stables').insert(stablePayload);
+        console.info('[supabase] stables insert result (onboarding farm)', {
+          userId,
+          stableId,
+          status: stableInsert.status,
+          statusText: stableInsert.statusText,
+          error: stableInsert.error,
+        });
+        if (stableInsert.error) {
+          toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
+          return;
+        }
+
+        const memberPayload = {
+          stable_id: stableId,
+          user_id: userId,
+          role: 'admin',
+          access: 'owner',
+          rider_role: 'owner',
+        };
+        console.info('[supabase] stable_members insert (onboarding farm)', {
+          userId,
+          stableId,
+          payload: memberPayload,
+        });
+        const memberInsert = await supabase.from('stable_members').insert(memberPayload);
+        console.info('[supabase] stable_members insert result (onboarding farm)', {
+          userId,
+          stableId,
+          status: memberInsert.status,
+          statusText: memberInsert.statusText,
+          error: memberInsert.error,
+        });
+        if (memberInsert.error) {
+          toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
+          return;
+        }
+
+        const conversationPayload = {
+          stable_id: stableId,
+          title: item.name,
+          is_group: true,
+          created_by_user_id: userId,
+        };
+        console.info('[supabase] conversations insert (onboarding farm)', {
+          userId,
+          stableId,
+          payload: conversationPayload,
+        });
+        const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
+        console.info('[supabase] conversations insert result (onboarding farm)', {
+          userId,
+          stableId,
+          status: conversationInsert.status,
+          statusText: conversationInsert.statusText,
+          error: conversationInsert.error,
+        });
+        if (conversationInsert.error && conversationInsert.error.code !== '23505') {
+          toast.showToast('Kunde inte skapa stallchatten.', 'error');
+        }
+
+        const stableResult = actions.upsertStable(
+          {
+            id: stableId,
+            name: item.name,
+            farmId,
+          },
+          { skipPersist: true, skipPermission: true },
+        );
+        if (!stableResult.success || !stableResult.data) {
+          toast.showToast('Kunde inte skapa stall.', 'error');
+          return;
+        }
+        createdStableIds.push({
+          id: stableId,
+          adminType: item.adminType,
+          adminEmail: item.adminEmail,
+        });
+      }
+
+      for (const item of createdStableIds) {
+        if (item.adminType === 'invite' && item.adminEmail) {
+          const inviteResult = actions.addMember({
+            name: 'Admin',
+            email: item.adminEmail,
+            stableId: item.id,
+            role: 'admin',
+            customRole: 'Stallansvarig',
+            access: 'owner',
+          });
+          if (inviteResult.success && inviteResult.data?.inviteCode) {
+            toast.showToast(`Inbjudningskod ${inviteResult.data.inviteCode}`, 'success');
+          }
         }
       }
-    }
 
-    const selfStable = createdStableIds.find((item) => item.adminType === 'self');
-    if (selfStable) {
-      actions.setCurrentStable(selfStable.id);
-    } else if (createdStableIds[0]) {
-      actions.setCurrentStable(createdStableIds[0].id);
-    }
+      const selfStable = createdStableIds.find((item) => item.adminType === 'self');
+      if (selfStable) {
+        actions.setCurrentStable(selfStable.id);
+      } else if (createdStableIds[0]) {
+        actions.setCurrentStable(createdStableIds[0].id);
+      }
 
-    toast.showToast('Gård och stall sparade.', 'success');
-    setSaving(false);
-    router.replace(returnTo);
-  }, [actions, farmName, router, returnTo, saving, stablesDraft, toast]);
+      toast.showToast('Gård och stall sparade.', 'success');
+      router.replace(returnTo);
+    } finally {
+      setSaving(false);
+    }
+  }, [actions, farmName, router, returnTo, saving, stablesDraft, state.currentUserId, toast]);
 
   const handleBack = React.useCallback(() => {
     router.replace(returnTo);
@@ -141,7 +260,8 @@ export default function OnboardingFarm() {
       allowExit={false}
       onBack={handleBack}
       onNext={handleSave}
-      nextLabel="Spara och fortsätt"
+      nextLabel={saving ? 'Sparar...' : 'Spara och fortsätt'}
+      disableNext={saving}
       showProgress
     >
       <Card tone="muted" style={styles.card}>

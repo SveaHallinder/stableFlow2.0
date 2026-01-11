@@ -94,6 +94,7 @@ export default function OverviewScreen() {
   const router = useRouter();
   const { state, derived, actions } = useAppData();
   const {
+    assignmentHistory,
     assignments,
     alerts,
     messages: messageItems,
@@ -161,6 +162,32 @@ export default function OverviewScreen() {
     () => postItems.filter((post) => !post.stableId || post.stableId === currentStableId),
     [postItems, currentStableId],
   );
+  const recentActivities = React.useMemo(() => {
+    type AssignmentHistoryEntry = (typeof assignmentHistory)[number];
+    if (!assignmentHistory.length) {
+      return [];
+    }
+    const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment]));
+    const seen = new Map<string, { activity: AssignmentHistoryEntry; count: number }>();
+    const ordered: Array<{ activity: AssignmentHistoryEntry; count: number }> = [];
+
+    for (const activity of assignmentHistory) {
+      const assignment = assignmentById.get(activity.assignmentId);
+      if (!assignment || assignment.stableId !== currentStableId) {
+        continue;
+      }
+      const existing = seen.get(activity.label);
+      if (existing) {
+        existing.count += 1;
+        continue;
+      }
+      const entry = { activity, count: 1 };
+      seen.set(activity.label, entry);
+      ordered.push(entry);
+    }
+
+    return ordered.slice(0, 3);
+  }, [assignmentHistory, assignments, currentStableId]);
 
   const latestEvent = alerts[0];
   const recentEvents = alerts.slice(0, 3);
@@ -344,6 +371,7 @@ export default function OverviewScreen() {
     ],
     [todaySummary],
   );
+  const hasTodayAssignments = todaySummary.total > 0;
 
   const visibleMessages = messagesExpanded ? activeMessages : activeMessages.slice(0, 1);
   const visiblePosts = postsExpanded ? activePosts : activePosts.slice(0, 1);
@@ -565,39 +593,48 @@ export default function OverviewScreen() {
             Idag
           </Text>
           <Text style={[styles.summarySubtitle, !isDesktopWeb && styles.summarySubtitleMobile]}>
-            Status för dagens pass
+            {hasTodayAssignments ? 'Status för dagens pass' : 'Inga pass idag'}
           </Text>
         </View>
-        <View style={[styles.summaryBadge, !isDesktopWeb && styles.summaryBadgeMobile]}>
-          <Feather name="clock" size={14} color={palette.primary} />
-          <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
-        </View>
-      </View>
-      <View style={[styles.summaryTiles, isDesktopWeb && styles.summaryTilesDesktop]}>
-        {summaryStats.map((item) => (
-          <View
-            key={item.id}
-            style={[styles.summaryTile, !isDesktopWeb && styles.summaryTileMobile]}
-          >
-            <Text style={styles.summaryValue}>{item.value}</Text>
-            <Text style={[styles.summaryLabel, !isDesktopWeb && styles.summaryLabelMobile]}>
-              {item.label}
-            </Text>
-            {item.meta ? (
-              <Text style={[styles.summaryMeta, !isDesktopWeb && styles.summaryMetaMobile]}>
-                {item.meta}
-              </Text>
-            ) : null}
+        {hasTodayAssignments ? (
+          <View style={[styles.summaryBadge, !isDesktopWeb && styles.summaryBadgeMobile]}>
+            <Feather name="clock" size={14} color={palette.primary} />
+            <Text style={styles.summaryBadgeText}>{derived.summary.nextUpdateLabel}</Text>
           </View>
-        ))}
+        ) : null}
       </View>
-      {derived.recentActivities.length > 0 ? (
+      {hasTodayAssignments ? (
+        <View style={[styles.summaryTiles, isDesktopWeb && styles.summaryTilesDesktop]}>
+          {summaryStats.map((item) => (
+            <View
+              key={item.id}
+              style={[styles.summaryTile, !isDesktopWeb && styles.summaryTileMobile]}
+            >
+              <Text style={styles.summaryValue}>{item.value}</Text>
+              <Text style={[styles.summaryLabel, !isDesktopWeb && styles.summaryLabelMobile]}>
+                {item.label}
+              </Text>
+              {item.meta ? (
+                <Text style={[styles.summaryMeta, !isDesktopWeb && styles.summaryMetaMobile]}>
+                  {item.meta}
+                </Text>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.summaryEmpty}>Lägg till pass i kalendern för att se status här.</Text>
+      )}
+      {recentActivities.length > 0 ? (
         <View style={styles.activityColumn}>
           <Text style={styles.activityTitle}>Senaste aktivitet</Text>
           <View style={styles.activityRow}>
-            {derived.recentActivities.slice(0, 3).map((activity) => (
+            {recentActivities.map(({ activity, count }) => (
               <View key={activity.id} style={styles.activityChip}>
-                <Text style={styles.activityChipText}>{activity.label}</Text>
+                <Text style={styles.activityChipText}>
+                  {activity.label}
+                  {count > 1 ? ` ×${count}` : ''}
+                </Text>
               </View>
             ))}
           </View>
@@ -1575,6 +1612,11 @@ const styles = StyleSheet.create({
   },
   summaryTilesDesktop: {
     gap: 14,
+  },
+  summaryEmpty: {
+    marginTop: 8,
+    fontSize: 13,
+    color: palette.mutedText,
   },
   summaryTile: {
     flex: 1,

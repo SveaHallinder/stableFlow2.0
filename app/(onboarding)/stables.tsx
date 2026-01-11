@@ -7,6 +7,8 @@ import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { generateId } from '@/lib/ids';
+import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
 
@@ -17,33 +19,134 @@ export default function OnboardingStables() {
   const returnToParam = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
   const returnTo: Href =
     returnToParam && returnToParam.startsWith('/') ? (returnToParam as Href) : '/(onboarding)/setup';
-  const { actions } = useAppData();
+  const { actions, state } = useAppData();
 
   const [draft, setDraft] = React.useState({ name: '', location: '' });
+  const [saving, setSaving] = React.useState(false);
 
   const handleBack = React.useCallback(() => {
     router.replace(returnTo);
   }, [router, returnTo]);
 
-  const handleCreateStable = React.useCallback(() => {
+  const handleCreateStable = React.useCallback(async () => {
+    if (saving) {
+      return;
+    }
     const name = draft.name.trim();
     if (!name) {
       toast.showToast('Stallnamn krävs.', 'error');
       return;
     }
-    const result = actions.upsertStable({
-      name,
-      location: draft.location.trim() || undefined,
-    });
-    if (!result.success || !result.data) {
-      toast.showToast(result.success ? 'Kunde inte skapa stall.' : result.reason, 'error');
-      return;
+    setSaving(true);
+    try {
+      let userId = state.currentUserId;
+      if (!userId) {
+        const userResult = await supabase.auth.getUser();
+        userId = userResult.data.user?.id ?? '';
+      }
+      if (!userId) {
+        toast.showToast('Du måste logga in igen.', 'error');
+        return;
+      }
+
+      const stableId = generateId();
+      const location = draft.location.trim();
+      const stablePayload = {
+        id: stableId,
+        name,
+        description: null,
+        location: location || null,
+        farm_id: null,
+        created_by: userId,
+        ride_types: [],
+        settings: null,
+      };
+      console.info('[supabase] stables insert (onboarding stable)', {
+        userId,
+        stableId,
+        payload: stablePayload,
+      });
+      const stableInsert = await supabase.from('stables').insert(stablePayload);
+      console.info('[supabase] stables insert result (onboarding stable)', {
+        userId,
+        stableId,
+        status: stableInsert.status,
+        statusText: stableInsert.statusText,
+        error: stableInsert.error,
+      });
+      if (stableInsert.error) {
+        toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
+        return;
+      }
+
+      const memberPayload = {
+        stable_id: stableId,
+        user_id: userId,
+        role: 'admin',
+        access: 'owner',
+        rider_role: 'owner',
+      };
+      console.info('[supabase] stable_members insert (onboarding stable)', {
+        userId,
+        stableId,
+        payload: memberPayload,
+      });
+      const memberInsert = await supabase.from('stable_members').insert(memberPayload);
+      console.info('[supabase] stable_members insert result (onboarding stable)', {
+        userId,
+        stableId,
+        status: memberInsert.status,
+        statusText: memberInsert.statusText,
+        error: memberInsert.error,
+      });
+      if (memberInsert.error) {
+        toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
+        return;
+      }
+
+      const conversationPayload = {
+        stable_id: stableId,
+        title: name,
+        is_group: true,
+        created_by_user_id: userId,
+      };
+      console.info('[supabase] conversations insert (onboarding stable)', {
+        userId,
+        stableId,
+        payload: conversationPayload,
+      });
+      const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
+      console.info('[supabase] conversations insert result (onboarding stable)', {
+        userId,
+        stableId,
+        status: conversationInsert.status,
+        statusText: conversationInsert.statusText,
+        error: conversationInsert.error,
+      });
+      if (conversationInsert.error && conversationInsert.error.code !== '23505') {
+        toast.showToast('Kunde inte skapa stallchatten.', 'error');
+      }
+
+      const result = actions.upsertStable(
+        {
+          id: stableId,
+          name,
+          location: location || undefined,
+        },
+        { skipPersist: true, skipPermission: true },
+      );
+      if (!result.success || !result.data) {
+        toast.showToast(result.success ? 'Kunde inte skapa stall.' : result.reason, 'error');
+        return;
+      }
+      actions.setCurrentStable(stableId);
+      toast.showToast('Stall skapat.', 'success');
+      setDraft({ name: '', location: '' });
+      router.replace(returnTo);
+    } finally {
+      setSaving(false);
     }
-    actions.setCurrentStable(result.data.id);
-    toast.showToast('Stall skapat.', 'success');
-    setDraft({ name: '', location: '' });
-    router.replace(returnTo);
-  }, [actions, draft.location, draft.name, router, toast, returnTo]);
+  }, [actions, draft.location, draft.name, router, saving, state.currentUserId, toast, returnTo]);
 
   return (
     <OnboardingShell
@@ -72,8 +175,13 @@ export default function OnboardingStables() {
             onChangeText={(text) => setDraft((prev) => ({ ...prev, location: text }))}
             style={styles.input}
           />
-          <TouchableOpacity style={styles.primaryButton} onPress={handleCreateStable} activeOpacity={0.9}>
-            <Text style={styles.primaryLabel}>Skapa stall</Text>
+          <TouchableOpacity
+            style={[styles.primaryButton, saving && styles.primaryButtonDisabled]}
+            onPress={handleCreateStable}
+            activeOpacity={0.9}
+            disabled={saving}
+          >
+            <Text style={styles.primaryLabel}>{saving ? 'Skapar...' : 'Skapa stall'}</Text>
           </TouchableOpacity>
         </View>
       </Card>
@@ -100,6 +208,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6,
   },
   primaryLabel: { color: palette.inverseText, fontWeight: '600' },
 });

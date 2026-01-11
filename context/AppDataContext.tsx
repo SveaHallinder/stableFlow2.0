@@ -869,6 +869,11 @@ export type ActionResult<T = void> =
   | { success: true; data?: T }
   | { success: false; reason: string };
 
+type PersistOptions = {
+  skipPersist?: boolean;
+  skipPermission?: boolean;
+};
+
 type RefreshReason = 'join' | 'leave' | 'switch' | 'manual' | 'init';
 
 type RefreshOptions = {
@@ -946,10 +951,10 @@ type AppDataContextValue = {
     refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
     updateProfile: (input: UpdateProfileInput) => ActionResult<UserProfile>;
-    upsertFarm: (input: UpsertFarmInput) => ActionResult<Farm>;
+    upsertFarm: (input: UpsertFarmInput, options?: PersistOptions) => ActionResult<Farm>;
     deleteFarm: (farmId: string) => ActionResult;
-    upsertStable: (input: UpsertStableInput) => ActionResult<Stable>;
-    updateStable: (input: { id: string; updates: StableUpdates }) => ActionResult<Stable>;
+    upsertStable: (input: UpsertStableInput, options?: PersistOptions) => ActionResult<Stable>;
+    updateStable: (input: { id: string; updates: StableUpdates }, options?: PersistOptions) => ActionResult<Stable>;
     deleteStable: (stableId: string) => ActionResult;
     upsertHorse: (input: UpsertHorseInput) => ActionResult<Horse>;
     deleteHorse: (horseId: string) => ActionResult;
@@ -2213,13 +2218,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentInsert = React.useCallback(
     async (assignment: Assignment) => {
-      if (!user) return;
+      if (!user) return { error: new Error('Missing session') };
       const { error } = await supabase
         .from('assignments')
         .insert(buildAssignmentInsertPayload(assignment));
       if (error) {
         console.warn('Kunde inte spara pass', error);
       }
+      return { error };
     },
     [user],
   );
@@ -2799,15 +2805,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistFarmUpsert = React.useCallback(
     async (farm: Farm) => {
       if (!user) return;
-      const { error } = await supabase.from('farms').upsert({
+      const payload = {
         id: farm.id,
         name: farm.name,
         location: farm.location ?? null,
         has_indoor_arena: farm.hasIndoorArena ?? null,
         arena_note: farm.arenaNote ?? null,
+      };
+      console.info('[supabase] farms upsert', { userId: user.id, payload });
+      const result = await supabase.from('farms').upsert(payload);
+      console.info('[supabase] farms upsert result', {
+        userId: user.id,
+        status: result.status,
+        statusText: result.statusText,
+        error: result.error,
       });
-      if (error) {
-        console.warn('Kunde inte spara gård', error);
+      if (result.error) {
+        console.warn('Kunde inte spara gård', result.error);
       }
     },
     [user],
@@ -2816,9 +2830,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistFarmDelete = React.useCallback(
     async (farmId: string) => {
       if (!user) return;
-      const { error } = await supabase.from('farms').delete().eq('id', farmId);
-      if (error) {
-        console.warn('Kunde inte ta bort gård', error);
+      console.info('[supabase] farms delete', { userId: user.id, farmId });
+      const result = await supabase.from('farms').delete().eq('id', farmId);
+      console.info('[supabase] farms delete result', {
+        userId: user.id,
+        farmId,
+        status: result.status,
+        statusText: result.statusText,
+        error: result.error,
+      });
+      if (result.error) {
+        console.warn('Kunde inte ta bort gård', result.error);
       }
     },
     [user],
@@ -2839,9 +2861,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (isNew) {
         payload.created_by = ownerId;
       }
-      const { error } = await supabase.from('stables').upsert(payload);
-      if (error) {
-        console.warn('Kunde inte spara stall', error);
+      console.info('[supabase] stables upsert', { userId: user.id, isNew, ownerId, payload });
+      const result = await supabase.from('stables').upsert(payload);
+      console.info('[supabase] stables upsert result', {
+        userId: user.id,
+        isNew,
+        ownerId,
+        status: result.status,
+        statusText: result.statusText,
+        error: result.error,
+      });
+      if (result.error) {
+        console.warn('Kunde inte spara stall', result.error);
         return;
       }
 
@@ -2898,9 +2929,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!Object.keys(payload).length) {
         return;
       }
-      const { error } = await supabase.from('stables').update(payload).eq('id', stableId);
-      if (error) {
-        console.warn('Kunde inte uppdatera stall', error);
+      console.info('[supabase] stables update', { userId: user.id, stableId, payload });
+      const result = await supabase.from('stables').update(payload).eq('id', stableId);
+      console.info('[supabase] stables update result', {
+        userId: user.id,
+        stableId,
+        status: result.status,
+        statusText: result.statusText,
+        error: result.error,
+      });
+      if (result.error) {
+        console.warn('Kunde inte uppdatera stall', result.error);
         return;
       }
       if (hasOwnProperty(updates, 'name')) {
@@ -2920,9 +2959,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistStableDelete = React.useCallback(
     async (stableId: string) => {
       if (!user) return;
-      const { error } = await supabase.from('stables').delete().eq('id', stableId);
-      if (error) {
-        console.warn('Kunde inte ta bort stall', error);
+      console.info('[supabase] stables delete', { userId: user.id, stableId });
+      const result = await supabase.from('stables').delete().eq('id', stableId);
+      console.info('[supabase] stables delete result', {
+        userId: user.id,
+        stableId,
+        status: result.status,
+        statusText: result.statusText,
+        error: result.error,
+      });
+      if (result.error) {
+        console.warn('Kunde inte ta bort stall', result.error);
       }
     },
     [user],
@@ -3068,10 +3115,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         const pendingOwnerStable = await loadPendingOwnerStable();
         if (pendingOwnerStable) {
-          const stableInsert = await supabase.from('stables').insert({
+          const stablePayload = {
             id: pendingOwnerStable.id,
             name: pendingOwnerStable.name,
             created_by: authUser.id,
+          };
+          console.info('[supabase] stables insert (pending owner)', {
+            userId: authUser.id,
+            payload: stablePayload,
+          });
+          const stableInsert = await supabase.from('stables').insert(stablePayload);
+          console.info('[supabase] stables insert result (pending owner)', {
+            userId: authUser.id,
+            status: stableInsert.status,
+            statusText: stableInsert.statusText,
+            error: stableInsert.error,
           });
           if (stableInsert.error && stableInsert.error.code !== '23505') {
             console.warn('Kunde inte skapa stall', stableInsert.error);
@@ -4264,8 +4322,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
-      void persistAssignmentInsert(assignment);
-      void persistAssignmentHistory(assignment, 'created');
+      void persistAssignmentInsert(assignment).then((result) => {
+        if (!result?.error) {
+          void persistAssignmentHistory(assignment, 'created');
+        }
+      });
 
       return { success: true, data: assignment };
     },
@@ -5477,14 +5538,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const upsertFarm = React.useCallback(
-    (input: UpsertFarmInput): ActionResult<Farm> => {
+    (input: UpsertFarmInput, options?: PersistOptions): ActionResult<Farm> => {
       const current = stateRef.current;
-      const accessCheck = ensurePermission(
-        input.accessStableId ?? current.currentStableId,
-        (permissions) => permissions.canManageOnboarding,
-      );
-      if (!accessCheck.success) {
-        return accessCheck;
+      if (!options?.skipPermission) {
+        const accessCheck = ensurePermission(
+          input.accessStableId ?? current.currentStableId,
+          (permissions) => permissions.canManageOnboarding,
+        );
+        if (!accessCheck.success) {
+          return accessCheck;
+        }
       }
       if (!user?.id) {
         return { success: false, reason: 'Du måste logga in igen.' };
@@ -5502,7 +5565,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         arenaNote: input.arenaNote?.trim() || undefined,
       };
       dispatch({ type: 'FARM_UPSERT', payload: farm });
-      void persistFarmUpsert(farm);
+      if (!options?.skipPersist) {
+        void persistFarmUpsert(farm);
+      }
       return { success: true, data: farm };
     },
     [ensurePermission, persistFarmUpsert, user],
@@ -5527,14 +5592,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [ensurePermission, persistFarmDelete]);
 
   const upsertStable = React.useCallback(
-    (input: UpsertStableInput): ActionResult<Stable> => {
+    (input: UpsertStableInput, options?: PersistOptions): ActionResult<Stable> => {
       const current = stateRef.current;
-      const accessCheck = ensurePermission(
-        input.id ?? current.currentStableId,
-        (permissions) => permissions.canManageOnboarding,
-      );
-      if (!accessCheck.success) {
-        return accessCheck;
+      if (!options?.skipPermission) {
+        const accessCheck = ensurePermission(
+          input.id ?? current.currentStableId,
+          (permissions) => permissions.canManageOnboarding,
+        );
+        if (!accessCheck.success) {
+          return accessCheck;
+        }
       }
       const ownerId = user?.id ?? current.currentUserId;
       if (!ownerId) {
@@ -5576,7 +5643,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       dispatch({ type: 'STABLE_UPSERT', payload: stable });
-      void persistStableUpsert(stable, !existing, ownerId);
+      if (!options?.skipPersist) {
+        void persistStableUpsert(stable, !existing, ownerId);
+      }
 
       // ensure current user is admin of new stable
       const currentUserProfile = current.users[current.currentUserId];
@@ -5601,7 +5670,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const updateStable = React.useCallback(
-    (input: { id: string; updates: StableUpdates }): ActionResult<Stable> => {
+    (input: { id: string; updates: StableUpdates }, options?: PersistOptions): ActionResult<Stable> => {
       const accessCheck = ensurePermission(input.id, (permissions) => permissions.canManageOnboarding);
       if (!accessCheck.success) {
         return accessCheck;
@@ -5641,7 +5710,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'STABLE_UPDATE',
         payload: { id: input.id, updates },
       });
-      void persistStableUpdate(input.id, updates);
+      if (!options?.skipPersist) {
+        void persistStableUpdate(input.id, updates);
+      }
       return { success: true, data: updated };
     },
     [ensurePermission, persistStableUpdate],

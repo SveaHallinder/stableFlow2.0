@@ -7,6 +7,7 @@ import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
 
@@ -57,6 +58,7 @@ export default function OnboardingResources() {
     hasArena: false,
     hasRoundPen: false,
   });
+  const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
     if (!stables.length) {
@@ -121,7 +123,10 @@ export default function OnboardingResources() {
     setActiveFarmId(farmId);
   }, []);
 
-  const handleSave = React.useCallback(() => {
+  const handleSave = React.useCallback(async () => {
+    if (saving) {
+      return false;
+    }
     if (useFarmResources && !activeFarmId) {
       toast.showToast('Välj en gård först.', 'error');
       return false;
@@ -131,63 +136,63 @@ export default function OnboardingResources() {
       return false;
     }
 
-    if (useFarmResources && activeFarmId) {
-      const accessStableId =
-        farmStables.find((stable) => manageableStableIds.has(stable.id))?.id ||
-        stables.find((stable) => manageableStableIds.has(stable.id))?.id ||
-        '';
-      if (!accessStableId) {
-        toast.showToast('Du måste vara stallägare för minst ett stall i gården.', 'error');
-        return false;
-      }
-      const farmName = activeFarm?.name || 'Gård';
-      const farmResult = actions.upsertFarm({
-        id: activeFarmId,
-        name: farmName,
-        location: activeFarm?.location,
-        hasIndoorArena: draft.hasArena,
-        arenaNote: activeFarm?.arenaNote,
-        accessStableId,
-      });
-      if (!farmResult.success) {
-        toast.showToast(farmResult.reason, 'error');
-        return false;
-      }
-      const targets = farmStables.length ? farmStables : stables.filter((stable) => stable.farmId === activeFarmId);
-      const allowedTargets = targets.filter((stable) => manageableStableIds.has(stable.id));
-      if (!allowedTargets.length) {
-        toast.showToast('Du måste vara stallägare för att spara resurser.', 'error');
-        return false;
-      }
-      for (const stable of allowedTargets) {
-        const settings = resolveStableSettings(stable);
-        const result = actions.updateStable({
-          id: stable.id,
-          updates: {
-            settings: {
-              arena: {
-                ...settings.arena,
-                hasArena: draft.hasArena,
-                hasRoundPen: draft.hasRoundPen,
-              },
-              onboarding: {
-                ...settings.onboarding,
-                resourcesComplete: true,
-              },
-            },
-          },
-        });
-        if (!result.success) {
-          toast.showToast(result.reason, 'error');
+    setSaving(true);
+    try {
+      const userId = state.currentUserId;
+      if (useFarmResources && activeFarmId) {
+        const accessStableId =
+          farmStables.find((stable) => manageableStableIds.has(stable.id))?.id ||
+          stables.find((stable) => manageableStableIds.has(stable.id))?.id ||
+          '';
+        if (!accessStableId) {
+          toast.showToast('Du måste vara stallägare för minst ett stall i gården.', 'error');
           return false;
         }
-      }
-    } else {
-      const settings = resolveStableSettings(activeStable);
-      const result = actions.updateStable({
-        id: activeStableId,
-        updates: {
-          settings: {
+        const farmName = activeFarm?.name || 'Gård';
+        const farmPayload = {
+          id: activeFarmId,
+          name: farmName,
+          location: activeFarm?.location ?? null,
+          has_indoor_arena: draft.hasArena,
+          arena_note: activeFarm?.arenaNote ?? null,
+        };
+        console.info('[supabase] farms upsert (onboarding resources)', { userId, payload: farmPayload });
+        const farmResult = await supabase.from('farms').upsert(farmPayload);
+        console.info('[supabase] farms upsert result (onboarding resources)', {
+          userId,
+          status: farmResult.status,
+          statusText: farmResult.statusText,
+          error: farmResult.error,
+        });
+        if (farmResult.error) {
+          toast.showToast(`Kunde inte spara gård. ${farmResult.error.message}`, 'error');
+          return false;
+        }
+        const farmLocalResult = actions.upsertFarm(
+          {
+            id: activeFarmId,
+            name: farmName,
+            location: activeFarm?.location,
+            hasIndoorArena: draft.hasArena,
+            arenaNote: activeFarm?.arenaNote,
+            accessStableId,
+          },
+          { skipPersist: true },
+        );
+        if (!farmLocalResult.success) {
+          toast.showToast(farmLocalResult.reason, 'error');
+          return false;
+        }
+        const targets = farmStables.length ? farmStables : stables.filter((stable) => stable.farmId === activeFarmId);
+        const allowedTargets = targets.filter((stable) => manageableStableIds.has(stable.id));
+        if (!allowedTargets.length) {
+          toast.showToast('Du måste vara stallägare för att spara resurser.', 'error');
+          return false;
+        }
+        for (const stable of allowedTargets) {
+          const settings = resolveStableSettings(stable);
+          const nextSettings = {
+            ...settings,
             arena: {
               ...settings.arena,
               hasArena: draft.hasArena,
@@ -197,17 +202,81 @@ export default function OnboardingResources() {
               ...settings.onboarding,
               resourcesComplete: true,
             },
+          };
+          const stablePayload = { settings: nextSettings };
+          console.info('[supabase] stables update (onboarding resources)', {
+            userId,
+            stableId: stable.id,
+            payload: stablePayload,
+          });
+          const stableResult = await supabase.from('stables').update(stablePayload).eq('id', stable.id);
+          console.info('[supabase] stables update result (onboarding resources)', {
+            userId,
+            stableId: stable.id,
+            status: stableResult.status,
+            statusText: stableResult.statusText,
+            error: stableResult.error,
+          });
+          if (stableResult.error) {
+            toast.showToast(`Kunde inte spara resurser för ${stable.name}. ${stableResult.error.message}`, 'error');
+            return false;
+          }
+          const stableLocalResult = actions.updateStable(
+            { id: stable.id, updates: { settings: nextSettings } },
+            { skipPersist: true },
+          );
+          if (!stableLocalResult.success) {
+            toast.showToast(stableLocalResult.reason, 'error');
+            return false;
+          }
+        }
+      } else {
+        const settings = resolveStableSettings(activeStable);
+        const nextSettings = {
+          ...settings,
+          arena: {
+            ...settings.arena,
+            hasArena: draft.hasArena,
+            hasRoundPen: draft.hasRoundPen,
           },
-        },
-      });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-        return false;
+          onboarding: {
+            ...settings.onboarding,
+            resourcesComplete: true,
+          },
+        };
+        const stablePayload = { settings: nextSettings };
+        console.info('[supabase] stables update (onboarding resources)', {
+          userId,
+          stableId: activeStableId,
+          payload: stablePayload,
+        });
+        const stableResult = await supabase.from('stables').update(stablePayload).eq('id', activeStableId);
+        console.info('[supabase] stables update result (onboarding resources)', {
+          userId,
+          stableId: activeStableId,
+          status: stableResult.status,
+          statusText: stableResult.statusText,
+          error: stableResult.error,
+        });
+        if (stableResult.error) {
+          toast.showToast(`Kunde inte spara resurser. ${stableResult.error.message}`, 'error');
+          return false;
+        }
+        const stableLocalResult = actions.updateStable(
+          { id: activeStableId, updates: { settings: nextSettings } },
+          { skipPersist: true },
+        );
+        if (!stableLocalResult.success) {
+          toast.showToast(stableLocalResult.reason, 'error');
+          return false;
+        }
       }
-    }
 
-    toast.showToast('Resurser sparade.', 'success');
-    return true;
+      toast.showToast('Resurser sparade.', 'success');
+      return true;
+    } finally {
+      setSaving(false);
+    }
   }, [
     actions,
     activeFarm?.arenaNote,
@@ -219,13 +288,16 @@ export default function OnboardingResources() {
     draft.hasArena,
     draft.hasRoundPen,
     farmStables,
+    manageableStableIds,
+    saving,
     stables,
+    state.currentUserId,
     toast,
     useFarmResources,
   ]);
 
-  const handleNext = React.useCallback(() => {
-    if (handleSave()) {
+  const handleNext = React.useCallback(async () => {
+    if (await handleSave()) {
       if (returnTo) {
         router.replace(returnTo);
       } else {
@@ -251,7 +323,8 @@ export default function OnboardingResources() {
       allowExit={false}
       onBack={handleBack}
       onNext={handleNext}
-      nextLabel="Spara och fortsätt"
+      nextLabel={saving ? 'Sparar...' : 'Spara och fortsätt'}
+      disableNext={saving}
       showProgress
     >
       {useFarmResources ? (
