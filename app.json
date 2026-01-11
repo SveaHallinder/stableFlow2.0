@@ -4,9 +4,9 @@
     "slug": "StableFlow",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo-splash.png",
+    "icon": "./assets/images/logo.png",
     "splash": {
-      "image": "./assets/images/logo-splash.png",
+      "image": "./assets/images/logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#F8FAFD"
     },
@@ -17,11 +17,12 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.stableflow.app",
       "splash": {
-        "image": "./assets/images/logo-splash.png",
+        "image": "./assets/images/logo.png",
         "resizeMode": "contain",
         "backgroundColor": "#F8FAFD"
       },
       "infoPlist": {
+        "CFBundleDisplayName": "",
         "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
         "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar."
       }

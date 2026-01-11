@@ -10,8 +10,8 @@ type OnboardingContextValue = {
 const OnboardingContext = React.createContext<OnboardingContextValue | undefined>(undefined);
 
 export function OnboardingProvider({ children }: { children: React.ReactNode }) {
-  const [hasFarm, setHasFarmState] = React.useState<boolean | null>(null);
-  const [mode, setModeState] = React.useState<'guided' | 'quick'>('guided');
+  const [hasFarm, setHasFarmState] = React.useState<boolean | null>(false);
+  const [mode, setModeState] = React.useState<'guided' | 'quick'>('quick');
 
   const setHasFarm = React.useCallback((value: boolean | null) => {
     setHasFarmState(value);

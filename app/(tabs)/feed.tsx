@@ -1,5 +1,7 @@
 import React from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Image,
   Platform,
   ScrollView,
@@ -43,7 +45,18 @@ export default function FeedScreen() {
   const scrollRef = React.useRef<ScrollView>(null);
   const composerInputRef = React.useRef<TextInput>(null);
   const {
-    state: { posts, currentStableId, stables, horses, users, currentUserId, groups },
+    state: {
+      posts,
+      postsHasMore,
+      postsLoadingMore,
+      postsLoadError,
+      currentStableId,
+      stables,
+      horses,
+      users,
+      currentUserId,
+      groups,
+    },
     derived,
     actions,
   } = useAppData();
@@ -203,6 +216,24 @@ export default function FeedScreen() {
       return { ...post, groupLabels, timeAgo };
     });
   }, [filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
+
+  const canDeletePost = React.useCallback(
+    (post: PostData) => {
+      if (!currentUserId) {
+        return false;
+      }
+      if (post.authorId === currentUserId) {
+        return true;
+      }
+      const stableId = post.stableId ?? currentStableId;
+      if (!stableId) {
+        return false;
+      }
+      const membership = currentUser?.membership.find((entry) => entry.stableId === stableId);
+      return membership?.role === 'admin' || membership?.access === 'owner';
+    },
+    [currentStableId, currentUser?.membership, currentUserId],
+  );
 
   const filterOptions: { id: GroupFilter; label: string }[] = [
     { id: 'all', label: 'Alla' },
@@ -390,6 +421,62 @@ export default function FeedScreen() {
     },
     [actions, toast],
   );
+
+  const handleDeletePost = React.useCallback(
+    (postId: string) => {
+      Alert.alert('Ta bort inlägg?', 'Detta går inte att ångra.', [
+        { text: 'Avbryt', style: 'cancel' },
+        {
+          text: 'Ta bort',
+          style: 'destructive',
+          onPress: async () => {
+            const result = await actions.deletePost(postId);
+            if (result.success) {
+              toast.showToast('Inlägget är borttaget.', 'success');
+            } else {
+              toast.showToast(result.reason, 'error');
+            }
+          },
+        },
+      ]);
+    },
+    [actions, toast],
+  );
+
+  const handleLoadMore = React.useCallback(async () => {
+    const result = await actions.loadMorePosts();
+    if (!result.success && result.reason) {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, toast]);
+
+  const renderLoadMoreFooter = React.useCallback(() => {
+    if (!postCards.length) {
+      return null;
+    }
+    if (postsLoadingMore) {
+      return (
+        <View style={styles.loadMoreWrap}>
+          <ActivityIndicator color={palette.primary} />
+        </View>
+      );
+    }
+    if (postsHasMore) {
+      return (
+        <View style={styles.loadMoreWrap}>
+          <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore} activeOpacity={0.85}>
+            <Text style={styles.loadMoreButtonText}>Ladda fler</Text>
+          </TouchableOpacity>
+          {postsLoadError ? <Text style={styles.loadMoreError}>{postsLoadError}</Text> : null}
+        </View>
+      );
+    }
+    return (
+      <View style={styles.loadMoreWrap}>
+        <Text style={styles.loadMoreText}>Inga fler inlägg</Text>
+      </View>
+    );
+  }, [handleLoadMore, postCards.length, postsHasMore, postsLoadError, postsLoadingMore]);
 
   const groupSections = React.useMemo(() => {
     const sections: {
@@ -793,16 +880,21 @@ export default function FeedScreen() {
                   {postCards.length === 0 ? (
                     emptyState
                   ) : (
-                    postCards.map((post) => (
-                      <PostCard
-                        key={post.id}
-                        data={post}
-                        currentUserId={currentUserId}
-                        onToggleLike={() => handleToggleLike(post.id)}
-                        onAddComment={(text) => handleAddComment(post.id, text)}
-                        canInteract={canInteract}
-                      />
-                    ))
+                    <>
+                      {postCards.map((post) => (
+                        <PostCard
+                          key={post.id}
+                          data={post}
+                          currentUserId={currentUserId}
+                          onToggleLike={() => handleToggleLike(post.id)}
+                          onAddComment={(text) => handleAddComment(post.id, text)}
+                          canInteract={canInteract}
+                          canDelete={canDeletePost(post)}
+                          onDelete={() => handleDeletePost(post.id)}
+                        />
+                      ))}
+                      {renderLoadMoreFooter()}
+                    </>
                   )}
                 </View>
               </View>
@@ -814,16 +906,21 @@ export default function FeedScreen() {
               {postCards.length === 0 ? (
                 emptyState
               ) : (
-                postCards.map((post) => (
-                  <PostCard
-                    key={post.id}
-                    data={post}
-                    currentUserId={currentUserId}
-                    onToggleLike={() => handleToggleLike(post.id)}
-                    onAddComment={(text) => handleAddComment(post.id, text)}
-                    canInteract={canInteract}
-                  />
-                ))
+                <>
+                  {postCards.map((post) => (
+                    <PostCard
+                      key={post.id}
+                      data={post}
+                      currentUserId={currentUserId}
+                      onToggleLike={() => handleToggleLike(post.id)}
+                      onAddComment={(text) => handleAddComment(post.id, text)}
+                      canInteract={canInteract}
+                      canDelete={canDeletePost(post)}
+                      onDelete={() => handleDeletePost(post.id)}
+                    />
+                  ))}
+                  {renderLoadMoreFooter()}
+                </>
               )}
             </View>
           )}
@@ -882,6 +979,32 @@ const styles = StyleSheet.create({
   },
   postList: {
     gap: space.xl,
+  },
+  loadMoreWrap: {
+    alignItems: 'center',
+    gap: space.sm,
+    paddingVertical: space.md,
+  },
+  loadMoreButton: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.sm,
+    borderRadius: 999,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  loadMoreButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.primary,
+  },
+  loadMoreText: {
+    fontSize: 13,
+    color: palette.mutedText,
+  },
+  loadMoreError: {
+    fontSize: 12,
+    color: palette.error,
   },
   postListDesktop: {
     gap: space.xl,

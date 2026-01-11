@@ -15,16 +15,18 @@ import type { PostComment } from '@/context/AppDataContext';
 
 export type PostData = {
   id: string;
+  authorId?: string;
   author: string;
   avatar: ImageSourcePropType;
   timeAgo: string;
   content?: string;
-  image?: string;
+  imageSignedUrl?: string;
   likes: number;
   comments: number;
   groupLabels?: string[];
   likedByUserIds?: string[];
   commentsData?: PostComment[];
+  stableId?: string;
 };
 
 const palette = theme.colors;
@@ -35,6 +37,8 @@ type PostCardProps = {
   onToggleLike?: () => void;
   onAddComment?: (text: string) => void;
   canInteract?: boolean;
+  canDelete?: boolean;
+  onDelete?: () => void;
 };
 
 export function PostCard({
@@ -43,6 +47,8 @@ export function PostCard({
   onToggleLike,
   onAddComment,
   canInteract = true,
+  canDelete = false,
+  onDelete,
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
@@ -70,9 +76,11 @@ export function PostCard({
           <Text style={styles.author}>{data.author}</Text>
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
-        <TouchableOpacity style={styles.moreButton}>
-          <Feather name="more-vertical" size={18} color={palette.secondaryText} />
-        </TouchableOpacity>
+        {canDelete && onDelete ? (
+          <TouchableOpacity style={styles.moreButton} onPress={onDelete} activeOpacity={0.85}>
+            <Feather name="more-vertical" size={18} color={palette.secondaryText} />
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       {data.groupLabels?.length ? (
@@ -87,9 +95,9 @@ export function PostCard({
 
       {data.content && <Text style={styles.content}>{data.content}</Text>}
 
-      {data.image && (
+      {data.imageSignedUrl && (
         <Image
-          source={{ uri: data.image }}
+          source={{ uri: data.imageSignedUrl }}
           style={styles.postImage}
           resizeMode="cover"
         />

@@ -5486,6 +5486,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
+      if (!user?.id) {
+        return { success: false, reason: 'Du måste logga in igen.' };
+      }
       const name = input.name.trim();
       if (!name) {
         return { success: false, reason: 'Gården måste ha ett namn.' };
@@ -5502,7 +5505,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       void persistFarmUpsert(farm);
       return { success: true, data: farm };
     },
-    [ensurePermission, persistFarmUpsert],
+    [ensurePermission, persistFarmUpsert, user],
   );
 
   const deleteFarm = React.useCallback((farmId: string): ActionResult => {
@@ -5532,6 +5535,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       );
       if (!accessCheck.success) {
         return accessCheck;
+      }
+      const ownerId = user?.id ?? current.currentUserId;
+      if (!ownerId) {
+        return { success: false, reason: 'Du måste logga in igen.' };
       }
       const id = input.id ?? generateId();
       const existing = input.id ? current.stables.find((stable) => stable.id === input.id) : undefined;
@@ -5569,17 +5576,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       dispatch({ type: 'STABLE_UPSERT', payload: stable });
-      void persistStableUpsert(stable, !existing, current.currentUserId);
+      void persistStableUpsert(stable, !existing, ownerId);
 
       // ensure current user is admin of new stable
-      const user = current.users[current.currentUserId];
-      if (user && !user.membership.some((m) => m.stableId === stable.id)) {
+      const currentUserProfile = current.users[current.currentUserId];
+      if (currentUserProfile && !currentUserProfile.membership.some((m) => m.stableId === stable.id)) {
         dispatch({
           type: 'USER_UPDATE',
           payload: {
-            id: user.id,
+            id: currentUserProfile.id,
             updates: {
-              membership: [...user.membership, { stableId: stable.id, role: 'admin', access: 'owner' }],
+              membership: [
+                ...currentUserProfile.membership,
+                { stableId: stable.id, role: 'admin', access: 'owner' },
+              ],
             },
           },
         });
@@ -5587,7 +5597,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       return { success: true, data: stable };
     },
-    [ensurePermission, persistStableUpsert],
+    [ensurePermission, persistStableUpsert, user],
   );
 
   const updateStable = React.useCallback(

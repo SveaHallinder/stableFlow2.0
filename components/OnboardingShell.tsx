@@ -62,8 +62,13 @@ export function OnboardingShell({
     if (!allowExit) {
       return;
     }
-    actions.setOnboardingDismissed(true);
-    router.replace(exitRoute);
+    const result = actions.setOnboardingDismissed(true);
+    if (!result.success) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      router.replace(exitRoute);
+    });
   }, [actions, allowExit, exitRoute, onExit, router]);
 
   return (

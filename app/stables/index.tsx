@@ -3,6 +3,7 @@ import {
   Image,
   Platform,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -15,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as Clipboard from 'expo-clipboard';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DesktopNav } from '@/components/DesktopNav';
@@ -265,6 +267,9 @@ export default function StablesScreen() {
   const canEditPaddocks = canManagePaddocks;
   const canEditHorses = canManageHorses;
   const canEditMembers = canManageMembers;
+  const joinCode = currentStable?.joinCode?.trim() ?? '';
+  const canRevealJoinCode = canManageMembers && Boolean(joinCode);
+  const canShareJoinCode = Platform.OS !== 'web';
 
   const paddocks = React.useMemo(
     () => state.paddocks.filter((p) => p.stableId === currentStableId),
@@ -601,6 +606,33 @@ export default function StablesScreen() {
       toast.showToast(result.reason, 'error');
     }
   }, [actions, currentStableId, delegateDraft.email, delegateDraft.name, delegateDraft.phone, toast]);
+
+  const handleCopyJoinCode = React.useCallback(async () => {
+    if (!joinCode) {
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(joinCode);
+      toast.showToast('Inbjudningskoden är kopierad.', 'success');
+    } catch (error) {
+      console.warn('Kunde inte kopiera inbjudningskod', error);
+      toast.showToast('Kunde inte kopiera koden.', 'error');
+    }
+  }, [joinCode, toast]);
+
+  const handleShareJoinCode = React.useCallback(async () => {
+    if (!joinCode || !currentStable) {
+      return;
+    }
+    try {
+      await Share.share({
+        message: `Gå med i ${currentStable.name} med inbjudningskod: ${joinCode}`,
+      });
+    } catch (error) {
+      console.warn('Kunde inte dela inbjudningskod', error);
+      toast.showToast('Kunde inte dela koden.', 'error');
+    }
+  }, [currentStable, joinCode, toast]);
 
   const formatPaddockCaption = React.useCallback((names: string[]) => {
     if (!names.length) return 'Inga hästar angivna';
@@ -1117,6 +1149,39 @@ export default function StablesScreen() {
                         <Text style={styles.primaryButtonText}>Bjud in ansvarig admin</Text>
                       </TouchableOpacity>
                     </View>
+                    {canRevealJoinCode ? (
+                      <>
+                        <View style={styles.divider} />
+                        <View style={styles.stableForm}>
+                          <Text style={styles.formLabel}>Inbjudningskod</Text>
+                          <Text style={styles.formHint}>Dela koden med nya medlemmar för att gå med.</Text>
+                          <View style={styles.joinCodeRow}>
+                            <TextInput
+                              value={joinCode}
+                              editable={false}
+                              selectTextOnFocus
+                              style={[styles.input, styles.joinCodeInput]}
+                            />
+                            <TouchableOpacity
+                              style={styles.inlineActionButton}
+                              onPress={handleCopyJoinCode}
+                              activeOpacity={0.85}
+                            >
+                              <Text style={styles.inlineActionText}>Kopiera</Text>
+                            </TouchableOpacity>
+                            {canShareJoinCode ? (
+                              <TouchableOpacity
+                                style={styles.inlineActionButton}
+                                onPress={handleShareJoinCode}
+                                activeOpacity={0.85}
+                              >
+                                <Text style={styles.inlineActionText}>Dela</Text>
+                              </TouchableOpacity>
+                            ) : null}
+                          </View>
+                        </View>
+                      </>
+                    ) : null}
                   </View>
                 </View>
               </View>
@@ -2274,6 +2339,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: palette.primaryText,
     backgroundColor: palette.surface,
+  },
+  joinCodeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  joinCodeInput: {
+    flex: 1,
+    minWidth: 140,
+    textAlign: 'center',
+    letterSpacing: 1,
+    fontWeight: '700',
   },
   searchInput: {
     marginBottom: 10,

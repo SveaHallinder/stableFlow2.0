@@ -22,6 +22,15 @@ export default function OnboardingResources() {
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
   const { state, actions } = useAppData();
   const { stables, currentStableId, farms } = state;
+  const currentUser = state.users[state.currentUserId];
+  const manageableStableIds = React.useMemo(() => {
+    const entries = currentUser?.membership ?? [];
+    return new Set(
+      entries
+        .filter((entry) => entry.role === 'admin' && (entry.access ?? 'view') === 'owner')
+        .map((entry) => entry.stableId),
+    );
+  }, [currentUser]);
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
@@ -123,9 +132,12 @@ export default function OnboardingResources() {
     }
 
     if (useFarmResources && activeFarmId) {
-      const accessStableId = farmStables[0]?.id || activeStableId || stables[0]?.id;
+      const accessStableId =
+        farmStables.find((stable) => manageableStableIds.has(stable.id))?.id ||
+        stables.find((stable) => manageableStableIds.has(stable.id))?.id ||
+        '';
       if (!accessStableId) {
-        toast.showToast('Välj ett stall först.', 'error');
+        toast.showToast('Du måste vara stallägare för minst ett stall i gården.', 'error');
         return false;
       }
       const farmName = activeFarm?.name || 'Gård';
@@ -142,7 +154,12 @@ export default function OnboardingResources() {
         return false;
       }
       const targets = farmStables.length ? farmStables : stables.filter((stable) => stable.farmId === activeFarmId);
-      for (const stable of targets) {
+      const allowedTargets = targets.filter((stable) => manageableStableIds.has(stable.id));
+      if (!allowedTargets.length) {
+        toast.showToast('Du måste vara stallägare för att spara resurser.', 'error');
+        return false;
+      }
+      for (const stable of allowedTargets) {
         const settings = resolveStableSettings(stable);
         const result = actions.updateStable({
           id: stable.id,

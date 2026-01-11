@@ -277,6 +277,20 @@ as $$
   );
 $$;
 
+create or replace function public.storage_stable_id(path text)
+returns uuid
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when path is null then null
+    when split_part(path, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then split_part(path, '/', 1)::uuid
+    else null
+  end;
+$$;
+
 -- Invite accept functions
 create or replace function public.accept_pending_invites()
 returns integer
@@ -594,7 +608,19 @@ drop policy if exists "profiles_select" on public.profiles;
 drop policy if exists "profiles_update_self" on public.profiles;
 drop policy if exists "profiles_insert_self" on public.profiles;
 create policy "profiles_select" on public.profiles
-  for select using ((select auth.role()) = 'authenticated');
+  for select using (
+    (select auth.role()) = 'authenticated'
+    and (
+      (select auth.uid()) = id
+      or exists (
+        select 1
+        from public.stable_members m_self
+        join public.stable_members m_other on m_self.stable_id = m_other.stable_id
+        where m_self.user_id = (select auth.uid())
+          and m_other.user_id = profiles.id
+      )
+    )
+  );
 create policy "profiles_update_self" on public.profiles
   for update using ((select auth.uid()) = id);
 create policy "profiles_insert_self" on public.profiles
@@ -922,6 +948,60 @@ create policy "messages_insert" on public.messages
     )
   );
 
+-- Storage policies require supabase_admin (storage.objects owned by supabase_storage_admin).
+-- Run this block in SQL Editor with role = supabase_admin.
+alter table storage.objects enable row level security;
+
+insert into storage.buckets (id, name, public)
+values ('posts', 'posts', false)
+on conflict (id) do update set public = false;
+
+drop policy if exists "posts_storage_read" on storage.objects;
+create policy "posts_storage_read" on storage.objects
+  for select using (
+    bucket_id = 'posts'
+    and public.is_stable_member(public.storage_stable_id(name))
+  );
+
+drop policy if exists "posts_storage_insert" on storage.objects;
+create policy "posts_storage_insert" on storage.objects
+  for insert with check (
+    bucket_id = 'posts'
+    and owner = (select auth.uid())
+    and public.is_stable_member(public.storage_stable_id(name))
+  );
+
+drop policy if exists "posts_storage_update" on storage.objects;
+create policy "posts_storage_update" on storage.objects
+  for update
+  using (
+    bucket_id = 'posts'
+    and public.is_stable_member(public.storage_stable_id(name))
+    and (
+      owner = (select auth.uid())
+      or public.is_stable_owner(public.storage_stable_id(name))
+    )
+  )
+  with check (
+    bucket_id = 'posts'
+    and public.is_stable_member(public.storage_stable_id(name))
+    and (
+      owner = (select auth.uid())
+      or public.is_stable_owner(public.storage_stable_id(name))
+    )
+  );
+
+drop policy if exists "posts_storage_delete" on storage.objects;
+create policy "posts_storage_delete" on storage.objects
+  for delete using (
+    bucket_id = 'posts'
+    and public.is_stable_member(public.storage_stable_id(name))
+    and (
+      owner = (select auth.uid())
+      or public.is_stable_owner(public.storage_stable_id(name))
+    )
+  );
+
 -- Foreign key indexes for performance
 create index if not exists alerts_stable_id_idx on public.alerts(stable_id);
 create index if not exists arena_bookings_booked_by_user_id_idx on public.arena_bookings(booked_by_user_id);
@@ -941,6 +1021,7 @@ create index if not exists conversation_members_user_id_idx on public.conversati
 create index if not exists conversations_created_by_user_id_idx on public.conversations(created_by_user_id);
 create index if not exists conversations_stable_id_idx on public.conversations(stable_id);
 create index if not exists day_events_stable_id_idx on public.day_events(stable_id);
+create index if not exists day_events_stable_id_date_idx on public.day_events(stable_id, date);
 create index if not exists default_passes_stable_id_idx on public.default_passes(stable_id);
 create index if not exists groups_created_by_user_id_idx on public.groups(created_by_user_id);
 create index if not exists groups_farm_id_idx on public.groups(farm_id);
@@ -955,9 +1036,12 @@ create index if not exists messages_conversation_id_idx on public.messages(conve
 create index if not exists paddocks_stable_id_idx on public.paddocks(stable_id);
 create index if not exists posts_group_ids_gin_idx on public.posts using gin (group_ids);
 create index if not exists posts_stable_id_idx on public.posts(stable_id);
+create index if not exists posts_stable_id_created_at_idx on public.posts(stable_id, created_at desc);
 create index if not exists posts_user_id_idx on public.posts(user_id);
 create index if not exists ride_logs_created_by_user_id_idx on public.ride_logs(created_by_user_id);
 create index if not exists ride_logs_horse_id_idx on public.ride_logs(horse_id);
+create index if not exists assignments_stable_id_date_idx on public.assignments(stable_id, date);
+create index if not exists arena_bookings_stable_id_date_idx on public.arena_bookings(stable_id, date);
 create index if not exists ride_logs_stable_id_idx on public.ride_logs(stable_id);
 create index if not exists riding_days_stable_id_idx on public.riding_days(stable_id);
 create index if not exists stable_invites_stable_id_idx on public.stable_invites(stable_id);

@@ -101,14 +101,20 @@ export default function ProfileScreen() {
 
   const upcomingAssignmentsView = React.useMemo(
     () =>
-      upcomingAssignments.map((assignment) => ({
-        assignment,
-        assigneeName: assignment.assigneeId
-          ? users[assignment.assigneeId]?.name ?? undefined
-          : undefined,
-        isCurrentUser: assignment.assigneeId === currentUserId,
-      })),
-    [upcomingAssignments, users, currentUserId],
+      upcomingAssignments.map((assignment) => {
+        const endTime = derived.getAssignmentEndTime(assignment);
+        const timeLabel = endTime ? `${assignment.time}–${endTime}` : assignment.time;
+        return {
+          assignment,
+          assigneeName: assignment.assigneeId
+            ? users[assignment.assigneeId]?.name ?? undefined
+            : undefined,
+          isCurrentUser: assignment.assigneeId === currentUserId,
+          timeLabel,
+          note: derived.cleanAssignmentNote(assignment.note),
+        };
+      }),
+    [upcomingAssignments, users, currentUserId, derived],
   );
 
   const scrollToDefaultPass = React.useCallback(() => {
@@ -153,6 +159,9 @@ export default function ProfileScreen() {
   }, [router]);
   const handleOpenOverview = React.useCallback(() => {
     router.push('/');
+  }, [router]);
+  const handleOpenJoinStable = React.useCallback(() => {
+    router.push('/(onboarding)/join');
   }, [router]);
 
   const handleTakeAssignment = React.useCallback(
@@ -298,9 +307,18 @@ export default function ProfileScreen() {
           ? 'Starta uppstarten från Överblick eller öppna Admin i webben för att skapa ett stall.'
           : 'Gå till Överblick för att skapa stall eller invänta en inbjudan.'}
       </Text>
-      <TouchableOpacity style={styles.infoAction} onPress={handleOpenOverview} activeOpacity={0.85}>
-        <Text style={styles.infoActionText}>Till överblick</Text>
-      </TouchableOpacity>
+      <View style={styles.infoActionRow}>
+        <TouchableOpacity style={styles.infoAction} onPress={handleOpenOverview} activeOpacity={0.85}>
+          <Text style={styles.infoActionText}>Till överblick</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.infoSecondaryAction}
+          onPress={handleOpenJoinStable}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.infoSecondaryActionText}>Gå med i stall</Text>
+        </TouchableOpacity>
+      </View>
     </Card>
   ) : null;
 
@@ -387,12 +405,14 @@ export default function ProfileScreen() {
       </View>
       <View style={styles.assignmentList}>
         {upcomingAssignmentsView.length > 0 ? (
-          upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser }) => (
+          upcomingAssignmentsView.map(({ assignment, assigneeName, isCurrentUser, timeLabel, note }) => (
             <AssignmentCard
               key={assignment.id}
               assignment={assignment}
               assigneeName={assigneeName}
               isCurrentUser={isCurrentUser}
+              timeLabel={timeLabel}
+              note={note}
               onTakeAssignment={handleTakeAssignment}
             />
           ))
@@ -489,11 +509,15 @@ function AssignmentCard({
   assignment,
   assigneeName,
   isCurrentUser,
+  timeLabel,
+  note,
   onTakeAssignment,
 }: {
   assignment: Assignment;
   assigneeName?: string;
   isCurrentUser: boolean;
+  timeLabel: string;
+  note?: string;
   onTakeAssignment: (assignmentId: string) => void;
 }) {
   const status = assignmentStatusStyles[assignment.status];
@@ -504,7 +528,7 @@ function AssignmentCard({
         <View style={styles.assignmentInfo}>
           <Text style={styles.assignmentTitle}>{formatAssignmentTitle(assignment)}</Text>
           <Text style={styles.assignmentMeta}>
-            {formatDateLabel(assignment.date)} · {assignment.time}
+            {formatDateLabel(assignment.date)} · {timeLabel}
           </Text>
         </View>
         <View style={[styles.assignmentStatus, { backgroundColor: status.background }]}>
@@ -514,7 +538,7 @@ function AssignmentCard({
       {assigneeName ? (
         <Text style={styles.assignmentAssignee}>Ansvar: {isCurrentUser ? 'Du' : assigneeName}</Text>
       ) : null}
-      {assignment.note ? <Text style={styles.assignmentNote}>{assignment.note}</Text> : null}
+      {note ? <Text style={styles.assignmentNote}>{note}</Text> : null}
       {assignment.status === 'open' ? (
         <TouchableOpacity
           style={styles.assignmentAction}
@@ -741,6 +765,12 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
     lineHeight: 18,
   },
+  infoActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+  },
   infoAction: {
     alignSelf: 'flex-start',
     backgroundColor: palette.primary,
@@ -752,6 +782,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: palette.inverseText,
+  },
+  infoSecondaryAction: {
+    alignSelf: 'flex-start',
+    backgroundColor: surfacePresets.section,
+    borderRadius: radius.full,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  infoSecondaryActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primary,
   },
   adminCard: {
     gap: 12,
