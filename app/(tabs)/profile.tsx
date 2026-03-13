@@ -497,7 +497,7 @@ export default function ProfileScreen() {
   );
 }
 
-function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text?: string }) {
+const DetailRow = React.memo(function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text?: string }) {
   if (!text || text.trim().length === 0) {
     return null;
   }
@@ -507,9 +507,9 @@ function DetailRow({ icon, text }: { icon: keyof typeof Feather.glyphMap; text?:
       <Text style={styles.detailText}>{text}</Text>
     </View>
   );
-}
+});
 
-function AssignmentCard({
+const AssignmentCard = React.memo(function AssignmentCard({
   assignment,
   assigneeName,
   isCurrentUser,
@@ -554,7 +554,7 @@ function AssignmentCard({
       ) : null}
     </Card>
   );
-}
+});
 
 function formatDateLabel(isoDate: string) {
   return new Date(`${isoDate}T00:00:00`).toLocaleDateString('sv-SE', {

@@ -28,7 +28,7 @@ const radii = theme.radii;
 
 type MessageFilter = 'all' | 'group' | 'private';
 
-function MessageItem({
+const MessageItem = React.memo(function MessageItem({
   item,
   onPress,
   desktop,
@@ -88,7 +88,7 @@ function MessageItem({
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 const FILTER_OPTIONS: { label: string; value: MessageFilter }[] = [
   { label: 'Alla', value: 'all' },

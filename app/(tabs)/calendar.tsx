@@ -2580,7 +2580,7 @@ export default function CalendarScreen() {
   );
 }
 
-function RegularDayCard({
+const RegularDayCard = React.memo(function RegularDayCard({
   day,
   date,
   isoDate,
@@ -2749,9 +2749,9 @@ function RegularDayCard({
       ) : null}
     </Card>
   );
-}
+});
 
-function ScheduleIcon({
+const ScheduleIcon = React.memo(function ScheduleIcon({
   label,
   icon,
   color,
@@ -2905,9 +2905,9 @@ function ScheduleIcon({
       </View>
     </View>
   );
-}
+});
 
-function RidingDayRow({
+const RidingDayRow = React.memo(function RidingDayRow({
   label,
   upcoming,
   isToday,
@@ -2934,9 +2934,9 @@ function RidingDayRow({
       ) : null}
     </Card>
   );
-}
+});
 
-function CompetitionCard({ event }: { event: CompetitionEvent }) {
+const CompetitionCard = React.memo(function CompetitionCard({ event }: { event: CompetitionEvent }) {
   const statusLabel = event.status === 'open' ? 'ÖPPEN' : 'STÄNGD';
   const statusColor = event.status === 'open' ? palette.success : palette.error;
 
@@ -2955,9 +2955,9 @@ function CompetitionCard({ event }: { event: CompetitionEvent }) {
       </View>
     </Card>
   );
-}
+});
 
-function EmptyStateCard({
+const EmptyStateCard = React.memo(function EmptyStateCard({
   title,
   body,
   actions,
@@ -3000,7 +3000,7 @@ function EmptyStateCard({
       ) : null}
     </Card>
   );
-}
+});
 
 function sortAssignments(assignments: Assignment[]) {
   return [...assignments].sort(

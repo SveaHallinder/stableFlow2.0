@@ -900,7 +900,7 @@ function WeatherPanel() {
   );
 }
 
-function QuickActionCard({
+const QuickActionCard = React.memo(function QuickActionCard({
   action,
   onPress,
   isDesktop,
@@ -968,7 +968,7 @@ function QuickActionCard({
       </LinearGradient>
     </Pressable>
   );
-}
+});
 
 type QuickActionSheetProps = {
   visible: boolean;
@@ -1061,7 +1061,7 @@ function QuickActionSheet({
   );
 }
 
-function SectionHeader({ title, count }: { title: string; count: number }) {
+const SectionHeader = React.memo(function SectionHeader({ title, count }: { title: string; count: number }) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionTitleGroup}>
@@ -1072,9 +1072,9 @@ function SectionHeader({ title, count }: { title: string; count: number }) {
       <Text style={styles.sectionAction}>Visa mer ↓</Text>
     </View>
   );
-}
+});
 
-function StackedCard({
+const StackedCard = React.memo(function StackedCard({
   children,
   offset,
   onPress,
@@ -1127,7 +1127,7 @@ function StackedCard({
       </Pressable>
     </View>
   );
-}
+});
 
 function formatEventTime(value: string) {
   const parsed = new Date(value);
