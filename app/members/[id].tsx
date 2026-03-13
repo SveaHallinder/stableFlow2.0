@@ -160,9 +160,18 @@ export default function MemberProfileScreen() {
     [actions, canManageMembers, member, stableId, toast],
   );
 
-  const handleMessage = React.useCallback(() => {
-    router.push('/messages');
-  }, [router]);
+  const handleMessage = React.useCallback(async () => {
+    if (!member) return;
+    const result = await actions.createPrivateConversation(member.id);
+    if (result.success && result.data) {
+      router.push({
+        pathname: '/chat/[id]',
+        params: { id: result.data, name: member.name },
+      });
+    } else {
+      toast.showToast(!result.success ? result.reason : 'Kunde inte starta chatt.', 'error');
+    }
+  }, [actions, member, router, toast]);
 
   const handleCall = React.useCallback(() => {
     toast.showToast('Direktsamtal öppnas snart.', 'info');

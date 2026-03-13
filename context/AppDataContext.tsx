@@ -663,7 +663,7 @@ type MarkMessageReadAction = {
 
 type AppendConversationMessageAction = {
   type: 'CONVERSATION_APPEND';
-  payload: { conversationId: string; message: ConversationMessage; preview: MessagePreview };
+  payload: { conversationId: string; message?: ConversationMessage; preview: MessagePreview };
 };
 
 type UserUpdateAction = {
@@ -947,6 +947,7 @@ type AppDataContextValue = {
     deleteGroup: (groupId: string) => ActionResult;
     markConversationRead: (conversationId: string) => void;
     sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
+    createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
     setCurrentStable: (stableId: string) => void;
     refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
@@ -1398,7 +1399,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         ...state,
         conversations: {
           ...state.conversations,
-          [conversationId]: [...existingMessages, message],
+          [conversationId]: message ? [...existingMessages, message] : existingMessages,
         },
         messages: updatedPreview,
       };
@@ -3237,7 +3238,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('groups').select('*').in('stable_id', stableIds),
           supabase.from('default_passes').select('*').in('stable_id', stableIds),
           supabase.from('away_notices').select('*').in('stable_id', stableIds),
-          supabase.from('conversations').select('*').in('stable_id', stableIds).eq('is_group', true),
+          supabase.from('conversations').select('*'),
         ]);
 
         const stableRows = stablesResult.data ?? [];
@@ -3285,8 +3286,30 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
+        // Load conversation members for private chats
+        const privateConversationIds = conversationRows
+          .filter((row) => !row.is_group)
+          .map((row) => row.id);
+        const conversationMembersResult = privateConversationIds.length
+          ? await supabase
+              .from('conversation_members')
+              .select('*')
+              .in('conversation_id', privateConversationIds)
+          : { data: [] as { conversation_id: string; user_id: string }[] };
+        const conversationMemberRows = conversationMembersResult.data ?? [];
+        const membersByConversation = conversationMemberRows.reduce<Record<string, string[]>>(
+          (acc, row) => {
+            const list = acc[row.conversation_id] ?? [];
+            list.push(row.user_id);
+            acc[row.conversation_id] = list;
+            return acc;
+          },
+          {},
+        );
+
         const profileIds = new Set<string>([authUser.id]);
         membership.forEach((row) => profileIds.add(row.user_id));
+        conversationMemberRows.forEach((row) => profileIds.add(row.user_id));
         const profilesResult = await supabase
           .from('profiles')
           .select('*')
@@ -3505,15 +3528,36 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               : undefined;
             const sortTime = lastMessage?.timestamp ?? row.created_at ?? '';
             const sortMs = sortTime ? new Date(sortTime).getTime() : 0;
+
+            // For private chats, show the other participant's name
+            let title = row.title ?? stable?.name ?? 'Konversation';
+            let subtitle = stable?.location ?? (row.is_group ? 'Gruppchatt' : 'Privat chatt');
+            let avatar: ImageSourcePropType | undefined;
+            if (!row.is_group) {
+              const members = membersByConversation[row.id] ?? [];
+              const otherUserId = members.find((id) => id !== authUser.id);
+              if (otherUserId) {
+                const otherProfile = profilesById[otherUserId];
+                if (otherProfile) {
+                  title = otherProfile.full_name || otherProfile.username || 'Okänd';
+                  subtitle = 'Privat chatt';
+                  avatar = otherProfile.avatar_url
+                    ? { uri: otherProfile.avatar_url }
+                    : undefined;
+                }
+              }
+            }
+
             const preview: MessagePreview = {
               id: row.id,
-              title: row.title ?? stable?.name ?? 'Konversation',
-              subtitle: stable?.location ?? (row.is_group ? 'Gruppchatt' : ''),
+              title,
+              subtitle,
               description: lastMessage?.text ?? 'Inga meddelanden ännu',
               timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
               unreadCount: 0,
               group: row.is_group ?? false,
               stableId: row.stable_id ?? undefined,
+              avatar,
             };
             return { preview, sortMs };
           })
@@ -3745,6 +3789,60 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       refreshRequestId.current += 1;
     };
   }, [loadAppData, user]);
+
+  // Realtime subscription for new messages
+  React.useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('messages-realtime')
+      .on<{
+        id: string;
+        conversation_id: string;
+        author_id: string;
+        text: string;
+        created_at: string;
+        status: string | null;
+      }>(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        (payload) => {
+          const row = payload.new;
+          // Skip messages we sent ourselves (already in state)
+          if (row.author_id === user.id) return;
+
+          const message: ConversationMessage = {
+            id: row.id,
+            conversationId: row.conversation_id,
+            authorId: row.author_id,
+            text: row.text,
+            timestamp: row.created_at,
+            status: (row.status as ConversationMessage['status']) ?? undefined,
+          };
+
+          const current = stateRef.current;
+          const existingPreview = current.messages.find((msg) => msg.id === row.conversation_id);
+          if (!existingPreview) return; // Unknown conversation
+
+          const preview: MessagePreview = {
+            ...existingPreview,
+            description: row.text,
+            timeAgo: formatTimeAgo(row.created_at),
+            unreadCount: (existingPreview.unreadCount ?? 0) + 1,
+          };
+
+          dispatch({
+            type: 'CONVERSATION_APPEND',
+            payload: { conversationId: row.conversation_id, message, preview },
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   React.useEffect(() => {
     if (hydrating || refreshing) {
@@ -4646,6 +4744,80 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: true, data: message };
     },
     [persistConversationMessage],
+  );
+
+  const createPrivateConversation = React.useCallback(
+    async (otherUserId: string): Promise<ActionResult<string>> => {
+      const current = stateRef.current;
+      if (!current.currentUserId) {
+        return { success: false, reason: 'Ingen inloggad användare.' };
+      }
+
+      // Check if a private conversation already exists with this user
+      const existing = current.messages.find(
+        (msg) => !msg.group && msg.id,
+      );
+      // Look through conversations for an existing private chat with this user
+      for (const preview of current.messages) {
+        if (preview.group) continue;
+        const msgs = current.conversations[preview.id] ?? [];
+        const participants = new Set<string>();
+        participants.add(current.currentUserId);
+        msgs.forEach((m) => participants.add(m.authorId));
+        if (participants.has(otherUserId)) {
+          return { success: true, data: preview.id };
+        }
+      }
+
+      // Create new conversation
+      const { data: conversationData, error: convError } = await supabase
+        .from('conversations')
+        .insert({
+          is_group: false,
+          created_by_user_id: current.currentUserId,
+        })
+        .select('id')
+        .single();
+
+      if (convError || !conversationData) {
+        return { success: false, reason: 'Kunde inte skapa konversation.' };
+      }
+
+      const conversationId = conversationData.id;
+
+      // Add both users as conversation members
+      const { error: memberError } = await supabase
+        .from('conversation_members')
+        .insert([
+          { conversation_id: conversationId, user_id: current.currentUserId },
+          { conversation_id: conversationId, user_id: otherUserId },
+        ]);
+
+      if (memberError) {
+        console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
+      }
+
+      // Add preview to local state
+      const otherUser = current.users[otherUserId];
+      const preview: MessagePreview = {
+        id: conversationId,
+        title: otherUser?.name ?? 'Okänd',
+        subtitle: 'Privat chatt',
+        description: 'Inga meddelanden ännu',
+        timeAgo: '',
+        unreadCount: 0,
+        group: false,
+        avatar: otherUser?.avatar,
+      };
+
+      dispatch({
+        type: 'CONVERSATION_APPEND',
+        payload: { conversationId, preview },
+      });
+
+      return { success: true, data: conversationId };
+    },
+    [],
   );
 
   const upsertPaddock = React.useCallback(
@@ -5991,6 +6163,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         deleteGroup,
         markConversationRead,
         sendConversationMessage,
+        createPrivateConversation,
         setCurrentStable,
         refreshData,
         setOnboardingDismissed,
@@ -6050,6 +6223,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       deleteGroup,
       markConversationRead,
       sendConversationMessage,
+      createPrivateConversation,
       setCurrentStable,
       refreshData,
       setOnboardingDismissed,

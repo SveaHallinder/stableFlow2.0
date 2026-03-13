@@ -38,6 +38,7 @@ import {
 } from '@/lib/schedule';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useWeather } from '@/hooks/useWeather';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -148,8 +149,9 @@ export default function OverviewScreen() {
   const membership = derived.membership;
   const roleLabel =
     membership?.customRole?.trim() || roleLabels[membership?.role ?? 'guest'];
-  const stableName =
-    stables.find((stable) => stable.id === currentStableId)?.name ?? 'stallet';
+  const currentStable = stables.find((stable) => stable.id === currentStableId);
+  const stableName = currentStable?.name ?? 'stallet';
+  const stableLocation = currentStable?.location;
   const isOwner = permissions.canManageOnboarding;
   const onboardingComplete = derived.onboardingComplete;
   const showOnboardingEntry = isOwner && !onboardingComplete;
@@ -784,7 +786,7 @@ export default function OverviewScreen() {
               {quickActionsSection}
               {summarySection}
               {missedSection}
-              <WeatherPanel />
+              <WeatherPanel stableLocation={stableLocation} />
             </View>
             <View style={[styles.desktopColumn, styles.desktopColumnSecondary]}>
               {messagesSection}
@@ -798,7 +800,7 @@ export default function OverviewScreen() {
               {quickActionsSection}
               {summarySection}
               {missedSection}
-              <WeatherPanel />
+              <WeatherPanel stableLocation={stableLocation} />
               {messagesSection}
               {postsSection}
             </>
@@ -855,7 +857,22 @@ export default function OverviewScreen() {
   );
 }
 
-function WeatherPanel() {
+function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
+  const weather = useWeather(stableLocation);
+
+  if (!weather) {
+    return (
+      <LinearGradient
+        colors={['#3A73FF', '#5F96FF']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.weatherPanel}
+      >
+        <Text style={styles.weatherSummary}>Laddar väder...</Text>
+      </LinearGradient>
+    );
+  }
+
   return (
     <LinearGradient
       colors={['#3A73FF', '#5F96FF']}
@@ -866,18 +883,18 @@ function WeatherPanel() {
       <View style={styles.weatherTopRow}>
         <View style={styles.weatherLocationBlock}>
           <Text style={styles.weatherMetaLabel}>Plats</Text>
-          <Text style={styles.weatherLocation}>Stockholm</Text>
+          <Text style={styles.weatherLocation}>{weather.location}</Text>
         </View>
         <View style={styles.weatherMetaRight}>
           <Text style={styles.weatherMetaLabel}>Uppdaterad</Text>
-          <Text style={styles.weatherMetaValue}>08:05</Text>
+          <Text style={styles.weatherMetaValue}>{weather.updatedAt}</Text>
         </View>
       </View>
 
       <View style={styles.weatherContentRow}>
         <View style={styles.weatherTempBlock}>
-          <Text style={styles.weatherTemperatureLarge}>10°</Text>
-          <Text style={styles.weatherSummary}>Molnigt med solglimtar</Text>
+          <Text style={styles.weatherTemperatureLarge}>{weather.temperature}°</Text>
+          <Text style={styles.weatherSummary}>{weather.summary}</Text>
         </View>
         <CloudSun width={48} height={48} style={styles.weatherIconLarge} />
       </View>
@@ -885,17 +902,17 @@ function WeatherPanel() {
       <View style={styles.weatherMetrics}>
         <View style={styles.weatherMetricItem}>
           <Text style={styles.weatherMetricLabel}>Högsta</Text>
-          <Text style={styles.weatherMetricValue}>12°</Text>
+          <Text style={styles.weatherMetricValue}>{weather.high}°</Text>
         </View>
         <View style={styles.weatherMetricDivider} />
         <View style={styles.weatherMetricItem}>
           <Text style={styles.weatherMetricLabel}>Lägsta</Text>
-          <Text style={styles.weatherMetricValue}>6°</Text>
+          <Text style={styles.weatherMetricValue}>{weather.low}°</Text>
         </View>
         <View style={styles.weatherMetricDivider} />
         <View style={styles.weatherMetricItem}>
           <Text style={styles.weatherMetricLabel}>Vind</Text>
-          <Text style={styles.weatherMetricValue}>4 m/s</Text>
+          <Text style={styles.weatherMetricValue}>{weather.wind} m/s</Text>
         </View>
       </View>
     </LinearGradient>
