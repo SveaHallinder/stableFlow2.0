@@ -156,14 +156,7 @@ export default function OnboardingResources() {
           has_indoor_arena: draft.hasArena,
           arena_note: activeFarm?.arenaNote ?? null,
         };
-        console.info('[supabase] farms upsert (onboarding resources)', { userId, payload: farmPayload });
         const farmResult = await supabase.from('farms').upsert(farmPayload);
-        console.info('[supabase] farms upsert result (onboarding resources)', {
-          userId,
-          status: farmResult.status,
-          statusText: farmResult.statusText,
-          error: farmResult.error,
-        });
         if (farmResult.error) {
           toast.showToast(`Kunde inte spara gård. ${farmResult.error.message}`, 'error');
           return false;
@@ -204,19 +197,7 @@ export default function OnboardingResources() {
             },
           };
           const stablePayload = { settings: nextSettings };
-          console.info('[supabase] stables update (onboarding resources)', {
-            userId,
-            stableId: stable.id,
-            payload: stablePayload,
-          });
           const stableResult = await supabase.from('stables').update(stablePayload).eq('id', stable.id);
-          console.info('[supabase] stables update result (onboarding resources)', {
-            userId,
-            stableId: stable.id,
-            status: stableResult.status,
-            statusText: stableResult.statusText,
-            error: stableResult.error,
-          });
           if (stableResult.error) {
             toast.showToast(`Kunde inte spara resurser för ${stable.name}. ${stableResult.error.message}`, 'error');
             return false;
@@ -245,19 +226,7 @@ export default function OnboardingResources() {
           },
         };
         const stablePayload = { settings: nextSettings };
-        console.info('[supabase] stables update (onboarding resources)', {
-          userId,
-          stableId: activeStableId,
-          payload: stablePayload,
-        });
         const stableResult = await supabase.from('stables').update(stablePayload).eq('id', activeStableId);
-        console.info('[supabase] stables update result (onboarding resources)', {
-          userId,
-          stableId: activeStableId,
-          status: stableResult.status,
-          statusText: stableResult.statusText,
-          error: stableResult.error,
-        });
         if (stableResult.error) {
           toast.showToast(`Kunde inte spara resurser. ${stableResult.error.message}`, 'error');
           return false;

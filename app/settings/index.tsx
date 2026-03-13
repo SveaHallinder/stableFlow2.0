@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -16,6 +14,7 @@ import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { radius } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -46,8 +45,7 @@ const settingsItems: SettingsItem[] = [
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>

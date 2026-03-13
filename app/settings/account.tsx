@@ -1,13 +1,11 @@
 import React from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,6 +18,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ToastProvider';
 import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -29,8 +28,7 @@ export default function AccountSettingsScreen() {
   const { signOut, user } = useAuth();
   const { state, actions } = useAppData();
   const currentUser = state.users[state.currentUserId];
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const [draft, setDraft] = React.useState({
     name: currentUser?.name ?? '',
     phone: currentUser?.phone ?? '',
@@ -97,6 +95,7 @@ export default function AccountSettingsScreen() {
           style={styles.scroll}
           contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           <Card tone="muted" style={styles.card}>
             <View style={styles.sectionHeader}>

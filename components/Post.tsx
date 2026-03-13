@@ -41,7 +41,7 @@ type PostCardProps = {
   onDelete?: () => void;
 };
 
-export function PostCard({
+export const PostCard = React.memo(function PostCard({
   data,
   currentUserId,
   onToggleLike,
@@ -163,7 +163,7 @@ export function PostCard({
       ) : null}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   card: {

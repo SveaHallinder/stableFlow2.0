@@ -1174,13 +1174,6 @@ function resolvePermissions(
   };
 }
 
-const referenceDay = new Date();
-referenceDay.setHours(0, 0, 0, 0);
-const isoDay0 = toISODate(referenceDay);
-const isoDay1 = toISODate(addDays(referenceDay, 1));
-const isoDay2 = toISODate(addDays(referenceDay, 2));
-const todayWeekday = ((referenceDay.getDay() + 6) % 7) as WeekdayIndex;
-
 const initialState: AppDataState = {
   currentStableId: '',
   stables: [],

@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +16,7 @@ import { Card, HeaderIconButton } from '@/components/Primitives';
 import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { formatShortDate } from '@/lib/time';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -25,8 +24,7 @@ export default function NotificationSettingsScreen() {
   const router = useRouter();
   const { state, derived } = useAppData();
   const { currentStableId } = state;
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const missedAssignments = React.useMemo(
     () => derived.getMissedAssignmentsForStable(currentStableId),
     [derived, currentStableId],

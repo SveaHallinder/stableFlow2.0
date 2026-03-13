@@ -61,19 +61,7 @@ export default function OnboardingStables() {
         ride_types: [],
         settings: null,
       };
-      console.info('[supabase] stables insert (onboarding stable)', {
-        userId,
-        stableId,
-        payload: stablePayload,
-      });
       const stableInsert = await supabase.from('stables').insert(stablePayload);
-      console.info('[supabase] stables insert result (onboarding stable)', {
-        userId,
-        stableId,
-        status: stableInsert.status,
-        statusText: stableInsert.statusText,
-        error: stableInsert.error,
-      });
       if (stableInsert.error) {
         toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
         return;
@@ -86,19 +74,7 @@ export default function OnboardingStables() {
         access: 'owner',
         rider_role: 'owner',
       };
-      console.info('[supabase] stable_members insert (onboarding stable)', {
-        userId,
-        stableId,
-        payload: memberPayload,
-      });
       const memberInsert = await supabase.from('stable_members').insert(memberPayload);
-      console.info('[supabase] stable_members insert result (onboarding stable)', {
-        userId,
-        stableId,
-        status: memberInsert.status,
-        statusText: memberInsert.statusText,
-        error: memberInsert.error,
-      });
       if (memberInsert.error) {
         toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
         return;
@@ -110,19 +86,7 @@ export default function OnboardingStables() {
         is_group: true,
         created_by_user_id: userId,
       };
-      console.info('[supabase] conversations insert (onboarding stable)', {
-        userId,
-        stableId,
-        payload: conversationPayload,
-      });
       const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
-      console.info('[supabase] conversations insert result (onboarding stable)', {
-        userId,
-        stableId,
-        status: conversationInsert.status,
-        statusText: conversationInsert.statusText,
-        error: conversationInsert.error,
-      });
       if (conversationInsert.error && conversationInsert.error.code !== '23505') {
         toast.showToast('Kunde inte skapa stallchatten.', 'error');
       }

@@ -11,7 +11,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -37,6 +36,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -107,8 +107,7 @@ export default function OverviewScreen() {
     stables,
   } = state;
   const toast = useToast();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const isWeb = Platform.OS === 'web';
   const { tour } = useLocalSearchParams<{ tour?: string }>();
   const activeAssignments = React.useMemo(

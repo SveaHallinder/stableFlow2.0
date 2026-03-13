@@ -1,6 +1,7 @@
 import { Stack, useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -9,24 +10,94 @@ export default function RootLayout() {
   useFrameworkReady();
 
   return (
-    <ToastProvider>
-      <AuthProvider>
-        <AuthGate>
-          <AppDataProvider>
-            <OnboardingGate>
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-                <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="+not-found" />
-              </Stack>
-            </OnboardingGate>
-          </AppDataProvider>
-        </AuthGate>
-      </AuthProvider>
-    </ToastProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <AuthProvider>
+          <AuthGate>
+            <AppDataProvider>
+              <OnboardingGate>
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                  <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="+not-found" />
+                </Stack>
+              </OnboardingGate>
+            </AppDataProvider>
+          </AuthGate>
+        </AuthProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={errorStyles.container}>
+          <Text style={errorStyles.title}>Något gick fel</Text>
+          <Text style={errorStyles.body}>
+            Appen stötte på ett oväntat problem. Försök starta om.
+          </Text>
+          <TouchableOpacity
+            style={errorStyles.button}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={errorStyles.buttonText}>Försök igen</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const errorStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+    backgroundColor: '#F8FAFD',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1C2439',
+    marginBottom: 8,
+  },
+  body: {
+    fontSize: 14,
+    color: '#5A6785',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 24,
+  },
+  button: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#2D6CF6',
+  },
+  buttonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+});
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();

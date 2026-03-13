@@ -7,7 +7,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -20,6 +19,7 @@ import { supabase, supabaseConfig } from '@/lib/supabase';
 import { savePendingJoinCode } from '@/lib/pendingAuth';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -28,8 +28,7 @@ type AuthMode = 'login' | 'signup';
 export default function AuthScreen() {
   const router = useRouter();
   const toast = useToast();
-  const { width } = useWindowDimensions();
-  const isDesktop = Platform.OS === 'web' && width >= 960;
+  const isDesktop = useIsDesktopWeb();
   const [mode, setMode] = React.useState<AuthMode>('login');
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
@@ -80,8 +79,8 @@ export default function AuthScreen() {
       if (error) {
         const message =
           error.message === 'Network request failed'
-            ? 'Kan inte nå Supabase. Kolla internet och EXPO_PUBLIC_SUPABASE_URL.'
-            : error.message;
+            ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+            : 'Fel e-post eller lösenord.';
         toast.showToast(message, 'error');
       } else {
         toast.showToast('Välkommen!', 'success');
@@ -119,8 +118,8 @@ export default function AuthScreen() {
     if (error) {
       const message =
         error.message === 'Network request failed'
-          ? 'Kan inte nå Supabase. Kolla internet och EXPO_PUBLIC_SUPABASE_URL.'
-          : error.message;
+          ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+          : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
       toast.showToast(message, 'error');
       setSubmitting(false);
       return;
@@ -307,7 +306,7 @@ export default function AuthScreen() {
         <TextInput
           value={password}
           onChangeText={setPassword}
-          placeholder="Minst 6 tecken"
+          placeholder="Minst 8 tecken"
           placeholderTextColor={palette.secondaryText}
           style={[styles.input, isDesktop && styles.inputDesktop]}
           secureTextEntry

@@ -9,7 +9,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -24,6 +23,7 @@ import { Card } from '@/components/Primitives';
 import { color, radius } from '@/design/tokens';
 import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { UserRole, Horse, PaddockImage, StableEventVisibility, StableSettings } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -56,8 +56,7 @@ export default function StablesScreen() {
   const toast = useToast();
   const { state, actions, derived } = useAppData();
   const { stables, currentStableId, users, horses, currentUserId, farms } = state;
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
   const currentUser = users[currentUserId];
   const { permissions } = derived;

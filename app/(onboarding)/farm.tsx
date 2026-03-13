@@ -91,14 +91,7 @@ export default function OnboardingFarm() {
         arena_note: null,
         created_by: userId,
       };
-      console.info('[supabase] farms insert (onboarding farm)', { userId, payload: farmPayload });
       const farmInsert = await supabase.from('farms').insert(farmPayload);
-      console.info('[supabase] farms insert result (onboarding farm)', {
-        userId,
-        status: farmInsert.status,
-        statusText: farmInsert.statusText,
-        error: farmInsert.error,
-      });
       if (farmInsert.error) {
         toast.showToast(`Kunde inte skapa gård. ${farmInsert.error.message}`, 'error');
         return;
@@ -132,19 +125,7 @@ export default function OnboardingFarm() {
           ride_types: [],
           settings: null,
         };
-        console.info('[supabase] stables insert (onboarding farm)', {
-          userId,
-          stableId,
-          payload: stablePayload,
-        });
         const stableInsert = await supabase.from('stables').insert(stablePayload);
-        console.info('[supabase] stables insert result (onboarding farm)', {
-          userId,
-          stableId,
-          status: stableInsert.status,
-          statusText: stableInsert.statusText,
-          error: stableInsert.error,
-        });
         if (stableInsert.error) {
           toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
           return;
@@ -157,19 +138,7 @@ export default function OnboardingFarm() {
           access: 'owner',
           rider_role: 'owner',
         };
-        console.info('[supabase] stable_members insert (onboarding farm)', {
-          userId,
-          stableId,
-          payload: memberPayload,
-        });
         const memberInsert = await supabase.from('stable_members').insert(memberPayload);
-        console.info('[supabase] stable_members insert result (onboarding farm)', {
-          userId,
-          stableId,
-          status: memberInsert.status,
-          statusText: memberInsert.statusText,
-          error: memberInsert.error,
-        });
         if (memberInsert.error) {
           toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
           return;
@@ -181,19 +150,7 @@ export default function OnboardingFarm() {
           is_group: true,
           created_by_user_id: userId,
         };
-        console.info('[supabase] conversations insert (onboarding farm)', {
-          userId,
-          stableId,
-          payload: conversationPayload,
-        });
         const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
-        console.info('[supabase] conversations insert result (onboarding farm)', {
-          userId,
-          stableId,
-          status: conversationInsert.status,
-          statusText: conversationInsert.statusText,
-          error: conversationInsert.error,
-        });
         if (conversationInsert.error && conversationInsert.error.code !== '23505') {
           toast.showToast('Kunde inte skapa stallchatten.', 'error');
         }

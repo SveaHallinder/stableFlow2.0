@@ -6,19 +6,9 @@ import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
+import { roleLabels } from '@/lib/roleLabels';
 
 const palette = theme.colors;
-
-const roleLabels = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Ryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Terapeut',
-  guest: 'Gäst',
-} as const;
 
 const navItems = [
   { label: 'Överblick', route: '/' },

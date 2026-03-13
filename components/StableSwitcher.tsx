@@ -2,21 +2,11 @@ import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { theme } from '@/components/theme';
-import { useAppData, type UserRole } from '@/context/AppDataContext';
+import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
+import { roleLabels } from '@/lib/roleLabels';
 
 const palette = theme.colors;
-
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Ryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Terapeut',
-  guest: 'Gäst',
-};
 
 type StableSwitcherProps = {
   style?: StyleProp<ViewStyle>;

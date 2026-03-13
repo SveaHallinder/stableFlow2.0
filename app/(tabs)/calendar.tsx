@@ -9,7 +9,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
@@ -47,6 +47,7 @@ import {
 } from '@/lib/schedule';
 import { NewAssignmentModal } from '@/components/NewAssignmentModal';
 import { useToast } from '@/components/ToastProvider';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 const statusColors = theme.status;
@@ -243,7 +244,7 @@ function calculateDurationMinutes(startTime: string, endTime: string) {
 }
 
 export default function CalendarScreen() {
-  const { state, actions, derived } = useAppData();
+  const { state, actions, derived, hydrating } = useAppData();
   const router = useRouter();
   const {
     assignments,
@@ -266,9 +267,8 @@ export default function CalendarScreen() {
     fromOnboarding?: string | string[];
     returnTo?: string | string[];
   }>();
-  const { width } = useWindowDimensions();
   const isWeb = Platform.OS === 'web';
-  const isDesktopWeb = isWeb && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const { permissions } = derived;
   const canManageOnboarding = permissions.canManageOnboarding;
   const canManageAssignments = permissions.canManageAssignments;
@@ -278,7 +278,7 @@ export default function CalendarScreen() {
   const canManageArenaBookings = permissions.canManageArenaBookings;
   const canManageArenaStatus = permissions.canManageArenaStatus;
   const canManageDayEvents = permissions.canManageDayEvents;
-  const buildRecurringDefaults = () => {
+  const buildRecurringDefaults = React.useCallback(() => {
     const start = new Date();
     const end = new Date(start);
     end.setDate(end.getDate() + 14);
@@ -293,7 +293,7 @@ export default function CalendarScreen() {
       slotsCount: '1',
       assignToMe: false,
     };
-  };
+  }, []);
   const [assignmentModal, setAssignmentModal] = React.useState<{
     visible: boolean;
     mode: 'create' | 'edit';
@@ -1253,6 +1253,22 @@ export default function CalendarScreen() {
     openArenaModal,
     openRideLogModal,
   ]);
+
+  if (hydrating) {
+    return (
+      <LinearGradient colors={gradients.background} style={styles.background}>
+        <SafeAreaView style={styles.safeArea}>
+          <ScreenHeader
+            style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+            title="Schema"
+          />
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator color={palette.primary} />
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={gradients.background} style={styles.background}>
@@ -3148,6 +3164,11 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: color.bg,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   scroll: {
     flex: 1,

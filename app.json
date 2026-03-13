@@ -10,7 +10,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#F8FAFD"
     },
-    "scheme": "myapp",
+    "scheme": "stableflow",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -22,7 +22,7 @@
         "backgroundColor": "#F8FAFD"
       },
       "infoPlist": {
-        "CFBundleDisplayName": "",
+        "CFBundleDisplayName": "StableFlow",
         "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
         "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar."
       }
@@ -47,10 +47,7 @@
       "expo-web-browser",
       "expo-splash-screen"
     ],
-    "extra": {
-      "supabaseUrl": "https://zbcghmpjslasnxqcodqa.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpiY2dobXBqc2xhc254cWNvZHFhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzODc5NjUsImV4cCI6MjA3NDk2Mzk2NX0.Zad9zQNYXQn-VzVeEk58KlL0xlcEJOZyhpTAekeGfa4"
-    },
+    "extra": {},
     "experiments": {
       "typedRoutes": true
     },

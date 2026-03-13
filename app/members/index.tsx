@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,6 +20,7 @@ import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -47,8 +47,7 @@ export default function MembersScreen() {
   const toast = useToast();
   const router = useRouter();
   const { state, actions } = useAppData();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
   const handleExit = React.useCallback(() => {
     if (router.canGoBack()) {

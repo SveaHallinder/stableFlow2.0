@@ -10,7 +10,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +27,7 @@ import type { Paddock, PaddockImage, UpsertPaddockInput } from '@/context/AppDat
 import { useToast } from '@/components/ToastProvider';
 import { createPaddocksPrintHtml } from '@/lib/paddocksPrint';
 import { toISODate } from '@/lib/schedule';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -92,8 +92,7 @@ export default function PaddocksScreen() {
   const router = useRouter();
   const toast = useToast();
   const { state, actions, derived } = useAppData();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
   const { permissions } = derived;
   const canManagePaddocks = permissions.canManagePaddocks;

@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Image,
   Platform,
   ScrollView,
@@ -10,9 +11,8 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { PostCard, PostData } from '@/components/Post';
@@ -21,6 +21,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, Pill } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { space } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { formatTimeAgo } from '@/lib/time';
@@ -38,9 +39,9 @@ const IMAGE_QUALITY = 0.7;
 const IMAGE_ASPECT: [number, number] = [1, 1];
 
 export default function FeedScreen() {
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const insets = useSafeAreaInsets();
   const toast = useToast();
   const scrollRef = React.useRef<ScrollView>(null);
   const composerInputRef = React.useRef<TextInput>(null);
@@ -67,6 +68,7 @@ export default function FeedScreen() {
   const [postImage, setPostImage] = React.useState<string | null>(null);
   const [newGroupName, setNewGroupName] = React.useState('');
   const [focusComposerTick, setFocusComposerTick] = React.useState(0);
+  const [isComposerOpen, setIsComposerOpen] = React.useState(false);
 
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarmId = currentStable?.farmId;
@@ -277,6 +279,7 @@ export default function FeedScreen() {
     setPostContent('');
     setSelectedGroups([stableGroupIdValue]);
     setPostImage(null);
+    setIsComposerOpen(false);
     toast.showToast('Inlägget är publicerat.', 'success');
   }, [
     actions,
@@ -342,7 +345,19 @@ export default function FeedScreen() {
     setPostImage(null);
   }, []);
 
+  React.useEffect(() => {
+    if (!isDesktopWeb && !isComposerOpen && (postContent.trim() || postImage)) {
+      setIsComposerOpen(true);
+    }
+  }, [isComposerOpen, isDesktopWeb, postContent, postImage]);
+
+  const handleOpenComposer = React.useCallback(() => {
+    setIsComposerOpen(true);
+    setFocusComposerTick((prev) => prev + 1);
+  }, []);
+
   const handleFocusComposer = React.useCallback(() => {
+    setIsComposerOpen(true);
     setFocusComposerTick((prev) => prev + 1);
   }, []);
 
@@ -517,7 +532,8 @@ export default function FeedScreen() {
 
   const canPublish = postContent.trim().length > 0;
   const canUseCamera = Platform.OS !== 'web';
-  const composerCard = canPublishPost ? (
+  const shouldShowComposer = canPublishPost && (isDesktopWeb || isComposerOpen);
+  const composerCard = shouldShowComposer ? (
     <Card tone="muted" style={styles.composerCard}>
       <View style={styles.composerHeader}>
         <Image
@@ -670,6 +686,31 @@ export default function FeedScreen() {
     </Card>
   ) : null;
 
+
+
+  const composerClosedCard =
+    canPublishPost && !isDesktopWeb && !isComposerOpen ? (
+      <Card tone="muted" style={styles.composerClosedCard}>
+        <View style={styles.composerClosedRow}>
+          <Image
+            source={currentUser?.avatar ?? require('@/assets/images/dummy-avatar.png')}
+            style={styles.composerAvatar}
+          />
+          <View style={styles.composerHeaderText}>
+            <Text style={styles.composerTitle}>Dela en uppdatering</Text>
+            <Text style={styles.composerSubtitle}>{currentStable?.name ?? 'Valt stall'}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.composerOpenButton}
+            onPress={handleOpenComposer}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.composerOpenButtonText}>Skriv inlägg</Text>
+          </TouchableOpacity>
+        </View>
+      </Card>
+    ) : null;
+
   const readOnlyCard = !canPublishPost ? (
     <Card tone="muted" style={styles.readOnlyCard}>
       <Text style={styles.readOnlyTitle}>Läsbehörighet</Text>
@@ -776,6 +817,8 @@ export default function FeedScreen() {
     </View>
   );
 
+  const contentPaddingBottom = isDesktopWeb ? 50 : 120 + insets.bottom;
+
   const renderCustomGroupFilters = (variant: 'panel' | 'inline') => {
     if (!customGroups.length) {
       return null;
@@ -839,92 +882,110 @@ export default function FeedScreen() {
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
           title="Feed"
         />
-        {!isDesktopWeb ? <StableSwitcher /> : null}
-        {!isDesktopWeb ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterScroll}
-          >
-            {renderFilterChips('inline')}
-          </ScrollView>
-        ) : null}
-        {!isDesktopWeb && customGroups.length ? (
-          <View style={styles.customFilterWrap}>{renderCustomGroupFilters('inline')}</View>
-        ) : null}
-        <ScrollView
-          ref={scrollRef}
-          style={styles.scroll}
-          contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
-          showsVerticalScrollIndicator={false}
-        >
-          {isDesktopWeb ? (
-            <View style={styles.desktopLayout}>
-              <View style={[styles.desktopPanel, stickyPanelStyle]}>
-                <Card tone="muted" style={styles.panelCard}>
-                  <Text style={styles.panelTitle}>Snabbfilter</Text>
-                  {renderFilterChips('panel')}
-                  {renderCustomGroupFilters('panel')}
-                </Card>
-                <Card tone="muted" style={styles.panelCard}>
-                  <Text style={styles.panelTitle}>Tips</Text>
-                  <Text style={styles.panelText}>
-                    Tagga inlägg med stall eller häst så det blir lättare att hitta senare.
-                  </Text>
-                </Card>
-              </View>
-              <View style={styles.desktopFeed}>
-                <View style={[styles.postList, styles.postListDesktop]}>
-                  {readOnlyCard}
-                  {composerCard}
-                  {postCards.length === 0 ? (
-                    emptyState
-                  ) : (
-                    <>
-                      {postCards.map((post) => (
-                        <PostCard
-                          key={post.id}
-                          data={post}
-                          currentUserId={currentUserId}
-                          onToggleLike={() => handleToggleLike(post.id)}
-                          onAddComment={(text) => handleAddComment(post.id, text)}
-                          canInteract={canInteract}
-                          canDelete={canDeletePost(post)}
-                          onDelete={() => handleDeletePost(post.id)}
-                        />
-                      ))}
-                      {renderLoadMoreFooter()}
-                    </>
-                  )}
+        {isDesktopWeb ? (
+          <>
+            <ScrollView
+              ref={scrollRef}
+              contentContainerStyle={[
+                styles.content,
+                { paddingBottom: contentPaddingBottom },
+                styles.contentDesktop,
+              ]}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.desktopLayout}>
+                <View style={[styles.desktopPanel, stickyPanelStyle]}>
+                  <Card tone="muted" style={styles.panelCard}>
+                    <Text style={styles.panelTitle}>Snabbfilter</Text>
+                    {renderFilterChips('panel')}
+                    {renderCustomGroupFilters('panel')}
+                  </Card>
+                  <Card tone="muted" style={styles.panelCard}>
+                    <Text style={styles.panelTitle}>Tips</Text>
+                    <Text style={styles.panelText}>
+                      Tagga inlägg med stall eller häst så det blir lättare att hitta senare.
+                    </Text>
+                  </Card>
+                </View>
+                <View style={styles.desktopFeed}>
+                  <View style={[styles.postList, styles.postListDesktop]}>
+                    {readOnlyCard}
+                    {composerClosedCard}
+                    {composerCard}
+                    {postCards.length === 0 ? (
+                      emptyState
+                    ) : (
+                      <>
+                        {postCards.map((post) => (
+                          <PostCard
+                            key={post.id}
+                            data={post}
+                            currentUserId={currentUserId}
+                            onToggleLike={() => handleToggleLike(post.id)}
+                            onAddComment={(text) => handleAddComment(post.id, text)}
+                            canInteract={canInteract}
+                            canDelete={canDeletePost(post)}
+                            onDelete={() => handleDeletePost(post.id)}
+                          />
+                        ))}
+                        {renderLoadMoreFooter()}
+                      </>
+                    )}
+                  </View>
                 </View>
               </View>
-            </View>
-          ) : (
-            <View style={styles.postList}>
-              {readOnlyCard}
-              {composerCard}
-              {postCards.length === 0 ? (
-                emptyState
-              ) : (
-                <>
-                  {postCards.map((post) => (
-                    <PostCard
-                      key={post.id}
-                      data={post}
-                      currentUserId={currentUserId}
-                      onToggleLike={() => handleToggleLike(post.id)}
-                      onAddComment={(text) => handleAddComment(post.id, text)}
-                      canInteract={canInteract}
-                      canDelete={canDeletePost(post)}
-                      onDelete={() => handleDeletePost(post.id)}
-                    />
-                  ))}
-                  {renderLoadMoreFooter()}
-                </>
-              )}
-            </View>
-          )}
-        </ScrollView>
+            </ScrollView>
+          </>
+        ) : (
+          <FlatList
+            data={postCards}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item: post }) => (
+              <View style={styles.flatListItem}>
+                <PostCard
+                  data={post}
+                  currentUserId={currentUserId}
+                  onToggleLike={() => handleToggleLike(post.id)}
+                  onAddComment={(text) => handleAddComment(post.id, text)}
+                  canInteract={canInteract}
+                  canDelete={canDeletePost(post)}
+                  onDelete={() => handleDeletePost(post.id)}
+                />
+              </View>
+            )}
+            ListHeaderComponent={
+              <View style={styles.flatListHeader}>
+                <StableSwitcher />
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.filterScroll}
+                >
+                  {renderFilterChips('inline')}
+                </ScrollView>
+                {customGroups.length ? (
+                  <View style={styles.customFilterWrap}>
+                    {renderCustomGroupFilters('inline')}
+                  </View>
+                ) : null}
+                {readOnlyCard}
+                {composerClosedCard}
+                {composerCard}
+              </View>
+            }
+            ListEmptyComponent={<View style={styles.flatListEmpty}>{emptyState}</View>}
+            ListFooterComponent={
+              postCards.length > 0 ? (
+                <View style={styles.flatListFooter}>{renderLoadMoreFooter()}</View>
+              ) : null
+            }
+            contentContainerStyle={[
+              styles.content,
+              { paddingBottom: contentPaddingBottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -937,9 +998,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: palette.background,
-  },
-  scroll: {
-    flex: 1,
   },
   content: {
     paddingHorizontal: space.lg,
@@ -980,6 +1038,19 @@ const styles = StyleSheet.create({
   postList: {
     gap: space.xl,
   },
+  flatListItem: {
+    marginBottom: space.xl,
+  },
+  flatListHeader: {
+    gap: space.xl,
+    marginBottom: space.xl,
+  },
+  flatListEmpty: {
+    marginBottom: space.xl,
+  },
+  flatListFooter: {
+    marginBottom: space.xl,
+  },
   loadMoreWrap: {
     alignItems: 'center',
     gap: space.sm,
@@ -1015,6 +1086,28 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     gap: 14,
   },
+  composerClosedCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderWidth: 0,
+  },
+  composerClosedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  composerOpenButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: palette.primary,
+  },
+  composerOpenButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.inverseText,
+  },
+
   composerHeader: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,12 +1,10 @@
 import React from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -18,6 +16,7 @@ import { Card, HeaderIconButton, SearchBar } from '@/components/Primitives';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -202,8 +201,7 @@ export default function SearchScreen() {
   const router = useRouter();
   const { q } = useLocalSearchParams<{ q?: string | string[] }>();
   const { state, actions } = useAppData();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
 
   const initialQuery = React.useMemo(() => (Array.isArray(q) ? q[0] : q) ?? '', [q]);
   const [query, setQuery] = React.useState(initialQuery);

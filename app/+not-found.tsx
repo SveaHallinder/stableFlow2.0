@@ -5,11 +5,14 @@ import { StyleSheet, Text, View } from 'react-native';
 export default function NotFoundScreen() {
   return (
     <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
+      <Stack.Screen options={{ title: 'Sidan hittades inte' }} />
       <View style={styles.container}>
-        <Text style={styles.text}>This screen doesn't exist.</Text>
+        <Text style={styles.title}>Sidan finns inte</Text>
+        <Text style={styles.body}>
+          Den här sidan kunde inte hittas. Gå tillbaka till startsidan.
+        </Text>
         <Link href="/" style={styles.link}>
-          <Text>Go to home screen!</Text>
+          <Text style={styles.linkText}>Gå till startsidan</Text>
         </Link>
       </View>
     </>
@@ -21,14 +24,31 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
+    padding: 32,
+    backgroundColor: '#F8FAFD',
   },
-  text: {
+  title: {
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: '#1C2439',
+    marginBottom: 8,
+  },
+  body: {
+    fontSize: 14,
+    color: '#5A6785',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   link: {
-    marginTop: 15,
-    paddingVertical: 15,
+    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#2D6CF6',
+  },
+  linkText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

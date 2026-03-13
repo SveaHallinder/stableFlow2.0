@@ -1,13 +1,11 @@
 import React from 'react';
 import {
   Image,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -20,6 +18,7 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { AssignmentSlot, DefaultPass, UserRole, WeekdayIndex } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -75,8 +74,7 @@ export default function MemberProfileScreen() {
   const member = memberId ? state.users[memberId] : undefined;
   const stable = state.stables.find((item) => item.id === stableId);
 
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const handleBack = React.useCallback(() => {
     if (router.canGoBack()) {
       router.back();

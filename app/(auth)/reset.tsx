@@ -129,8 +129,8 @@ export default function ResetPasswordScreen() {
       setFormError('Fyll i båda lösenorden.');
       return;
     }
-    if (password.length < 6) {
-      setFormError('Lösenordet måste vara minst 6 tecken.');
+    if (password.length < 8) {
+      setFormError('Lösenordet måste vara minst 8 tecken.');
       return;
     }
     if (password !== confirmPassword) {
@@ -148,7 +148,7 @@ export default function ResetPasswordScreen() {
     setSubmitting(true);
     const { error } = await supabase.auth.updateUser({ password });
     if (error) {
-      setFormError(error.message || 'Kunde inte uppdatera lösenordet.');
+      setFormError('Kunde inte uppdatera lösenordet. Försök igen.');
       setSubmitting(false);
       return;
     }
@@ -190,7 +190,7 @@ export default function ResetPasswordScreen() {
                 <TextInput
                   value={password}
                   onChangeText={setPassword}
-                  placeholder="Minst 6 tecken"
+                  placeholder="Minst 8 tecken"
                   placeholderTextColor={palette.secondaryText}
                   style={styles.input}
                   secureTextEntry

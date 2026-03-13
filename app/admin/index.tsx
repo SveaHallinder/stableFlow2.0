@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -21,6 +20,7 @@ import { Card, HeaderIconButton } from '@/components/Primitives';
 import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -91,8 +91,7 @@ export default function AdminDashboard() {
   const router = useRouter();
   const toast = useToast();
   const { state, actions, derived } = useAppData();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const isWeb = Platform.OS === 'web';
 
   const currentUser = state.users[state.currentUserId];
@@ -408,6 +407,7 @@ export default function AdminDashboard() {
               style={styles.scroll}
               contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               <Card tone="muted" style={styles.card}>
                 <Text style={styles.sectionTitle}>Översikt</Text>

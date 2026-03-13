@@ -1,10 +1,11 @@
 import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
-import { View, StyleSheet, Platform, useWindowDimensions } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAuth } from '@/context/AuthContext';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 // SVG imports
 import DashOutlineIcon from '@/assets/images/tabbar-outl-dash.svg';
@@ -23,8 +24,7 @@ const radii = theme.radii;
 
 export default function TabLayout() {
   const { session, loading } = useAuth();
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const searchParams = useGlobalSearchParams();
   const fromOnboardingRaw = searchParams.fromOnboarding;
   const fromOnboarding = Array.isArray(fromOnboardingRaw)
@@ -60,6 +60,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          tabBarAccessibilityLabel: 'Överblick',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <DashFillIcon width={23} height={25} />
@@ -72,6 +73,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="calendar"
         options={{
+          tabBarAccessibilityLabel: 'Schema',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <CalendarFillIcon width={25} height={25} />
@@ -84,6 +86,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="feed"
         options={{
+          tabBarAccessibilityLabel: 'Inlägg',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <HomeFillIcon width={24} height={24} />
@@ -96,6 +99,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
+          tabBarAccessibilityLabel: 'Meddelanden',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <MessageFillIcon width={25} height={25} />
@@ -108,6 +112,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
+          tabBarAccessibilityLabel: 'Profil',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <ProfileFillIcon width={22} height={25} />

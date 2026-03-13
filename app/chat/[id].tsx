@@ -1,14 +1,12 @@
 import React from 'react';
 import {
   Image,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -19,6 +17,7 @@ import { HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { useToast } from '@/components/ToastProvider';
@@ -30,8 +29,7 @@ export default function ChatScreen() {
   const { state, actions } = useAppData();
   const { id: rawId, name } = useLocalSearchParams<{ id?: string; name?: string }>();
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const conversationPreview = state.messages.find(
     (message: MessagePreview) => message.id === conversationId,
   );
@@ -179,7 +177,11 @@ export default function ChatScreen() {
 
             <View style={[styles.composerContainer, isDesktopWeb && styles.composerContainerDesktop]}>
               <View style={[styles.composer, isDesktopWeb && styles.composerDesktop]}>
-                <TouchableOpacity style={styles.composerAction}>
+                <TouchableOpacity
+                  style={styles.composerAction}
+                  onPress={() => toast.showToast('Bilagor kommer snart.', 'info')}
+                  activeOpacity={0.85}
+                >
                   <Text style={styles.composerActionIcon}>+</Text>
                 </TouchableOpacity>
 

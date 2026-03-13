@@ -7,7 +7,6 @@ import {
   Text,
   TouchableOpacity,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,15 +19,16 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { useAppData } from '@/context/AppDataContext';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type {
   Assignment,
   AssignmentSlot,
   AssignmentStatus,
   DefaultPass,
-  UserRole,
   WeekdayIndex,
 } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { roleLabels } from '@/lib/roleLabels';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -48,17 +48,6 @@ const DEFAULT_SLOTS: { label: string; value: AssignmentSlot }[] = [
   { label: 'Lunch', value: 'Lunch' },
   { label: 'Kväll', value: 'Evening' },
 ];
-
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Medryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Massör',
-  guest: 'Gäst',
-};
 
 function hasDefaultPass(passes: DefaultPass[], weekday: WeekdayIndex, slot: AssignmentSlot) {
   return passes.some((entry) => entry.weekday === weekday && entry.slot === slot);
@@ -81,8 +70,7 @@ export default function ProfileScreen() {
   const [defaultPassAnchor, setDefaultPassAnchor] = React.useState<number | null>(null);
   const [highlightDefaultPass, setHighlightDefaultPass] = React.useState(false);
   const [didScrollToSection, setDidScrollToSection] = React.useState(false);
-  const { width } = useWindowDimensions();
-  const isDesktopWeb = Platform.OS === 'web' && width >= 1024;
+  const isDesktopWeb = useIsDesktopWeb();
   const isWeb = Platform.OS === 'web';
   const currentStable = state.stables.find((stable) => stable.id === currentStableId);
   const resolvedSection = Array.isArray(section) ? section[0] : section;
