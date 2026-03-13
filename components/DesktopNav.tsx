@@ -37,10 +37,10 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const currentFarm = state.farms.find((farm) => farm.id === currentStable?.farmId);
   const currentUser = state.users[state.currentUserId];
   const canManageOnboarding = derived.canManageOnboardingAny;
-  const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
+  const memberStableIds = currentUser?.membership?.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));
   const stablesToShow = visibleStables.length ? visibleStables : stables;
-  const membership = currentUser?.membership.find((item) => item.stableId === currentStableId);
+  const membership = currentUser?.membership?.find((item) => item.stableId === currentStableId);
   const roleLabel =
     membership?.access === 'owner'
       ? 'Ägare'

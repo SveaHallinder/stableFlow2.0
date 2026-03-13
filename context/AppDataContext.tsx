@@ -3893,7 +3893,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const derived = React.useMemo(() => {
     const { assignments, alerts, currentUserId, currentStableId, horses } = state;
     const currentUser = state.users[currentUserId];
-    const membership = state.users[currentUserId]?.membership.find((m) => m.stableId === currentStableId);
+    const membership = state.users[currentUserId]?.membership?.find((m) => m.stableId === currentStableId);
     const currentAccess = membership?.access ?? 'view';
     const currentRole = membership?.role ?? 'guest';
     const permissions = resolvePermissions(state, currentStableId, currentUserId);
@@ -5139,7 +5139,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Ingen aktiv användare.' };
       }
       const membership = post.stableId
-        ? current.users[userId]?.membership.find((entry) => entry.stableId === post.stableId)
+        ? current.users[userId]?.membership?.find((entry) => entry.stableId === post.stableId)
         : undefined;
       const isAdmin = membership?.role === 'admin' || membership?.access === 'owner';
       const isAuthor = post.authorId === userId;

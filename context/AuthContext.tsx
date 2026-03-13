@@ -23,7 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn('Kunde inte läsa session', error);
       }
       if (mounted) {
-        setSession(data.session ?? null);
+        setSession(data?.session ?? null);
         setLoading(false);
       }
     });

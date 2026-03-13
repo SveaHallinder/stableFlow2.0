@@ -24,7 +24,7 @@ export function StableSwitcher({
   const { state, actions } = useAppData();
   const { stables, currentStableId, users, currentUserId } = state;
   const currentUser = users[currentUserId];
-  const memberStableIds = currentUser?.membership.map((entry) => entry.stableId) ?? [];
+  const memberStableIds = currentUser?.membership?.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));
   const stablesToShow = visibleStables.length ? visibleStables : stables;
   if (stablesToShow.length === 0) {
@@ -33,7 +33,7 @@ export function StableSwitcher({
   const currentStable =
     stablesToShow.find((stable) => stable.id === currentStableId) ??
     stables.find((stable) => stable.id === currentStableId);
-  const membership = currentUser?.membership.find((entry) => entry.stableId === currentStableId);
+  const membership = currentUser?.membership?.find((entry) => entry.stableId === currentStableId);
   const rolePillLabel =
     membership?.access === 'owner'
       ? 'Ägare'

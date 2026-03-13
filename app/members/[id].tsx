@@ -84,11 +84,11 @@ export default function MemberProfileScreen() {
   }, [router]);
 
   const currentUser = state.users[state.currentUserId];
-  const currentMembership = currentUser?.membership.find((entry) => entry.stableId === stableId);
+  const currentMembership = currentUser?.membership?.find((entry) => entry.stableId === stableId);
   const canManageMembers =
     currentMembership?.role === 'admin' && (currentMembership.access ?? 'view') === 'owner';
 
-  const membership = member?.membership.find((entry) => entry.stableId === stableId) ?? member?.membership[0];
+  const membership = member?.membership?.find((entry) => entry.stableId === stableId) ?? member?.membership?.[0];
   const roleLabel = membership ? membership.customRole?.trim() || roleLabels[membership.role] : 'Ingen roll';
   const accessLabel = membership?.access ? accessLabels[membership.access] : undefined;
   const riderLabel =

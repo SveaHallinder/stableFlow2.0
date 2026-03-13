@@ -118,7 +118,7 @@ export default function FeedScreen() {
 
   const horseIdsForUser = React.useMemo(() => {
     const membershipHorseIds =
-      currentUser?.membership.find((entry) => entry.stableId === currentStableId)?.horseIds ?? [];
+      currentUser?.membership?.find((entry) => entry.stableId === currentStableId)?.horseIds ?? [];
     const ownedHorseIds = horses
       .filter((horse) => horse.ownerUserId === currentUserId && horse.stableId === currentStableId)
       .map((horse) => horse.id);
@@ -231,7 +231,7 @@ export default function FeedScreen() {
       if (!stableId) {
         return false;
       }
-      const membership = currentUser?.membership.find((entry) => entry.stableId === stableId);
+      const membership = currentUser?.membership?.find((entry) => entry.stableId === stableId);
       return membership?.role === 'admin' || membership?.access === 'owner';
     },
     [currentStableId, currentUser?.membership, currentUserId],

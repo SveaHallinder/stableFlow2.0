@@ -214,11 +214,11 @@ export default function SearchScreen() {
 
   const currentUser = state.users[state.currentUserId];
   const memberStableIds = React.useMemo(
-    () => new Set(currentUser?.membership.map((entry) => entry.stableId) ?? []),
+    () => new Set(currentUser?.membership?.map((entry) => entry.stableId) ?? []),
     [currentUser?.membership],
   );
   const membershipByStable = React.useMemo(
-    () => new Map(currentUser?.membership.map((entry) => [entry.stableId, entry]) ?? []),
+    () => new Map(currentUser?.membership?.map((entry) => [entry.stableId, entry]) ?? []),
     [currentUser?.membership],
   );
   const stableAccessRankById = React.useMemo(() => {

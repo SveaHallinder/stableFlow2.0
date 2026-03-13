@@ -60,7 +60,7 @@ export default function MembersScreen() {
 
   const currentUser = state.users[state.currentUserId];
   const memberStableIds = React.useMemo(
-    () => currentUser?.membership.map((entry) => entry.stableId) ?? [],
+    () => currentUser?.membership?.map((entry) => entry.stableId) ?? [],
     [currentUser?.membership],
   );
   const visibleStables = state.stables.filter((stable) => memberStableIds.includes(stable.id));
@@ -89,7 +89,7 @@ export default function MembersScreen() {
   }, [initialQuery, query]);
 
   const membershipByStable = React.useMemo(() => {
-    return new Map(currentUser?.membership.map((entry) => [entry.stableId, entry]) ?? []);
+    return new Map(currentUser?.membership?.map((entry) => [entry.stableId, entry]) ?? []);
   }, [currentUser?.membership]);
 
   const canManageMembersStable = React.useCallback(

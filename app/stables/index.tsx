@@ -367,7 +367,7 @@ export default function StablesScreen() {
   React.useEffect(() => {
     setHorseDraft((prev) => {
       const ownerStillValid = prev.ownerUserId
-        ? users[prev.ownerUserId]?.membership.some((entry) => entry.stableId === currentStableId)
+        ? users[prev.ownerUserId]?.membership?.some((entry) => entry.stableId === currentStableId)
         : false;
       return {
         ...prev,
