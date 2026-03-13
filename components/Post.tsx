@@ -52,6 +52,7 @@ export const PostCard = React.memo(function PostCard({
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
+  const [imageFailed, setImageFailed] = React.useState(false);
   const isLiked = currentUserId ? data.likedByUserIds?.includes(currentUserId) : false;
   const comments = data.commentsData ?? [];
   const visibleComments = comments.slice(-2);
@@ -95,11 +96,12 @@ export const PostCard = React.memo(function PostCard({
 
       {data.content && <Text style={styles.content}>{data.content}</Text>}
 
-      {data.imageSignedUrl && (
+      {data.imageSignedUrl && !imageFailed && (
         <Image
           source={{ uri: data.imageSignedUrl }}
           style={styles.postImage}
           resizeMode="cover"
+          onError={() => setImageFailed(true)}
         />
       )}
 

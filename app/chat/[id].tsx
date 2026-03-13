@@ -1,6 +1,8 @@
 import React from 'react';
 import {
   Image,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -75,6 +77,10 @@ export default function ChatScreen() {
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoiding}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
         {wrapDesktop(
           <View style={styles.container}>
             <ScreenHeader
@@ -119,6 +125,7 @@ export default function ChatScreen() {
                 isDesktopWeb && styles.messagesContentDesktop,
               ]}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               {messages.map((message, index) => {
                 const isMe = message.authorId === state.currentUserId;
@@ -209,6 +216,7 @@ export default function ChatScreen() {
             </View>
           </View>,
         )}
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -216,6 +224,9 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   background: {
+    flex: 1,
+  },
+  keyboardAvoiding: {
     flex: 1,
   },
   safeArea: {

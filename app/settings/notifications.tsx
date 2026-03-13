@@ -52,7 +52,7 @@ export default function NotificationSettingsScreen() {
 
   // Check permission status
   React.useEffect(() => {
-    getPermissionStatus().then(setPermissionStatus);
+    getPermissionStatus().then(setPermissionStatus).catch(() => {});
   }, []);
 
   // Load saved preferences
@@ -73,7 +73,8 @@ export default function NotificationSettingsScreen() {
           });
         }
         setLoadingPrefs(false);
-      });
+      })
+      .then(undefined, () => setLoadingPrefs(false));
   }, [user?.id]);
 
   const handleRequestPermission = React.useCallback(async () => {
@@ -84,9 +85,10 @@ export default function NotificationSettingsScreen() {
   const handleToggle = React.useCallback(
     async (key: keyof NotificationPrefs) => {
       if (!user?.id) return;
+      const prev = prefs;
       const next = { ...prefs, [key]: !prefs[key] };
       setPrefs(next);
-      await supabase.from('notification_preferences').upsert(
+      const { error } = await supabase.from('notification_preferences').upsert(
         {
           user_id: user.id,
           ...next,
@@ -94,6 +96,7 @@ export default function NotificationSettingsScreen() {
         },
         { onConflict: 'user_id' },
       );
+      if (error) setPrefs(prev);
     },
     [user?.id, prefs],
   );
