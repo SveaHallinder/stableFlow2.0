@@ -181,6 +181,8 @@ export default function ChatScreen() {
                   style={styles.composerAction}
                   onPress={() => toast.showToast('Bilagor kommer snart.', 'info')}
                   activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Bifoga fil"
                 >
                   <Text style={styles.composerActionIcon}>+</Text>
                 </TouchableOpacity>
@@ -196,7 +198,12 @@ export default function ChatScreen() {
                 />
               </View>
 
-              <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
+              <TouchableOpacity
+                style={styles.sendButton}
+                onPress={handleSend}
+                accessibilityRole="button"
+                accessibilityLabel="Skicka meddelande"
+              >
                 <Text style={styles.sendButtonIcon}>↑</Text>
               </TouchableOpacity>
             </View>

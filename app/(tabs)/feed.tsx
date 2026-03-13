@@ -479,7 +479,7 @@ export default function FeedScreen() {
     if (postsHasMore) {
       return (
         <View style={styles.loadMoreWrap}>
-          <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.loadMoreButton} onPress={handleLoadMore} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Ladda fler inlägg">
             <Text style={styles.loadMoreButtonText}>Ladda fler</Text>
           </TouchableOpacity>
           {postsLoadError ? <Text style={styles.loadMoreError}>{postsLoadError}</Text> : null}
@@ -560,6 +560,8 @@ export default function FeedScreen() {
             style={styles.composerActionButton}
             onPress={handlePickImage}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={postImage ? 'Byt bild' : 'Välj bild'}
           >
             <Text style={styles.composerActionText}>
               {postImage ? 'Byt bild' : 'Välj bild'}
@@ -570,6 +572,8 @@ export default function FeedScreen() {
               style={styles.composerActionButton}
               onPress={handleTakePhoto}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Ta bild med kamera"
             >
               <Text style={styles.composerActionText}>Ta bild</Text>
             </TouchableOpacity>
@@ -579,6 +583,8 @@ export default function FeedScreen() {
               style={styles.composerActionButton}
               onPress={handleClearImage}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Ta bort vald bild"
             >
               <Text style={styles.composerActionText}>Ta bort</Text>
             </TouchableOpacity>
@@ -679,6 +685,9 @@ export default function FeedScreen() {
           onPress={handlePublish}
           activeOpacity={0.85}
           disabled={!canPublish}
+          accessibilityRole="button"
+          accessibilityLabel="Publicera inlägg"
+          accessibilityState={{ disabled: !canPublish }}
         >
           <Text style={styles.publishButtonText}>Publicera</Text>
         </TouchableOpacity>
@@ -704,6 +713,8 @@ export default function FeedScreen() {
             style={styles.composerOpenButton}
             onPress={handleOpenComposer}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Skriv nytt inlägg"
           >
             <Text style={styles.composerOpenButtonText}>Skriv inlägg</Text>
           </TouchableOpacity>

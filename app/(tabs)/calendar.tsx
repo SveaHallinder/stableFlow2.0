@@ -1286,6 +1286,8 @@ export default function CalendarScreen() {
             style={styles.onboardingBackButton}
             onPress={() => router.replace(safeReturnTo as Href)}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Tillbaka till onboarding"
           >
             <Text style={styles.onboardingBackText}>Tillbaka till onboarding</Text>
           </TouchableOpacity>
@@ -1299,7 +1301,7 @@ export default function CalendarScreen() {
             {filters.map((label) => {
               const active = label === activeFilter;
               return (
-                <TouchableOpacity key={label} onPress={() => setActiveFilter(label)}>
+                <TouchableOpacity key={label} onPress={() => setActiveFilter(label)} accessibilityRole="button" accessibilityLabel={filterLabels[label]} accessibilityState={{ selected: active }}>
                   <Pill active={active} style={[styles.filterChip, isDesktopWeb && styles.filterChipDesktop]}>
                     <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
                       {filterLabels[label]}
@@ -1343,6 +1345,8 @@ export default function CalendarScreen() {
                 style={styles.recurringButton}
                 onPress={openRecurringModal}
                 activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Skapa återkommande pass"
               >
                 <Feather name="repeat" size={14} color={palette.primary} />
                 <Text style={styles.recurringButtonText}>Skapa återkommande pass</Text>

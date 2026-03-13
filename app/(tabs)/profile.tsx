@@ -249,6 +249,8 @@ export default function ProfileScreen() {
         style={styles.settingsRow}
         onPress={handleOpenSettings}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Kontoinställningar"
       >
         <View style={styles.settingsRowLeft}>
           <Feather name="settings" size={16} color={palette.primaryText} />
@@ -260,6 +262,8 @@ export default function ProfileScreen() {
         style={styles.settingsRow}
         onPress={handleOpenNotifications}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Notiser"
       >
         <View style={styles.settingsRowLeft}>
           <Feather name="bell" size={16} color={palette.primaryText} />
@@ -296,13 +300,15 @@ export default function ProfileScreen() {
           : 'Gå till Överblick för att skapa stall eller invänta en inbjudan.'}
       </Text>
       <View style={styles.infoActionRow}>
-        <TouchableOpacity style={styles.infoAction} onPress={handleOpenOverview} activeOpacity={0.85}>
+        <TouchableOpacity style={styles.infoAction} onPress={handleOpenOverview} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Till överblick">
           <Text style={styles.infoActionText}>Till överblick</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.infoSecondaryAction}
           onPress={handleOpenJoinStable}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Gå med i stall"
         >
           <Text style={styles.infoSecondaryActionText}>Gå med i stall</Text>
         </TouchableOpacity>
@@ -321,6 +327,8 @@ export default function ProfileScreen() {
           style={styles.adminAction}
           onPress={() => router.push('/admin')}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Öppna admin"
         >
           <Text style={styles.adminActionText}>Öppna admin</Text>
         </TouchableOpacity>

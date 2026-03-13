@@ -62,6 +62,9 @@ export function StableSwitcher({
               style={[styles.chip, active && styles.chipActive]}
               onPress={() => actions.setCurrentStable(stable.id)}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={`Byt till ${stable.name}`}
+              accessibilityState={{ selected: active }}
             >
               <Text style={[styles.chipText, active && styles.chipTextActive]}>
                 {stable.name}

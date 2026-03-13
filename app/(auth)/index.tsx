@@ -237,6 +237,9 @@ export default function AuthScreen() {
                 active && styles.modeChipActive,
               ]}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={id === 'login' ? 'Logga in' : 'Skapa konto'}
+              accessibilityState={{ selected: active }}
             >
               <Text
                 style={[
@@ -316,6 +319,8 @@ export default function AuthScreen() {
             style={styles.forgotPasswordLink}
             onPress={handleForgotPassword}
             activeOpacity={0.85}
+            accessibilityRole="link"
+            accessibilityLabel="Glömt lösenord"
           >
             <Text style={styles.forgotPasswordText}>Glömt lösenord?</Text>
           </TouchableOpacity>
@@ -345,6 +350,9 @@ export default function AuthScreen() {
         onPress={handleSubmit}
         activeOpacity={0.9}
         disabled={!canSubmit || submitting}
+        accessibilityRole="button"
+        accessibilityLabel={mode === 'login' ? 'Logga in' : 'Skapa konto'}
+        accessibilityState={{ disabled: !canSubmit || submitting }}
       >
         <Text style={[styles.primaryButtonText, isDesktop && styles.primaryButtonTextDesktop]}>
           {submitting ? 'Jobbar...' : modeLabel}

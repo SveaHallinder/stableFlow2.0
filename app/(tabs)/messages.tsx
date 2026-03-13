@@ -42,6 +42,8 @@ function MessageItem({
       style={[styles.item, desktop && styles.itemDesktop]}
       onPress={onPress}
       activeOpacity={0.9}
+      accessibilityRole="button"
+      accessibilityLabel={`Öppna konversation med ${item.title}`}
     >
       <View style={styles.avatarBubble}>
         {item.group ? (

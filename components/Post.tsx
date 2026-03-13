@@ -120,6 +120,9 @@ export const PostCard = React.memo(function PostCard({
           onPress={onToggleLike}
           disabled={!canInteract}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={isLiked ? 'Ta bort gilla' : 'Gilla inlägg'}
+          accessibilityState={{ selected: isLiked }}
         >
           <Feather
             name="heart"
@@ -133,6 +136,8 @@ export const PostCard = React.memo(function PostCard({
           onPress={() => canInteract && setShowComposer((prev) => !prev)}
           disabled={!canInteract}
           activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Kommentera"
         >
           <Feather name="message-circle" size={16} color={palette.secondaryText} />
           <Text style={styles.actionText}>{data.comments}</Text>
@@ -156,6 +161,8 @@ export const PostCard = React.memo(function PostCard({
             onPress={handleSubmitComment}
             disabled={!commentText.trim()}
             activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Skicka kommentar"
           >
             <Text style={styles.commentSendText}>Skicka</Text>
           </TouchableOpacity>
