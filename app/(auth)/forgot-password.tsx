@@ -37,6 +37,10 @@ export default function ForgotPasswordScreen() {
       toast.showToast('Fyll i din e-post.', 'error');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      toast.showToast('Ange en giltig e-postadress.', 'error');
+      return;
+    }
     if (!supabaseConfig.isConfigured) {
       toast.showToast('Supabase är inte konfigurerad. Starta om Expo och kontrollera .env.', 'error');
       return;

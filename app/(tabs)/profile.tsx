@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Image,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -62,7 +63,7 @@ const assignmentStatusStyles: Record<AssignmentStatus, { label: string; backgrou
 export default function ProfileScreen() {
   const router = useRouter();
   const { section } = useLocalSearchParams<{ section?: string | string[] }>();
-  const { state, derived, actions } = useAppData();
+  const { state, derived, actions, refreshing } = useAppData();
   const { currentUserId, users, currentStableId } = state;
   const currentUser = users[currentUserId];
   const toast = useToast();
@@ -455,6 +456,13 @@ export default function ProfileScreen() {
           style={styles.scroll}
           contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => actions.refreshData()}
+              tintColor={palette.primary}
+            />
+          }
         >
           {isDesktopWeb ? (
             <View style={styles.desktopLayout}>

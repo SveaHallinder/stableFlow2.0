@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Image,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -97,7 +98,7 @@ const FILTER_OPTIONS: { label: string; value: MessageFilter }[] = [
 
 export default function MessagesScreen() {
   const router = useRouter();
-  const { state, actions, derived, hydrating } = useAppData();
+  const { state, actions, derived, hydrating, refreshing } = useAppData();
   const { messages, currentStableId } = state;
   const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
@@ -211,6 +212,13 @@ export default function MessagesScreen() {
         style={styles.scroll}
         contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => actions.refreshData()}
+            tintColor={palette.primary}
+          />
+        }
       >
         {isDesktopWeb ? (
           <View style={styles.desktopLayout}>

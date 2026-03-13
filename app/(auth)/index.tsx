@@ -63,6 +63,14 @@ export default function AuthScreen() {
     if (submitting) {
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      toast.showToast('Ange en giltig e-postadress.', 'error');
+      return;
+    }
+    if (mode === 'signup' && password.length < 8) {
+      toast.showToast('Lösenordet måste vara minst 8 tecken.', 'error');
+      return;
+    }
     if (!supabaseConfig.isConfigured) {
       toast.showToast('Supabase är inte konfigurerad. Starta om Expo och kontrollera .env.', 'error');
       return;

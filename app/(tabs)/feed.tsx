@@ -5,6 +5,7 @@ import {
   FlatList,
   Image,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -60,6 +61,7 @@ export default function FeedScreen() {
     },
     derived,
     actions,
+    refreshing,
   } = useAppData();
   const [groupFilter, setGroupFilter] = React.useState<GroupFilter>('all');
   const [customFilterId, setCustomFilterId] = React.useState<string>('');
@@ -951,6 +953,13 @@ export default function FeedScreen() {
           <FlatList
             data={postCards}
             keyExtractor={(item) => item.id}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={() => actions.refreshData()}
+                tintColor={palette.primary}
+              />
+            }
             renderItem={({ item: post }) => (
               <View style={styles.flatListItem}>
                 <PostCard
