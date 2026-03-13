@@ -70,7 +70,9 @@
       "typedRoutes": true
     },
     "android": {
-      "package": "com.stableflow.app"
+      "package": "com.stableflow.app",
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"],
+      "useNextNotificationsApi": true
     }
   }
 }

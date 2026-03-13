@@ -19,7 +19,7 @@ import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 
 const palette = theme.colors;
-const RESET_REDIRECT_URL = 'myapp://reset';
+const RESET_REDIRECT_URL = 'stableflow://reset';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
