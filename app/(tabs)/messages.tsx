@@ -16,6 +16,7 @@ import UserGroups from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { radius, space } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
@@ -52,9 +53,10 @@ const MessageItem = React.memo(function MessageItem({
             <UserGroups width={22} height={22} />
           </View>
         ) : (
-          <Image
-            source={item.avatar ?? require('@/assets/images/dummy-avatar.png')}
+          <Avatar
+            source={item.avatar}
             style={styles.personAvatar}
+            accessibilityLabel={`${item.title} profilbild`}
           />
         )}
       </View>

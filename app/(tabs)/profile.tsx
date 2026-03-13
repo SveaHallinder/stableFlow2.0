@@ -18,6 +18,7 @@ import { radius } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -203,9 +204,10 @@ export default function ProfileScreen() {
   const heroSection = (
     <View style={[styles.profileHero, isDesktopWeb && styles.profileHeroDesktop]}>
       <View style={styles.profileHeroContent}>
-        <Image
-          source={currentUser.avatar ?? require('@/assets/images/dummy-avatar.png')}
+        <Avatar
+          source={currentUser.avatar}
           style={styles.avatar}
+          accessibilityLabel={`${currentUser.name} profilbild`}
         />
         <View style={styles.heroTextBlock}>
           <Text style={styles.heroName}>{currentUser.name}</Text>

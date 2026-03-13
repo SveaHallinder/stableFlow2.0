@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -283,13 +284,22 @@ export default function PaddocksScreen() {
     if (!draft.id) {
       return;
     }
-    const result = actions.deletePaddock(draft.id);
-    if (result.success) {
-      toast.showToast('Hagen togs bort.', 'success');
-      closeModal();
-    } else if (!result.success) {
-      toast.showToast(result.reason, 'error');
-    }
+    Alert.alert('Ta bort hage?', 'Detta går inte att ångra.', [
+      { text: 'Avbryt', style: 'cancel' },
+      {
+        text: 'Ta bort',
+        style: 'destructive',
+        onPress: () => {
+          const result = actions.deletePaddock(draft.id!);
+          if (result.success) {
+            toast.showToast('Hagen togs bort.', 'success');
+            closeModal();
+          } else {
+            toast.showToast(result.reason, 'error');
+          }
+        },
+      },
+    ]);
   }, [actions, canManagePaddocks, closeModal, draft.id, toast]);
 
   const handlePrint = React.useCallback(async () => {

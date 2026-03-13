@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'expo-router';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
+import { Avatar } from '@/components/Avatar';
 import { radius } from '@/design/tokens';
 import { roleLabels } from '@/lib/roleLabels';
 
@@ -110,9 +111,10 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
             onPress={() => router.push('/profile')}
             activeOpacity={0.85}
           >
-            <Image
-              source={currentUser?.avatar ?? require('@/assets/images/dummy-avatar.png')}
+            <Avatar
+              source={currentUser?.avatar}
               style={styles.profileAvatar}
+              accessibilityLabel={`${currentUser?.name ?? 'Användare'} profilbild`}
             />
             <View style={styles.profileText}>
               <Text style={styles.profileName}>{currentUser?.name ?? 'Okänd användare'}</Text>

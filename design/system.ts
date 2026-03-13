@@ -16,7 +16,7 @@ export const systemPalette = {
   badge: '#5E5CE6',
   textPrimary: '#1B1E2F',
   textSecondary: '#50526A',
-  textMuted: '#8A90A6',
+  textMuted: '#6E7490',
   textDisabled: 'rgba(27, 30, 47, 0.32)',
   textInverse: '#FFFFFF',
   icon: '#1B1E2F',

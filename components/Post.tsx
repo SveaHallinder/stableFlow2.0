@@ -2,6 +2,7 @@ import React from 'react';
 import {
   Image,
   ImageSourcePropType,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { theme } from '@/components/theme';
 import { color, space, radius } from '@/design/tokens';
 import type { PostComment } from '@/context/AppDataContext';
@@ -119,7 +121,12 @@ export const PostCard = React.memo(function PostCard({
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.actionButton, isLiked && styles.actionButtonActive]}
-          onPress={onToggleLike}
+          onPress={() => {
+            if (Platform.OS !== 'web') {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            onToggleLike?.();
+          }}
           disabled={!canInteract}
           activeOpacity={0.85}
           accessibilityRole="button"

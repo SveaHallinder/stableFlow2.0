@@ -903,6 +903,7 @@ export default function StablesScreen() {
               style={styles.scroll}
               contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
                 <View style={[styles.stepHeader, isDesktopWeb && styles.stepHeaderDesktop, stickyPanelStyle]}>

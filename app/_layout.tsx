@@ -1,7 +1,7 @@
 import { Stack, useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -12,6 +12,7 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
+      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFD" />
       <ToastProvider>
         <AuthProvider>
           <AuthGate>

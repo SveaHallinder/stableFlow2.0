@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -234,12 +235,21 @@ export default function MembersScreen() {
 
   const handleRemoveMember = React.useCallback(
     (userId: string, stableId: string) => {
-      const result = actions.removeMemberFromStable(userId, stableId);
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      } else {
-        toast.showToast('Medlem borttagen.', 'success');
-      }
+      Alert.alert('Ta bort medlem?', 'Medlemmen förlorar åtkomst till stallet.', [
+        { text: 'Avbryt', style: 'cancel' },
+        {
+          text: 'Ta bort',
+          style: 'destructive',
+          onPress: () => {
+            const result = actions.removeMemberFromStable(userId, stableId);
+            if (!result.success) {
+              toast.showToast(result.reason, 'error');
+            } else {
+              toast.showToast('Medlem borttagen.', 'success');
+            }
+          },
+        },
+      ]);
     },
     [actions, toast],
   );
@@ -300,6 +310,7 @@ export default function MembersScreen() {
                 isDesktopWeb && styles.contentDesktop,
               ]}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
                 <View style={[styles.desktopPanel, stickyPanelStyle]}>

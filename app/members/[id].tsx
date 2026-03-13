@@ -14,6 +14,7 @@ import { Feather } from '@expo/vector-icons';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
@@ -237,9 +238,10 @@ export default function MemberProfileScreen() {
   const heroSection = (
     <Card tone="muted" style={styles.heroCard}>
       <View style={styles.heroRow}>
-        <Image
-          source={member.avatar ?? require('@/assets/images/dummy-avatar.png')}
+        <Avatar
+          source={member.avatar}
           style={styles.avatar}
+          accessibilityLabel={`${member.name} profilbild`}
         />
         <View style={styles.heroText}>
           <Text style={styles.heroName}>{member.name}</Text>

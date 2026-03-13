@@ -20,6 +20,7 @@ import { PostCard, PostData } from '@/components/Post';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, Pill } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { space } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -538,8 +539,8 @@ export default function FeedScreen() {
   const composerCard = shouldShowComposer ? (
     <Card tone="muted" style={styles.composerCard}>
       <View style={styles.composerHeader}>
-        <Image
-          source={currentUser?.avatar ?? require('@/assets/images/dummy-avatar.png')}
+        <Avatar
+          source={currentUser?.avatar}
           style={styles.composerAvatar}
         />
         <View style={styles.composerHeaderText}>
@@ -703,8 +704,8 @@ export default function FeedScreen() {
     canPublishPost && !isDesktopWeb && !isComposerOpen ? (
       <Card tone="muted" style={styles.composerClosedCard}>
         <View style={styles.composerClosedRow}>
-          <Image
-            source={currentUser?.avatar ?? require('@/assets/images/dummy-avatar.png')}
+          <Avatar
+            source={currentUser?.avatar}
             style={styles.composerAvatar}
           />
           <View style={styles.composerHeaderText}>

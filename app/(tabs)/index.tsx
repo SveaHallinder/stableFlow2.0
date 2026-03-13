@@ -25,6 +25,7 @@ import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
 import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card, HeaderIconButton } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
@@ -671,8 +672,8 @@ export default function OverviewScreen() {
                   <UserGroupsIcon width={28} height={28} />
                 </View>
               ) : (
-                <Image
-                  source={message.avatar ?? require('@/assets/images/dummy-avatar.png')}
+                <Avatar
+                  source={message.avatar}
                   style={styles.messageAvatar}
                 />
               )}
@@ -773,6 +774,7 @@ export default function OverviewScreen() {
             isDesktopWeb && styles.scrollContentDesktop,
           ]}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
           {isDesktopWeb ? (
             <View style={styles.desktopDashboard}>

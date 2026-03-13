@@ -17,6 +17,7 @@ import { theme } from '@/components/theme';
 import { radius, space } from '@/design/tokens';
 import { HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { Avatar } from '@/components/Avatar';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -105,11 +106,10 @@ export default function ChatScreen() {
                     <UserGroupsIcon width={20} height={20} />
                   </View>
                 ) : (
-                  <Image
-                    source={
-                      conversationPreview?.avatar ?? require('@/assets/images/dummy-avatar.png')
-                    }
+                  <Avatar
+                    source={conversationPreview?.avatar}
                     style={styles.headerAvatar}
+                    accessibilityLabel={`${displayName} profilbild`}
                   />
                 )}
                 <Text style={[styles.headerTitle, isDesktopWeb && styles.headerTitleDesktop]} numberOfLines={1}>
@@ -133,8 +133,7 @@ export default function ChatScreen() {
                 const authorProfile = state.users[message.authorId];
                 const avatarSource = !isMe
                   ? authorProfile?.avatar ??
-                    conversationPreview?.avatar ??
-                    require('@/assets/images/dummy-avatar.png')
+                    conversationPreview?.avatar
                   : undefined;
 
                 return (
@@ -148,8 +147,8 @@ export default function ChatScreen() {
                         isMe ? styles.messageRowMe : styles.messageRowOther,
                       ]}
                     >
-                      {!isMe && avatarSource && (
-                        <Image source={avatarSource} style={styles.messageAvatar} />
+                      {!isMe && (
+                        <Avatar source={avatarSource} style={styles.messageAvatar} />
                       )}
 
                       <View
