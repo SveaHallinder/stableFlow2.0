@@ -24,7 +24,8 @@
       "infoPlist": {
         "CFBundleDisplayName": "StableFlow",
         "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
-        "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar."
+        "NSPhotoLibraryUsageDescription": "Behövs för att välja bilder till hagar.",
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "web": {
@@ -45,7 +46,14 @@
       "expo-font",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-splash-screen"
+      "expo-splash-screen",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/logo.png",
+          "color": "#2D6CF6"
+        }
+      ]
     ],
     "extra": {},
     "experiments": {

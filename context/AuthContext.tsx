@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { deregisterPushToken } from '@/lib/notifications';
 
 type AuthContextValue = {
   session: Session | null;
@@ -39,8 +40,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signOut = React.useCallback(async () => {
+    const userId = session?.user?.id;
+    if (userId) {
+      await deregisterPushToken(userId);
+    }
     await supabase.auth.signOut();
-  }, []);
+  }, [session?.user?.id]);
 
   const value = React.useMemo<AuthContextValue>(
     () => ({

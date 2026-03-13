@@ -5,6 +5,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -14,6 +15,7 @@ export default function RootLayout() {
       <ToastProvider>
         <AuthProvider>
           <AuthGate>
+            <NotificationBootstrap />
             <AppDataProvider>
               <OnboardingGate>
                 <Stack screenOptions={{ headerShown: false }}>
@@ -98,6 +100,12 @@ const errorStyles = StyleSheet.create({
     color: '#FFFFFF',
   },
 });
+
+function NotificationBootstrap() {
+  const { user } = useAuth();
+  usePushNotifications(user?.id);
+  return null;
+}
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
