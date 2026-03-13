@@ -21,7 +21,7 @@ import { StableSwitcher } from '@/components/StableSwitcher';
 import { radius, space } from '@/design/tokens';
 import { surfacePresets, systemPalette } from '@/design/system';
 import { useAppData } from '@/context/AppDataContext';
-import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -104,7 +104,7 @@ export default function MessagesScreen() {
   const { messages, currentStableId } = state;
   const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const canManageOnboarding = derived.permissions.canManageOnboarding;
   const canOpenAdmin = canManageOnboarding && isWeb;
   const adminHint = canManageOnboarding && !isWeb ? ' Admin finns i webben.' : '';

@@ -31,7 +31,7 @@ export function usePushNotifications(userId: string | undefined) {
 
         switch (data.screen) {
           case 'chat':
-            if (data.chatId) {
+            if (data.chatId && /^[a-zA-Z0-9_-]+$/.test(data.chatId)) {
               router.push(`/chat/${data.chatId}`);
             }
             break;

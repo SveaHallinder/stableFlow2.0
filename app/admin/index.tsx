@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DesktopNav } from '@/components/DesktopNav';
@@ -687,7 +687,7 @@ export default function AdminDashboard() {
                       style={styles.primaryButton}
                       onPress={() =>
                         router.push(
-                          link.params ? ({ pathname: link.route, params: link.params } as any) : link.route,
+                          (link.params ? { pathname: link.route, params: link.params } : link.route) as Href,
                         )
                       }
                       activeOpacity={0.85}

@@ -23,7 +23,7 @@ import { Card, Pill } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { space } from '@/design/tokens';
-import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { formatTimeAgo } from '@/lib/time';
@@ -42,7 +42,7 @@ const IMAGE_ASPECT: [number, number] = [1, 1];
 
 export default function FeedScreen() {
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const scrollRef = React.useRef<ScrollView>(null);

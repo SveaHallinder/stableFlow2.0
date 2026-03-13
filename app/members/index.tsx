@@ -21,7 +21,7 @@ import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
-import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import type { UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -49,7 +49,7 @@ export default function MembersScreen() {
   const router = useRouter();
   const { state, actions } = useAppData();
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const handleExit = React.useCallback(() => {
     if (router.canGoBack()) {
       router.back();

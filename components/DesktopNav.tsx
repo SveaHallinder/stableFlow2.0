@@ -1,7 +1,7 @@
 import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname, useRouter, type Href } from 'expo-router';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
@@ -130,7 +130,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
         return (
           <TouchableOpacity
             key={item.route}
-            onPress={() => router.push(item.route as any)}
+            onPress={() => router.push(item.route as Href)}
             activeOpacity={0.85}
             style={[
               styles.item,

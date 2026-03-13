@@ -23,7 +23,7 @@ import { Card } from '@/components/Primitives';
 import { color, radius } from '@/design/tokens';
 import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import type { UserRole, Horse, PaddockImage, StableEventVisibility, StableSettings } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -57,7 +57,7 @@ export default function StablesScreen() {
   const { state, actions, derived } = useAppData();
   const { stables, currentStableId, users, horses, currentUserId, farms } = state;
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const currentUser = users[currentUserId];
   const { permissions } = derived;
   const showFarmSection = stables.length > 1;

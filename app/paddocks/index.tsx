@@ -28,7 +28,7 @@ import type { Paddock, PaddockImage, UpsertPaddockInput } from '@/context/AppDat
 import { useToast } from '@/components/ToastProvider';
 import { createPaddocksPrintHtml } from '@/lib/paddocksPrint';
 import { toISODate } from '@/lib/schedule';
-import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
@@ -94,7 +94,7 @@ export default function PaddocksScreen() {
   const toast = useToast();
   const { state, actions, derived } = useAppData();
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? ({ position: 'sticky', top: 20 } as any) : undefined;
+  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const { permissions } = derived;
   const canManagePaddocks = permissions.canManagePaddocks;
   const canUpdateHorseStatus = permissions.canUpdateHorseStatus;
