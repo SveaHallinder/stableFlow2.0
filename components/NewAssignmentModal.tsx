@@ -10,6 +10,7 @@ import {
   Platform,
 } from 'react-native';
 import { color, radius, space } from '@/design/tokens';
+import { systemPalette } from '@/design/system';
 import type { AssignmentSlot } from '@/context/AppDataContext';
 
 type DateOption = {
@@ -299,14 +300,14 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,22,34,0.08)',
   },
   optionChipActive: {
-    backgroundColor: '#0A84FF',
+    backgroundColor: systemPalette.primary,
   },
   optionChipLabel: {
     fontSize: 13,
     color: color.text,
   },
   optionChipLabelActive: {
-    color: '#FFFFFF',
+    color: systemPalette.textInverse,
     fontWeight: '600',
   },
   noteInput: {
@@ -337,14 +338,14 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   assignToggleActive: {
-    backgroundColor: '#0A84FF',
+    backgroundColor: systemPalette.primary,
   },
   assignToggleLabel: {
     fontSize: 13,
     color: color.text,
   },
   assignToggleLabelActive: {
-    color: '#FFFFFF',
+    color: systemPalette.textInverse,
     fontWeight: '600',
   },
   actionRow: {
@@ -371,14 +372,14 @@ const styles = StyleSheet.create({
   primaryButton: {
     flex: 1,
     borderRadius: radius.full,
-    backgroundColor: '#0A84FF',
+    backgroundColor: systemPalette.primary,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   primaryButtonLabel: {
     fontSize: 14,
-    color: '#FFFFFF',
+    color: systemPalette.textInverse,
     fontWeight: '600',
   },
   deleteButton: {
@@ -387,7 +388,7 @@ const styles = StyleSheet.create({
   },
   deleteButtonLabel: {
     fontSize: 14,
-    color: '#FF453A',
+    color: systemPalette.error,
     fontWeight: '600',
   },
 });

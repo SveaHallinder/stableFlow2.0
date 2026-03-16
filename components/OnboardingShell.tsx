@@ -66,9 +66,7 @@ export function OnboardingShell({
     if (!result.success) {
       return;
     }
-    requestAnimationFrame(() => {
-      router.replace(exitRoute);
-    });
+    router.replace(exitRoute);
   }, [actions, allowExit, exitRoute, onExit, router]);
 
   return (

@@ -90,7 +90,10 @@ export function useWeather(stableLocation?: string): WeatherData | null {
 
     const url = `https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/${lon.toFixed(4)}/lat/${lat.toFixed(4)}/data.json`;
 
-    fetch(url)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    fetch(url, { signal: controller.signal })
       .then((res) => {
         if (!res.ok) throw new Error(`SMHI ${res.status}`);
         return res.json();
@@ -133,7 +136,10 @@ export function useWeather(stableLocation?: string): WeatherData | null {
         });
       })
       .catch(() => {
-        // Silently fail — panel will show loading state
+        // Weather is non-critical — panel shows null state gracefully
+      })
+      .finally(() => {
+        clearTimeout(timeoutId);
       });
 
     return () => {

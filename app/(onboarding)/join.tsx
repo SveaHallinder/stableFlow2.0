@@ -165,6 +165,9 @@ export default function JoinStableScreen() {
   }, [actions, code, router, toast]);
 
   const handleAcceptInvites = React.useCallback(async () => {
+    if (!pendingInvites.length) {
+      return;
+    }
     setAcceptingInvites(true);
     setInvitesError(null);
     const previousStableIds = new Set(state.stables.map((stable) => stable.id));
@@ -191,7 +194,7 @@ export default function JoinStableScreen() {
     toast.showToast(`Accepterade ${acceptedCount} ${countLabel}.`, 'success');
     setAcceptingInvites(false);
     router.replace('/(tabs)');
-  }, [actions, loadInvites, resolveJoinedStableId, router, state.stables, toast]);
+  }, [actions, loadInvites, pendingInvites.length, resolveJoinedStableId, router, state.stables, toast]);
 
   const isBusy = submitting || refreshing;
   const inviteButtonDisabled = acceptingInvites || refreshing;

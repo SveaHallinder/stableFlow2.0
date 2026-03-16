@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
-import { View, StyleSheet, Platform } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
@@ -32,12 +32,12 @@ export default function TabLayout() {
     : fromOnboardingRaw;
   const hideTabs = fromOnboarding === '1';
 
-  if (loading) {
-    return null;
-  }
-
-  if (!session) {
-    return null;
+  if (loading || !session) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: palette.background }}>
+        <ActivityIndicator color={palette.primary} />
+      </View>
+    );
   }
 
   const tabs = (
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
     backgroundColor: palette.surfaceTint,
-    shadowColor: '#121826',
+    shadowColor: palette.overlay,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 8, height: 0 },

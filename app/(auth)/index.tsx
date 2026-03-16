@@ -67,7 +67,7 @@ export default function AuthScreen() {
       toast.showToast('Ange en giltig e-postadress.', 'error');
       return;
     }
-    if (mode === 'signup' && password.length < 8) {
+    if (password.length < 8) {
       toast.showToast('Lösenordet måste vara minst 8 tecken.', 'error');
       return;
     }

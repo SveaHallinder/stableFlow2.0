@@ -42,9 +42,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = React.useCallback(async () => {
     const userId = session?.user?.id;
     if (userId) {
-      await deregisterPushToken(userId);
+      try {
+        await deregisterPushToken(userId);
+      } catch {
+        // Push token cleanup is best-effort
+      }
     }
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      // Force clear local session even if server signout fails
+      setSession(null);
+      throw error;
+    }
   }, [session?.user?.id]);
 
   const value = React.useMemo<AuthContextValue>(

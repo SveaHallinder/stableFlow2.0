@@ -24,6 +24,7 @@ import { color, radius } from '@/design/tokens';
 import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
+import { roleLabels as sharedRoleLabels, roleOrder as sharedRoleOrder } from '@/lib/roleLabels';
 import type { UserRole, Horse, PaddockImage, StableEventVisibility, StableSettings } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -158,20 +159,9 @@ export default function StablesScreen() {
   });
   const [settingsDraft, setSettingsDraft] = React.useState<StableSettings>(() => resolveStableSettings());
 
-  const roleLabels: Record<UserRole, string> = {
-    admin: 'Admin',
-    staff: 'Personal',
-    rider: 'Medryttare',
-    farrier: 'Hovslagare',
-    vet: 'Veterinär',
-    trainer: 'Tränare',
-    therapist: 'Massör',
-    guest: 'Gäst',
-  };
-  const roleOrder: UserRole[] = ['admin', 'staff', 'rider', 'farrier', 'vet', 'trainer', 'therapist', 'guest'];
-  const roleOptions: { id: UserRole; label: string }[] = roleOrder.map((role) => ({
+  const roleOptions: { id: UserRole; label: string }[] = sharedRoleOrder.map((role) => ({
     id: role,
-    label: roleLabels[role],
+    label: sharedRoleLabels[role],
   }));
   const roleAccessDefaults: Record<UserRole, { access: 'owner' | 'edit' | 'view' }> = {
     admin: { access: 'owner' },
@@ -1030,7 +1020,7 @@ export default function StablesScreen() {
                     {stables.map((stable) => {
                       const active = stable.id === currentStableId;
                       const role = currentUser.membership.find((m) => m.stableId === stable.id)?.role;
-                      const roleLabel = role ? roleLabels[role] : undefined;
+                      const roleLabel = role ? sharedRoleLabels[role] : undefined;
                       const locationLabel = [farmNameById[stable.farmId ?? ''], stable.location].filter(Boolean).join(' · ');
                       return (
                         <TouchableOpacity
@@ -1824,7 +1814,7 @@ export default function StablesScreen() {
                         .map((user) => {
                           const membership = user.membership.find((m) => m.stableId === currentStableId);
                           const role = membership?.role ?? 'guest';
-                          const roleLabel = roleLabels[role] ?? role;
+                          const roleLabel = sharedRoleLabels[role] ?? role;
                           const customRoleLabel = membership?.customRole?.trim() || undefined;
                           const riderRoleLabel =
                             role === 'rider'
@@ -1861,13 +1851,13 @@ export default function StablesScreen() {
                                 <TouchableOpacity
                                   style={styles.roleButton}
                                   onPress={() => {
-                                    const index = roleOrder.indexOf(role);
-                                    const nextRole = roleOrder[(index + 1) % roleOrder.length];
+                                    const index = sharedRoleOrder.indexOf(role);
+                                    const nextRole = sharedRoleOrder[(index + 1) % sharedRoleOrder.length];
                                     actions.updateMemberRole({ userId: user.id, stableId: currentStableId, role: nextRole });
                                   }}
                                   disabled={!canEditMembers}
                                 >
-                                  <Text style={styles.roleButtonText}>{roleLabels[role] ?? role}</Text>
+                                  <Text style={styles.roleButtonText}>{sharedRoleLabels[role] ?? role}</Text>
                                 </TouchableOpacity>
                                 {user.id !== currentUserId ? (
                                   <TouchableOpacity
@@ -2147,7 +2137,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
     backgroundColor: palette.surfaceTint,
-    shadowColor: '#121826',
+    shadowColor: palette.overlay,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 8, height: 0 },

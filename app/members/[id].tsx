@@ -20,26 +20,11 @@ import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { roleLabels, roleOrder, accessLabels } from '@/lib/roleLabels';
 import type { AssignmentSlot, DefaultPass, UserRole, WeekdayIndex } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 
-const roleOrder: UserRole[] = ['admin', 'staff', 'rider', 'farrier', 'vet', 'trainer', 'therapist', 'guest'];
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Medryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Massör',
-  guest: 'Gäst',
-};
-const accessLabels: Record<string, string> = {
-  owner: 'Ägare',
-  edit: 'Redigera',
-  view: 'Läsa',
-};
 
 const DEFAULT_WEEKDAYS: { label: string; value: WeekdayIndex }[] = [
   { label: 'Mån', value: 0 },
@@ -529,7 +514,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
     backgroundColor: palette.surfaceTint,
-    shadowColor: '#121826',
+    shadowColor: palette.overlay,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 8, height: 0 },

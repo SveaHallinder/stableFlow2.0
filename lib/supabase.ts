@@ -17,7 +17,11 @@ const supabaseAnonKey =
     '')?.trim() ?? '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase env saknas. Kontrollera EXPO_PUBLIC_SUPABASE_URL och EXPO_PUBLIC_SUPABASE_ANON_KEY.');
+  if (__DEV__) {
+    console.error(
+      'KRITISK: Supabase-konfiguration saknas. Kontrollera EXPO_PUBLIC_SUPABASE_URL och EXPO_PUBLIC_SUPABASE_ANON_KEY i .env.',
+    );
+  }
 }
 
 export const supabaseConfig = {

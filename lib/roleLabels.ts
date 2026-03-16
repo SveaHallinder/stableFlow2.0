@@ -10,3 +10,11 @@ export const roleLabels: Record<UserRole, string> = {
   therapist: 'Terapeut',
   guest: 'Gäst',
 };
+
+export const roleOrder: UserRole[] = ['admin', 'staff', 'rider', 'farrier', 'vet', 'trainer', 'therapist', 'guest'];
+
+export const accessLabels: Record<string, string> = {
+  owner: 'Ägare',
+  edit: 'Redigera',
+  view: 'Läsa',
+};

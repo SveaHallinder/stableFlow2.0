@@ -871,7 +871,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
     backgroundColor: palette.surfaceTint,
-    shadowColor: '#121826',
+    shadowColor: palette.overlay,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 8, height: 0 },

@@ -1,7 +1,7 @@
 import { Stack, useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import React from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -130,11 +130,31 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   }, [loading, router, segments, session]);
 
   if (loading) {
-    return null;
+    return (
+      <View style={loadingStyles.container}>
+        <ActivityIndicator size="large" color="#2D6CF6" />
+        <Text style={loadingStyles.text}>Laddar...</Text>
+      </View>
+    );
   }
 
   return <>{children}</>;
 }
+
+const loadingStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFD',
+    gap: 12,
+  },
+  text: {
+    fontSize: 14,
+    color: '#5A6785',
+    fontWeight: '500',
+  },
+});
 
 function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();

@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   View,
   type StyleProp,
+  type TextStyle,
   type ViewStyle,
   type ViewProps,
 } from 'react-native';
@@ -47,7 +48,14 @@ export const Card = ({ style, children, elevated, tone = 'default', ...props }: 
   </View>
 );
 
-export const Pill = ({ active, style, children, ...props }: any) => (
+type PillProps = PropsWithChildren<
+  ViewProps & {
+    active?: boolean;
+    style?: StyleProp<ViewStyle>;
+  }
+>;
+
+export const Pill = ({ active, style, children, ...props }: PillProps) => (
   <View
     style={[
       {
@@ -64,7 +72,11 @@ export const Pill = ({ active, style, children, ...props }: any) => (
   </View>
 );
 
-export const SearchBar = ({ style, ...props }: any) => (
+type SearchBarProps = React.ComponentProps<typeof TextInput> & {
+  style?: StyleProp<ViewStyle>;
+};
+
+export const SearchBar = ({ style, ...props }: SearchBarProps) => (
   <View
     style={[
       {
@@ -163,7 +175,15 @@ const headerStyles = StyleSheet.create({
   },
 });
 
-export const PageHeader = ({ title, left, right, children, style }: any) => (
+type PageHeaderProps = {
+  title?: string;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
+  children?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+};
+
+export const PageHeader = ({ title, left, right, children, style }: PageHeaderProps) => (
   <View style={[headerStyles.container, style]}>
     <View style={headerStyles.side}>{left}</View>
     <View style={headerStyles.center}>
@@ -177,7 +197,13 @@ export const PageHeader = ({ title, left, right, children, style }: any) => (
   </View>
 );
 
-export const HeaderIconButton = ({ style, ...props }: any) => (
+type HeaderIconButtonProps = PropsWithChildren<
+  React.ComponentProps<typeof TouchableOpacity> & {
+    style?: StyleProp<ViewStyle>;
+  }
+>;
+
+export const HeaderIconButton = ({ style, ...props }: HeaderIconButtonProps) => (
   <TouchableOpacity
     style={[headerStyles.iconButton, style]}
     activeOpacity={0.85}
@@ -185,7 +211,15 @@ export const HeaderIconButton = ({ style, ...props }: any) => (
   />
 );
 
-export const HeaderActionButton = ({ label, children, style, textStyle, ...props }: any) => (
+type HeaderActionButtonProps = PropsWithChildren<
+  React.ComponentProps<typeof TouchableOpacity> & {
+    label?: string;
+    style?: StyleProp<ViewStyle>;
+    textStyle?: StyleProp<TextStyle>;
+  }
+>;
+
+export const HeaderActionButton = ({ label, children, style, textStyle, ...props }: HeaderActionButtonProps) => (
   <TouchableOpacity
     style={[headerStyles.actionButton, style]}
     activeOpacity={0.85}

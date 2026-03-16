@@ -42,6 +42,7 @@ export default function ChatScreen() {
   const messages = state.conversations[conversationId] ?? [];
   const [composerText, setComposerText] = React.useState('');
   const toast = useToast();
+  const scrollViewRef = React.useRef<ScrollView>(null);
 
   React.useEffect(() => {
     if (conversationId) {
@@ -49,8 +50,17 @@ export default function ChatScreen() {
     }
   }, [conversationId, actions]);
 
+  // Auto-scroll to bottom when messages change
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [messages.length]);
+
   const handleSend = () => {
-    if (!conversationId || !composerText.trim()) {
+    const trimmed = composerText.trim();
+    if (!conversationId || !trimmed) {
       return;
     }
     const result = actions.sendConversationMessage(conversationId, composerText);
@@ -74,6 +84,23 @@ export default function ChatScreen() {
       </View>
     );
   };
+
+  if (!conversationId) {
+    return (
+      <LinearGradient colors={theme.gradients.background} style={styles.background}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: palette.primaryText, marginBottom: 8 }}>
+              Konversationen kunde inte hittas
+            </Text>
+            <TouchableOpacity onPress={() => router.back()} style={{ paddingVertical: 10, paddingHorizontal: 20, backgroundColor: palette.primary, borderRadius: 999 }}>
+              <Text style={{ color: palette.inverseText, fontWeight: '600', fontSize: 14 }}>Tillbaka</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </LinearGradient>
+    );
+  }
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -119,6 +146,7 @@ export default function ChatScreen() {
             </ScreenHeader>
 
             <ScrollView
+              ref={scrollViewRef}
               style={styles.scroll}
               contentContainerStyle={[
                 styles.messagesContent,
@@ -245,7 +273,7 @@ const styles = StyleSheet.create({
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
     backgroundColor: palette.surfaceTint,
-    shadowColor: '#121826',
+    shadowColor: palette.overlay,
     shadowOpacity: 0.08,
     shadowRadius: 14,
     shadowOffset: { width: 8, height: 0 },

@@ -32,6 +32,7 @@ import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import type { UserRole } from '@/context/AppDataContext';
+import { roleLabels } from '@/lib/roleLabels';
 import {
   groupAssignmentsByDay,
   toISODate,
@@ -81,16 +82,7 @@ const quickActionStyles: Record<
   warning: quickActionVariants.warning,
 };
 
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Ryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Terapeut',
-  guest: 'Gäst',
-};
+
 
 export default function OverviewScreen() {
   const router = useRouter();
@@ -1425,7 +1417,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: color.card,
-    backgroundColor: '#0A84FF',
+    backgroundColor: palette.primary,
   },
   quickActionIcon: {
     width: 36,

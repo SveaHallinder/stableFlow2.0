@@ -17,6 +17,7 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { roleLabels } from '@/lib/roleLabels';
 import type { UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -27,17 +28,6 @@ const accessRank: Record<AccessLevel, number> = {
   view: 0,
   edit: 1,
   owner: 2,
-};
-
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  staff: 'Personal',
-  rider: 'Medryttare',
-  farrier: 'Hovslagare',
-  vet: 'Veterinär',
-  trainer: 'Tränare',
-  therapist: 'Massör',
-  guest: 'Gäst',
 };
 
 type MemberResult = {

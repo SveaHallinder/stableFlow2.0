@@ -1,6 +1,7 @@
 import React from 'react';
 import { Animated, StyleSheet, Text, View, Easing, Platform } from 'react-native';
 import { color, radius, space } from '@/design/tokens';
+import { systemPalette } from '@/design/system';
 
 type ToastType = 'success' | 'info' | 'error';
 
@@ -20,6 +21,12 @@ const DEFAULT_DURATION = 2400;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
+  const dismissingRef = React.useRef(new Set<string>());
+
+  const removeToast = React.useCallback((id: string) => {
+    dismissingRef.current.delete(id);
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
   const showToast = React.useCallback(
     (message: string, type: ToastType = 'info', durationMs = DEFAULT_DURATION) => {
@@ -28,16 +35,19 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => [...prev, toast]);
 
       setTimeout(() => {
-        setToasts((prev) => prev.filter((item) => item.id !== id));
+        dismissingRef.current.add(id);
+        setToasts((prev) => [...prev]); // trigger re-render so ToastItem sees dismissing state
+        // Actual removal after exit animation
+        setTimeout(() => removeToast(id), 200);
       }, durationMs);
     },
-    [],
+    [removeToast],
   );
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <ToastViewport toasts={toasts} />
+      <ToastViewport toasts={toasts} dismissing={dismissingRef.current} />
     </ToastContext.Provider>
   );
 }
@@ -50,20 +60,21 @@ export function useToast() {
   return context;
 }
 
-function ToastViewport({ toasts }: { toasts: ToastRecord[] }) {
+function ToastViewport({ toasts, dismissing }: { toasts: ToastRecord[]; dismissing: Set<string> }) {
   return (
     <View pointerEvents="none" style={styles.viewport}>
       {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} />
+        <ToastItem key={toast.id} toast={toast} isDismissing={dismissing.has(toast.id)} />
       ))}
     </View>
   );
 }
 
-function ToastItem({ toast }: { toast: ToastRecord }) {
+function ToastItem({ toast, isDismissing }: { toast: ToastRecord; isDismissing: boolean }) {
   const translateY = React.useMemo(() => new Animated.Value(-60), []);
   const opacity = React.useMemo(() => new Animated.Value(0), []);
 
+  // Enter animation
   React.useEffect(() => {
     Animated.parallel([
       Animated.timing(translateY, {
@@ -79,24 +90,26 @@ function ToastItem({ toast }: { toast: ToastRecord }) {
         useNativeDriver: true,
       }),
     ]).start();
-
-    return () => {
-      Animated.parallel([
-        Animated.timing(translateY, {
-          toValue: -60,
-          duration: 180,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacity, {
-          toValue: 0,
-          duration: 180,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]).start();
-    };
   }, [translateY, opacity]);
+
+  // Exit animation when dismissing
+  React.useEffect(() => {
+    if (!isDismissing) return;
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: -60,
+        duration: 180,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [isDismissing, translateY, opacity]);
 
   return (
     <Animated.View
@@ -140,15 +153,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   success: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(115,212,139,0.7)',
+    borderWidth: 1,
+    borderColor: systemPalette.success,
   },
   info: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(10,132,255,0.5)',
+    borderWidth: 1,
+    borderColor: systemPalette.info,
   },
   error: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,69,58,0.6)',
+    borderWidth: 1,
+    borderColor: systemPalette.error,
   },
 });

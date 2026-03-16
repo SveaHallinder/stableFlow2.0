@@ -203,12 +203,14 @@ export default function OnboardingMembers() {
         toast.showToast('Inbjudan skapad.', 'success');
       }
       setDraft({ name: '', email: '', phone: '' });
-      const settingsUpdate = actions.updateStable({
-        id: selectedStableIds[0],
-        updates: { settings: { onboarding: { membersComplete: true } } },
-      });
-      if (!settingsUpdate.success) {
-        console.warn('Kunde inte uppdatera onboardingstatus', settingsUpdate.reason);
+      for (const stableId of selectedStableIds) {
+        const settingsUpdate = actions.updateStable({
+          id: stableId,
+          updates: { settings: { onboarding: { membersComplete: true } } },
+        });
+        if (!settingsUpdate.success) {
+          console.warn('Kunde inte uppdatera onboardingstatus', settingsUpdate.reason);
+        }
       }
     } else {
       toast.showToast(result.reason, 'error');

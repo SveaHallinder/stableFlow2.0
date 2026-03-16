@@ -3135,6 +3135,35 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const profilesResult = await supabase.from('profiles').select('*').eq('id', authUser.id).single();
           const profile = profilesResult.data;
           if (!profile) {
+            // Still hydrate with minimal user data so app doesn't hang in loading state
+            if (requestId === refreshRequestId.current) {
+              dispatch({
+                type: 'STATE_HYDRATE',
+                payload: {
+                  users: {
+                    [authUser.id]: {
+                      id: authUser.id,
+                      name: authUser.user_metadata?.full_name || 'Okänd',
+                      email: '',
+                      membership: [],
+                      horses: [],
+                      location: '',
+                      phone: '',
+                      responsibilities: [],
+                      defaultPasses: [],
+                      awayNotices: [],
+                      onboardingDismissed: false,
+                    },
+                  },
+                  stables: [],
+                  farms: [],
+                  horses: [],
+                  currentStableId: '',
+                  currentUserId: authUser.id,
+                  sessionUserId,
+                },
+              });
+            }
             return fail('Kunde inte hämta profilen.');
           }
           const draftDefaultPasses = await loadDefaultPassDraft(authUser.id);
@@ -4753,10 +4782,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Ingen inloggad användare.' };
       }
 
-      // Check if a private conversation already exists with this user
-      const existing = current.messages.find(
-        (msg) => !msg.group && msg.id,
-      );
       // Look through conversations for an existing private chat with this user
       for (const preview of current.messages) {
         if (preview.group) continue;

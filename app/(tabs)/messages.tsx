@@ -38,7 +38,7 @@ const MessageItem = React.memo(function MessageItem({
   onPress: () => void;
   desktop?: boolean;
 }) {
-  const badgeColor = item.group ? '#2E7CF6' : '#22B686';
+  const badgeColor = item.group ? palette.primary : palette.accent;
   return (
     <TouchableOpacity
       style={[styles.item, desktop && styles.itemDesktop]}
@@ -477,7 +477,7 @@ const styles = StyleSheet.create({
   },
   itemPreview: {
     fontSize: 13,
-    color: '#1C2439',
+    color: palette.primaryText,
     opacity: 0.7,
   },
   unreadDot: {

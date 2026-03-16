@@ -265,7 +265,7 @@ function ToggleRow({
         onValueChange={onToggle}
         disabled={disabled}
         trackColor={{ false: palette.border, true: palette.primary }}
-        thumbColor="#FFFFFF"
+        thumbColor={palette.inverseText}
         accessibilityLabel={label}
       />
     </View>
@@ -308,18 +308,18 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     borderRadius: radius.lg,
     borderWidth: 0,
-    backgroundColor: '#FFF3E0',
+    backgroundColor: 'rgba(226, 152, 51, 0.12)',
     gap: 10,
   },
   permissionTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#E65100',
+    color: palette.warning,
   },
   permissionBody: {
     fontSize: 13,
     lineHeight: 18,
-    color: '#BF360C',
+    color: palette.warning,
   },
   permissionButton: {
     alignSelf: 'flex-start',
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
   permissionButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#FFFFFF',
+    color: palette.inverseText,
   },
   toggleCard: {
     paddingHorizontal: 20,
