@@ -24,11 +24,11 @@ type CardProps = PropsWithChildren<
 >;
 
 const getCardShadow = (elevated?: boolean) =>
-  Platform.OS === 'ios'
-    ? elevated
+  Platform.OS === 'android'
+    ? { elevation: elevated ? shadow.android.small : 0 }
+    : elevated
       ? shadow.ios.small
-      : shadow.ios.none
-    : { elevation: elevated ? shadow.android.small : 0 };
+      : shadow.ios.none;
 
 export const Card = ({ style, children, elevated, tone = 'default', ...props }: CardProps) => (
   <View

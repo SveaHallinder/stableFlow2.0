@@ -1027,10 +1027,10 @@ const styles = StyleSheet.create({
     paddingTop: 24,
   },
   contentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
   },
   desktopLayout: {
     flexDirection: 'row',
@@ -1050,10 +1050,10 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 12,
   },
   postList: {

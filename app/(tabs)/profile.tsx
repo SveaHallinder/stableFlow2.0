@@ -607,10 +607,10 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   scrollContentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
   },
   loadingState: {
     flex: 1,
@@ -649,10 +649,10 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 12,
   },
   profileHero: {
@@ -896,7 +896,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   sectionBlockDesktop: {
-    padding: 16,
+    padding: 22,
     borderRadius: radius.xl,
     backgroundColor: palette.surface,
     borderWidth: StyleSheet.hairlineWidth,

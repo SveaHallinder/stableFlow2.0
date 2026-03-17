@@ -3184,19 +3184,19 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   contentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
   },
   pageHeader: {
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 12,
   },
   onboardingBackButton: {
@@ -3538,7 +3538,7 @@ const styles = StyleSheet.create({
   scheduleListDesktop: {
     maxWidth: 720,
     width: '100%',
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
   },
   emptyStateCard: {
     padding: space.lg,

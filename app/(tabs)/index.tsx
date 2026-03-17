@@ -447,9 +447,9 @@ export default function OverviewScreen() {
 
   const startHereSection = showOnboardingEntry ? (
     <Card
-      tone="muted"
-      elevated={!isDesktopWeb}
-      style={[styles.startHereCard, !isDesktopWeb && styles.startHereCardMobile]}
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.startHereCard, !isDesktopWeb && styles.startHereCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.startHereHeader}>
         <View style={styles.startHereTitleBlock}>
@@ -487,9 +487,9 @@ export default function OverviewScreen() {
 
   const eventsSection = recentEvents.length ? (
     <Card
-      tone="muted"
-      elevated={!isDesktopWeb}
-      style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile]}
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.eventsHeader}>
         <Text style={[styles.eventsTitle, !isDesktopWeb && styles.eventsTitleMobile]}>
@@ -525,9 +525,9 @@ export default function OverviewScreen() {
 
   const missedSection = (
     <Card
-      tone="muted"
-      elevated={!isDesktopWeb}
-      style={[styles.missedCard, !isDesktopWeb && styles.missedCardMobile]}
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.missedCard, !isDesktopWeb && styles.missedCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.missedHeader}>
         <Text style={[styles.missedTitle, !isDesktopWeb && styles.missedTitleMobile]}>
@@ -638,7 +638,7 @@ export default function OverviewScreen() {
   );
 
   const summarySection = isDesktopWeb ? (
-    <Card tone="muted" style={styles.summaryCard}>
+    <Card tone="default" elevated style={[styles.summaryCard, styles.desktopCardVisible]}>
       {summaryContent}
     </Card>
   ) : (
@@ -1171,43 +1171,46 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   scrollContentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
+    paddingTop: 8,
+    paddingBottom: 64,
+    gap: 32,
   },
   desktopDashboard: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 24,
+    gap: 36,
     width: '100%',
   },
   desktopColumn: {
     flex: 1,
     minWidth: 0,
-    gap: 18,
+    gap: 28,
   },
   desktopColumnPrimary: {
-    flex: 1.15,
+    flex: 1.25,
   },
   desktopColumnSecondary: {
-    flex: 0.85,
+    flex: 0.75,
   },
   desktopClamp: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 40,
   },
   pageHeader: {
     marginBottom: 8,
   },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
-    marginBottom: 12,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
+    marginBottom: 0,
   },
   alertCard: {
     paddingHorizontal: 18,
@@ -1233,14 +1236,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: space.sm,
-    marginTop: 6,
-    marginBottom: 6,
+    marginTop: 0,
+    marginBottom: 0,
   },
   eventsCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
     borderWidth: 0,
-    gap: 12,
+    gap: 16,
+    borderRadius: radius.xl,
   },
   eventsCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -1253,18 +1257,19 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   eventsTitle: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '700',
     color: palette.primaryText,
+    letterSpacing: -0.3,
   },
   eventsTitleMobile: {
     fontSize: 17,
     fontWeight: '600',
   },
   eventsMeta: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   eventsMetaMobile: {
     fontSize: 11,
@@ -1287,23 +1292,25 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   eventMessage: {
-    fontSize: 13,
+    fontSize: 15,
     color: palette.primaryText,
     fontWeight: '500',
+    lineHeight: 20,
   },
   eventMessageMobile: {
     fontSize: 14,
     lineHeight: 18,
   },
   eventTime: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
   },
   missedCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
     borderWidth: 0,
-    gap: 12,
+    gap: 16,
+    borderRadius: radius.xl,
   },
   missedCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -1316,18 +1323,19 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   missedTitle: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '700',
     color: palette.primaryText,
+    letterSpacing: -0.3,
   },
   missedTitleMobile: {
     fontSize: 17,
     fontWeight: '600',
   },
   missedMeta: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
-    fontWeight: '600',
+    fontWeight: '500',
   },
   missedMetaMobile: {
     fontSize: 11,
@@ -1351,29 +1359,29 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   missedLabel: {
-    fontSize: 13,
+    fontSize: 15,
     color: palette.primaryText,
     fontWeight: '500',
   },
   missedTime: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
   },
   missedEmpty: {
-    fontSize: 12,
+    fontSize: 14,
     color: palette.secondaryText,
   },
   missedAction: {
     alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: radius.full,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
     backgroundColor: palette.surfaceTint,
   },
   missedActionText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: palette.primary,
   },
@@ -1381,12 +1389,13 @@ const styles = StyleSheet.create({
     flexGrow: 0,
     flexBasis: '48%',
     minWidth: '48%',
-    borderRadius: radii.lg,
+    borderRadius: radii.xl,
     overflow: 'hidden',
   },
   quickActionCardDesktop: {
-    flexBasis: '23%',
+    flexBasis: '22%',
     minWidth: 0,
+    flexGrow: 1,
   },
   quickActionCardPressed: {
     transform: [{ scale: 0.98 }],
@@ -1395,10 +1404,10 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   quickActionInner: {
-    borderRadius: radii.lg,
-    paddingVertical: space.md,
-    paddingHorizontal: space.md,
-    gap: space.sm,
+    borderRadius: radii.xl,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    gap: 12,
     borderWidth: StyleSheet.hairlineWidth,
     backgroundColor: systemPalette.surface,
   },
@@ -1420,8 +1429,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   quickActionIcon: {
-    width: 36,
-    height: 36,
+    width: 42,
+    height: 42,
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1430,9 +1439,10 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   quickActionLabel: {
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '600',
     color: palette.primaryText,
+    letterSpacing: -0.2,
   },
   quickActionLabelMobile: {
     fontSize: 14,
@@ -1440,8 +1450,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   quickActionCaption: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 13,
+    lineHeight: 18,
     color: palette.secondaryText,
   },
   quickActionCaptionMobile: {
@@ -1450,10 +1460,11 @@ const styles = StyleSheet.create({
     color: palette.mutedText,
   },
   startHereCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
     borderWidth: 0,
-    gap: 14,
+    gap: 18,
+    borderRadius: radius.xl,
   },
   startHereCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -1471,13 +1482,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   startHereTitle: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     color: palette.primaryText,
+    letterSpacing: -0.3,
   },
   startHereSubtitle: {
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 20,
     color: palette.secondaryText,
   },
   startHereBadge: {
@@ -1567,10 +1579,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   summaryCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 28,
+    paddingVertical: 24,
     borderWidth: 0,
-    gap: 12,
+    gap: 16,
+    borderRadius: radius.xl,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -1579,9 +1592,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   summaryTitle: {
-    fontSize: 18,
-    fontWeight: '500',
+    fontSize: 22,
+    fontWeight: '700',
     color: palette.primaryText,
+    letterSpacing: -0.3,
   },
   summaryTitleMobile: {
     fontSize: 17,
@@ -1590,7 +1604,7 @@ const styles = StyleSheet.create({
   },
   summarySubtitle: {
     marginTop: 4,
-    fontSize: 13,
+    fontSize: 15,
     color: palette.secondaryText,
   },
   summarySubtitleMobile: {
@@ -1621,7 +1635,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   summaryTilesDesktop: {
-    gap: 14,
+    gap: 16,
   },
   summaryEmpty: {
     marginTop: 8,
@@ -1631,17 +1645,17 @@ const styles = StyleSheet.create({
   summaryTile: {
     flex: 1,
     minWidth: 0,
-    borderRadius: radius.lg,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+    borderRadius: radius.xl,
+    paddingVertical: 22,
+    paddingHorizontal: 22,
     backgroundColor: color.card,
-    gap: 8,
+    gap: 10,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.06)',
-    shadowColor: 'rgba(15,22,34,0.08)',
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
+    borderColor: 'rgba(15,22,34,0.04)',
+    shadowColor: 'rgba(15,22,34,0.06)',
+    shadowOpacity: 0.1,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 8 },
     elevation: 1,
   },
   summaryTileMobile: {
@@ -1651,16 +1665,17 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
   },
   summaryValue: {
-    fontSize: 24,
+    fontSize: 32,
     fontWeight: '700',
     color: '#1B1E2F',
+    letterSpacing: -0.5,
   },
   summaryLabel: {
     fontSize: 12,
     fontWeight: '600',
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-    color: '#5F6473',
+    color: '#8B8F9E',
   },
   summaryLabelMobile: {
     letterSpacing: 0.4,
@@ -1677,10 +1692,10 @@ const styles = StyleSheet.create({
   },
   activityTitle: {
     fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 0.6,
+    fontWeight: '600',
+    letterSpacing: 0.8,
     textTransform: 'uppercase',
-    color: palette.secondaryText,
+    color: '#8B8F9E',
   },
   activityRow: {
     flexDirection: 'row',
@@ -1689,12 +1704,12 @@ const styles = StyleSheet.create({
   },
   activityChip: {
     borderRadius: radius.full,
-    backgroundColor: 'rgba(10,132,255,0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: 'rgba(10,132,255,0.08)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   activityChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     color: palette.primaryText,
   },
@@ -1853,11 +1868,11 @@ const styles = StyleSheet.create({
   },
   weatherPanel: {
     borderRadius: radii.xl,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    gap: 10,
+    paddingVertical: 22,
+    paddingHorizontal: 24,
+    gap: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.35)',
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   weatherTopRow: {
     flexDirection: 'row',
@@ -1874,7 +1889,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   weatherLocation: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '600',
     color: 'white',
   },
@@ -1896,7 +1911,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   weatherTemperatureLarge: {
-    fontSize: 30,
+    fontSize: 36,
     fontWeight: '700',
     color: 'white',
     letterSpacing: -1,
@@ -2028,11 +2043,26 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   sectionBlockDesktop: {
-    padding: 16,
+    padding: 28,
     borderRadius: radius.xl,
-    backgroundColor: palette.surface,
+    backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
+    borderColor: 'rgba(15,22,34,0.06)',
+    shadowColor: 'rgba(15,22,38,0.08)',
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
+  },
+  desktopCardVisible: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.06)',
+    shadowColor: 'rgba(15,22,38,0.08)',
+    shadowOpacity: 1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -2046,9 +2076,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '400',
+    fontSize: 20,
+    fontWeight: '600',
     color: palette.primaryText,
+    letterSpacing: -0.3,
   },
   sectionDot: {
     width: 6,
@@ -2080,13 +2111,13 @@ const styles = StyleSheet.create({
     transform: [{ translateY: 1 }],
   },
   postCard: {
-    gap: 12,
-    paddingHorizontal: space.md,
-    paddingVertical: space.md,
+    gap: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
   },
   messageCard: {
-    paddingHorizontal: 4,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 14,
   },
   postHeader: {
     flexDirection: 'row',
@@ -2095,15 +2126,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   postAuthor: {
-    fontSize: 16,
-    fontWeight: '500',
+    fontSize: 17,
+    fontWeight: '600',
     color: palette.primaryText,
     marginBottom: 8,
   },
   postBody: {
-    fontSize: 12,
+    fontSize: 15,
     color: palette.primaryText,
-    lineHeight: 18,
+    lineHeight: 22,
   },
   postContent: {
     flex: 1,
@@ -2115,11 +2146,11 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   postMetaDay: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
   },
   postMetaTime: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
   },
   postFooter: {
@@ -2172,14 +2203,15 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   messageTitle: {
-    fontSize: 16,
+    fontSize: 17,
     color: palette.primaryText,
     fontWeight: '600',
+    letterSpacing: -0.2,
   },
   messageTime: {
-    fontSize: 12,
+    fontSize: 13,
     color: palette.secondaryText,
-    fontWeight: '500',
+    fontWeight: '400',
   },
   messageBadge: {
     minWidth: 18,
@@ -2196,13 +2228,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   messageAuthor: {
-    fontSize: 13,
+    fontSize: 14,
     color: palette.secondaryText,
     fontWeight: '500',
   },
   messagePreview: {
-    fontSize: 12,
+    fontSize: 14,
     color: palette.mutedText,
+    lineHeight: 20,
   },
   collapseButton: {
     alignSelf: 'flex-start',

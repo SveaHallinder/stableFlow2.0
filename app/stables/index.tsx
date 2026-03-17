@@ -2112,10 +2112,10 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: color.bg },
   pageHeader: { marginBottom: 8 },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 12,
   },
   backButton: {
@@ -2126,8 +2126,8 @@ const styles = StyleSheet.create({
   },
   backIcon: { fontSize: 20, color: theme.colors.icon },
   scroll: { flex: 1 },
-  content: { padding: 20, gap: 16, width: '100%', maxWidth: 1120, alignSelf: 'flex-start' },
-  contentDesktop: { paddingHorizontal: 28, gap: 22 },
+  content: { padding: 20, gap: 16, width: '100%', maxWidth: 1400, alignSelf: 'center' },
+  contentDesktop: { paddingHorizontal: 48, gap: 22 },
   desktopShell: { flex: 1, flexDirection: 'row' },
   desktopSidebar: {
     width: 260,
@@ -2529,10 +2529,10 @@ const styles = StyleSheet.create({
   accessChipTextActive: { color: palette.primary },
   restrictedWrap: { paddingHorizontal: 20, paddingTop: 8 },
   restrictedWrapDesktop: {
-    paddingHorizontal: 28,
+    paddingHorizontal: 48,
     width: '100%',
-    maxWidth: 1120,
-    alignSelf: 'flex-start',
+    maxWidth: 1400,
+    alignSelf: 'center',
   },
   restrictedCard: { gap: 8 },
   restrictedText: { fontSize: 13, color: palette.secondaryText },

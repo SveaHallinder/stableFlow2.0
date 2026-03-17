@@ -507,10 +507,10 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   contentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
   },
   desktopShell: { flex: 1, flexDirection: 'row' },
   desktopSidebar: {
@@ -534,10 +534,10 @@ const styles = StyleSheet.create({
   desktopList: { flex: 1, minWidth: 0 },
   pageHeader: { marginBottom: 0 },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 8,
   },
   filterCard: {

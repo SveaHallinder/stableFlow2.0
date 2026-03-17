@@ -1486,7 +1486,7 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20, paddingBottom: 32, gap: 16 },
-  contentDesktop: { paddingHorizontal: 0, maxWidth: 1120, width: '100%', alignSelf: 'flex-start' },
+  contentDesktop: { paddingHorizontal: 0, maxWidth: 1400, width: '100%', alignSelf: 'center' },
   searchBar: { marginTop: 4 },
   hintCard: { padding: 16, gap: 8 },
   hintTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },

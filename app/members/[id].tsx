@@ -500,10 +500,10 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   contentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
   },
   desktopShell: { flex: 1, flexDirection: 'row' },
   desktopSidebar: {

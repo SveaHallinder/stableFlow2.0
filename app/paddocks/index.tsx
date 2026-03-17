@@ -828,10 +828,10 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     marginBottom: 12,
   },
   headerIconButton: {
@@ -855,10 +855,10 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   scrollContentDesktop: {
-    maxWidth: 1120,
+    maxWidth: 1400,
     width: '100%',
-    alignSelf: 'flex-start',
-    paddingHorizontal: 28,
+    alignSelf: 'center',
+    paddingHorizontal: 48,
     paddingTop: 20,
     gap: 16,
   },
