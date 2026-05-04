@@ -71,6 +71,12 @@ const adminLinks: AdminLink[] = [
     params: { section: 'pass' },
     action: 'Öppna schema',
   },
+  {
+    title: 'Kontakter',
+    description: 'Hovslagare, veterinärer och tränare som vården bokas mot.',
+    route: '/contacts',
+    action: 'Öppna kontakter',
+  },
 ];
 
 type QuickRole = 'admin' | 'staff' | 'rider';
@@ -483,7 +489,7 @@ export default function AdminDashboard() {
                   <Text style={styles.sectionHint}>Skapa ditt första stall för att låsa upp fler åtgärder.</Text>
                 )}
 
-                <View style={styles.quickStack}>
+                <View style={[styles.quickStack, isDesktopWeb && styles.quickStackDesktop]}>
                   <View style={styles.quickSection}>
                     <Text style={styles.quickTitle}>Skapa stall</Text>
                     <TextInput
@@ -678,23 +684,33 @@ export default function AdminDashboard() {
                 </View>
               </Card>
 
-              <View style={styles.cardGrid}>
+              <View style={[styles.cardGrid, isDesktopWeb && styles.cardGridDesktop]}>
                 {adminLinks.map((link) => (
-                  <Card key={link.title} tone="muted" style={styles.card}>
-                    <Text style={styles.sectionTitle}>{link.title}</Text>
-                    <Text style={styles.sectionHint}>{link.description}</Text>
-                    <TouchableOpacity
-                      style={styles.primaryButton}
-                      onPress={() =>
-                        router.push(
-                          (link.params ? { pathname: link.route, params: link.params } : link.route) as Href,
-                        )
+                  <TouchableOpacity
+                    key={link.title}
+                    style={[styles.linkCard, isDesktopWeb && styles.linkCardDesktop]}
+                    onPress={() =>
+                      router.push(
+                        (link.params ? { pathname: link.route, params: link.params } : link.route) as Href,
+                      )
+                    }
+                    activeOpacity={0.85}
+                  >
+                    <Feather
+                      name={
+                        link.route === '/stables' ? 'home' :
+                        link.route === '/members' ? 'users' :
+                        link.route === '/paddocks' ? 'map' :
+                        link.route === '/calendar' && link.params?.section === 'arena' ? 'columns' :
+                        link.route === '/calendar' ? 'calendar' : 'settings'
                       }
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.primaryLabel}>{link.action}</Text>
-                    </TouchableOpacity>
-                  </Card>
+                      size={20}
+                      color={palette.primary}
+                    />
+                    <Text style={styles.linkCardTitle}>{link.title}</Text>
+                    <Text style={styles.linkCardDesc} numberOfLines={2}>{link.description}</Text>
+                    <Text style={styles.linkCardCta}>{link.action} →</Text>
+                  </TouchableOpacity>
                 ))}
               </View>
             </ScrollView>
@@ -760,9 +776,44 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   content: { paddingHorizontal: 20, paddingBottom: 32, gap: 16 },
-  contentDesktop: { paddingHorizontal: 0, paddingBottom: 40 },
+  contentDesktop: { paddingHorizontal: 0, paddingBottom: 40, maxWidth: 960 },
   card: { padding: 16, gap: 12, borderRadius: radius.lg },
   cardGrid: { gap: 16 },
+  cardGridDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
+  linkCard: {
+    padding: 16,
+    gap: 8,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  linkCardDesktop: {
+    flexBasis: '31%',
+    flexGrow: 1,
+    minWidth: 200,
+  },
+  linkCardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.primaryText,
+    marginTop: 4,
+  },
+  linkCardDesc: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: palette.secondaryText,
+  },
+  linkCardCta: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primary,
+    marginTop: 4,
+  },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
   sectionHint: { fontSize: 13, color: palette.secondaryText, lineHeight: 18 },
   statRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
@@ -790,6 +841,7 @@ const styles = StyleSheet.create({
   },
   buttonFull: {
     alignSelf: 'stretch',
+    maxWidth: 400,
   },
   primaryLabel: { color: palette.inverseText, fontWeight: '600' },
   secondaryButton: {
@@ -825,13 +877,21 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, color: palette.primaryText },
   chipTextActive: { color: palette.inverseText, fontWeight: '600' },
   quickStack: { gap: 16 },
+  quickStackDesktop: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+  },
   quickSection: {
-    padding: 12,
+    padding: 14,
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
     backgroundColor: palette.surface,
     gap: 10,
+    flexBasis: '48%',
+    flexGrow: 1,
+    minWidth: 260,
   },
   quickTitle: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
   desktopShell: { flex: 1, flexDirection: 'row' },

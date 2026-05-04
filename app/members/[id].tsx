@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,7 +20,7 @@ import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { roleLabels, roleOrder, accessLabels } from '@/lib/roleLabels';
-import type { AssignmentSlot, DefaultPass, UserRole, WeekdayIndex } from '@/context/AppDataContext';
+import type { AssignmentSlot, DefaultPass, WeekdayIndex } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 

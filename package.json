@@ -1,12 +1,14 @@
 {
   "name": "StableFlow",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "dev": "EXPO_NO_TELEMETRY=1 expo start",
     "build:web": "expo export --platform web",
     "lint": "expo lint",
+    "test": "node --test scripts/*.test.mjs",
+    "test:e2e": "playwright test --config=scripts/e2e/playwright.config.mjs",
     "android": "expo run:android",
     "ios": "expo run:ios -d",
     "fix:splash": "npx expo prebuild --clean && npm run dev"
@@ -53,6 +55,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@playwright/test": "^1.59.1",
     "@types/react": "~19.1.0",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~10.0.0",

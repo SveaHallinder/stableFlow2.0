@@ -31,6 +31,30 @@ import { toISODate } from '@/lib/schedule';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
+const webPaddockModalOverlayStyle =
+  Platform.OS === 'web'
+    ? ({
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: 1000,
+      } as const)
+    : undefined;
+const webPaddockModalSheetStyle =
+  Platform.OS === 'web'
+    ? ({
+        position: 'fixed',
+        top: 40,
+        left: '50%',
+        width: 'min(640px, calc(100vw - 32px))',
+        maxHeight: 'calc(100vh - 80px)',
+        marginLeft: 'calc(-1 * min(320px, calc((100vw - 32px) / 2)))',
+        overflowY: 'auto',
+        zIndex: 1001,
+      } as const)
+    : undefined;
 
 type PaddockDraft = {
   id?: string;
@@ -67,20 +91,30 @@ function formatPaddockCaption(paddock: Paddock) {
 
 async function openPrintDialog(html: string) {
   if (Platform.OS === 'web') {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
       return;
     }
-    const win = window.open('', '_blank');
-    if (!win) {
-      throw new Error('Kunde inte öppna nytt fönster för utskrift.');
+    const frame = document.createElement('iframe');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    document.body.appendChild(frame);
+    const printWindow = frame.contentWindow;
+    const printDocument = printWindow?.document;
+    if (!printWindow || !printDocument) {
+      frame.remove();
+      throw new Error('Kunde inte förbereda utskrift.');
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
+    printDocument.open();
+    printDocument.write(html);
+    printDocument.close();
     setTimeout(() => {
-      win.print();
-      win.close();
+      printWindow.focus();
+      printWindow.print();
+      setTimeout(() => frame.remove(), 500);
     }, 150);
     return;
   }
@@ -671,11 +705,104 @@ export default function PaddocksScreen() {
               </View>
             </ScrollView>
 
-        <Modal visible={modalState.visible} animationType="slide" transparent onRequestClose={closeModal}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}
-          >
+            {Platform.OS === 'web' && modalState.visible ? (
+              <KeyboardAvoidingView
+                behavior={undefined}
+                style={[
+                  styles.modalOverlay,
+                  isDesktopWeb && styles.modalOverlayDesktop,
+                  webPaddockModalOverlayStyle as any,
+                ]}
+              >
+                <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
+                <View
+                  style={[
+                    styles.modalSheet,
+                    isDesktopWeb && styles.modalSheetDesktop,
+                    webPaddockModalSheetStyle as any,
+                  ]}
+                >
+                  <Text style={styles.modalTitle}>{title}</Text>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Namn</Text>
+                    <TextInput
+                      value={draft.name}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+                      placeholder="Ex. Hage 3, Gräshage, Paddock vid ridhuset"
+                      placeholderTextColor={palette.mutedText}
+                      style={styles.textInput}
+                      autoCorrect={false}
+                      editable={canManagePaddocks}
+                    />
+                  </View>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Hästar</Text>
+                    <TextInput
+                      value={draft.horsesText}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, horsesText: value }))}
+                      placeholder={'En häst per rad\nEx.\nCinder\nAtlas'}
+                      placeholderTextColor={palette.mutedText}
+                      style={[styles.textInput, styles.horsesInput]}
+                      multiline
+                      numberOfLines={5}
+                      textAlignVertical="top"
+                      editable={canManagePaddocks}
+                    />
+                    <Text style={styles.formHint}>Tips: Du kan även separera med komma.</Text>
+                  </View>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Säsong</Text>
+                    <View style={styles.chipRow}>
+                      {([
+                        { id: 'yearRound', label: 'Året runt' },
+                        { id: 'summer', label: 'Sommar' },
+                        { id: 'winter', label: 'Vinter' },
+                      ] as const).map((option) => {
+                        const active = draft.season === option.id;
+                        return (
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[styles.chip, active && styles.chipActive]}
+                            onPress={
+                              canManagePaddocks
+                                ? () => setDraft((prev) => ({ ...prev, season: option.id }))
+                                : undefined
+                            }
+                            activeOpacity={0.85}
+                            disabled={!canManagePaddocks}
+                          >
+                            <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity style={styles.secondaryButton} onPress={closeModal} activeOpacity={0.85}>
+                      <Text style={styles.secondaryButtonLabel}>Avbryt</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryButton,
+                        !canSave && styles.primaryButtonDisabled,
+                      ]}
+                      onPress={canManagePaddocks ? handleSave : undefined}
+                      disabled={!canSave}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.primaryButtonLabel}>Spara</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </KeyboardAvoidingView>
+            ) : null}
+
+        {Platform.OS !== 'web' && modalState.visible ? (
+          <Modal visible={modalState.visible} animationType="slide" transparent onRequestClose={closeModal}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}
+            >
                 <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
                 <View style={[styles.modalSheet, isDesktopWeb && styles.modalSheetDesktop]}>
                   <Text style={styles.modalTitle}>{title}</Text>
@@ -807,8 +934,9 @@ export default function PaddocksScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          </KeyboardAvoidingView>
-        </Modal>
+            </KeyboardAvoidingView>
+          </Modal>
+        ) : null}
           </>
         )}
       </SafeAreaView>

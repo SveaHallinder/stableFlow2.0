@@ -13,6 +13,7 @@ import {
 import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
 import { formatTimeAgo } from '@/lib/time';
+import { isQaDemoMode, QA_DEMO_MEMBER_ID, QA_DEMO_USER_ID } from '@/lib/qaDemo';
 
 export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
@@ -140,6 +141,91 @@ export type Horse = {
   boxNumber?: string;
   canSleepInside?: boolean;
   note?: string;
+};
+
+export type HorseResponsibility = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  userId: string;
+  kind: 'medryttare' | 'staff' | 'trainer' | 'other';
+  canLogRide: boolean;
+  canUpdateDailyStatus: boolean;
+  canSuggestPlanChanges: boolean;
+};
+
+export type FeedSlot = 'morning' | 'lunch' | 'evening';
+
+export type FeedPlanItem = {
+  id: string;
+  stableId: string;
+  horseId?: string;
+  slot: FeedSlot;
+  label: string;
+  amount?: string;
+  note?: string;
+  isStableDefault: boolean;
+  active: boolean;
+};
+
+export type FeedCheck = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  date: string;
+  slot: FeedSlot;
+  checkedByUserId?: string;
+  checkedAt?: string;
+  deviationNote?: string;
+};
+
+export type PlannedRideStatus = 'planned' | 'done' | 'cancelled';
+
+export type PlannedRide = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  riderUserId?: string;
+  date: string;
+  time?: string;
+  rideTypeId?: string;
+  note?: string;
+  status: PlannedRideStatus;
+  completedRideLogId?: string;
+  createdAt: string;
+};
+
+export type ExternalContactType = 'farrier' | 'vet' | 'trainer' | 'therapist' | 'other';
+
+export type ExternalContact = {
+  id: string;
+  stableId: string;
+  name: string;
+  type: ExternalContactType;
+  phone?: string;
+  email?: string;
+  note?: string;
+  createdAt: string;
+};
+
+export type CareEventType = 'farrier' | 'vet' | 'vaccination' | 'dental' | 'treatment' | 'other';
+
+export type CareEventStatus = 'planned' | 'done' | 'cancelled';
+
+export type CareEvent = {
+  id: string;
+  stableId: string;
+  horseIds: string[];
+  type: CareEventType;
+  title: string;
+  date: string;
+  time?: string;
+  contactId?: string;
+  responsibleUserId?: string;
+  status: CareEventStatus;
+  note?: string;
+  completedAt?: string;
+  createdAt: string;
 };
 
 export type HorseDayStatus = {
@@ -296,6 +382,30 @@ export type AlertMessage = {
   message: string;
   type: 'critical' | 'info';
   createdAt: string;
+};
+
+export type StableAlert = {
+  id: string;
+  stableId: string;
+  title: string;
+  body?: string;
+  severity: 'info' | 'important' | 'urgent';
+  horseId?: string;
+  paddockId?: string;
+  assignmentId?: string;
+  createdByUserId: string;
+  createdAt: string;
+  resolvedAt?: string;
+};
+
+export type CreateStableAlertInput = {
+  stableId?: string;
+  title: string;
+  body?: string;
+  severity?: StableAlert['severity'];
+  horseId?: string;
+  paddockId?: string;
+  assignmentId?: string;
 };
 
 export type MessagePreview = {
@@ -525,6 +635,80 @@ export type UpdateHorseDayStatusInput = {
   updates: Partial<Pick<HorseDayStatus, 'dayStatus' | 'nightStatus' | 'checked' | 'water' | 'hay'>>;
 };
 
+export type UpsertFeedPlanInput = {
+  id?: string;
+  stableId?: string;
+  horseId?: string | null;
+  slot: FeedSlot;
+  label: string;
+  amount?: string;
+  note?: string;
+  isStableDefault: boolean;
+  active?: boolean;
+};
+
+export type UpsertFeedCheckInput = {
+  stableId?: string;
+  horseId: string;
+  date: string;
+  slot: FeedSlot;
+  checked?: boolean;
+  deviationNote?: string;
+};
+
+export type CreatePlannedRideInput = {
+  stableId?: string;
+  horseId: string;
+  date: string;
+  time?: string;
+  rideTypeId?: string;
+  note?: string;
+  riderUserId?: string;
+};
+
+export type UpdatePlannedRideInput = {
+  id: string;
+  updates: Partial<Pick<PlannedRide, 'date' | 'time' | 'rideTypeId' | 'note' | 'riderUserId' | 'status'>>;
+};
+
+export type CompletePlannedRideInput = {
+  id: string;
+  length?: string;
+  note?: string;
+};
+
+export type UpsertExternalContactInput = {
+  id?: string;
+  stableId?: string;
+  name: string;
+  type: ExternalContactType;
+  phone?: string;
+  email?: string;
+  note?: string;
+};
+
+export type CreateCareEventInput = {
+  stableId?: string;
+  horseIds: string[];
+  type: CareEventType;
+  title: string;
+  date: string;
+  time?: string;
+  contactId?: string;
+  responsibleUserId?: string;
+  note?: string;
+};
+
+export type UpdateCareEventInput = {
+  id: string;
+  updates: Partial<Pick<CareEvent, 'horseIds' | 'type' | 'title' | 'date' | 'time' | 'contactId' | 'responsibleUserId' | 'note' | 'status'>>;
+};
+
+export type CompleteCareEventInput = {
+  id: string;
+  note?: string;
+};
+
 export type AddMemberInput = {
   name: string;
   email: string;
@@ -592,7 +776,7 @@ type PostsCursor = {
   id: string;
 };
 
-type AppDataState = {
+export type AppDataState = {
   currentStableId: string;
   stables: Stable[];
   farms: Farm[];
@@ -601,6 +785,7 @@ type AppDataState = {
   sessionUserId: string | null;
   users: Record<string, UserProfile>;
   alerts: AlertMessage[];
+  stableAlerts: StableAlert[];
   assignments: Assignment[];
   assignmentHistory: Array<{
     id: string;
@@ -625,6 +810,12 @@ type AppDataState = {
   rideLogs: RideLogEntry[];
   paddocks: Paddock[];
   horseDayStatuses: HorseDayStatus[];
+  horseResponsibilities: HorseResponsibility[];
+  feedPlans: FeedPlanItem[];
+  feedChecks: FeedCheck[];
+  plannedRides: PlannedRide[];
+  externalContacts: ExternalContact[];
+  careEvents: CareEvent[];
 };
 
 type AssignmentUpdateAction = {
@@ -654,6 +845,11 @@ type AssignmentRemoveAction = {
 type AddAlertAction = {
   type: 'ALERT_ADD';
   payload: AlertMessage;
+};
+
+type StableAlertUpsertAction = {
+  type: 'STABLE_ALERT_UPSERT';
+  payload: StableAlert;
 };
 
 type MarkMessageReadAction = {
@@ -775,6 +971,56 @@ type HorseDayStatusUpsertAction = {
   payload: HorseDayStatus;
 };
 
+type FeedPlanUpsertAction = {
+  type: 'FEED_PLAN_UPSERT';
+  payload: FeedPlanItem;
+};
+
+type FeedPlanDeleteAction = {
+  type: 'FEED_PLAN_DELETE';
+  payload: { id: string };
+};
+
+type FeedCheckUpsertAction = {
+  type: 'FEED_CHECK_UPSERT';
+  payload: FeedCheck;
+};
+
+type FeedCheckDeleteAction = {
+  type: 'FEED_CHECK_DELETE';
+  payload: { id: string };
+};
+
+type PlannedRideUpsertAction = {
+  type: 'PLANNED_RIDE_UPSERT';
+  payload: PlannedRide;
+};
+
+type PlannedRideDeleteAction = {
+  type: 'PLANNED_RIDE_DELETE';
+  payload: { id: string };
+};
+
+type ExternalContactUpsertAction = {
+  type: 'EXTERNAL_CONTACT_UPSERT';
+  payload: ExternalContact;
+};
+
+type ExternalContactDeleteAction = {
+  type: 'EXTERNAL_CONTACT_DELETE';
+  payload: { id: string };
+};
+
+type CareEventUpsertAction = {
+  type: 'CARE_EVENT_UPSERT';
+  payload: CareEvent;
+};
+
+type CareEventDeleteAction = {
+  type: 'CARE_EVENT_DELETE';
+  payload: { id: string };
+};
+
 type StableUpsertAction = {
   type: 'STABLE_UPSERT';
   payload: Stable;
@@ -830,6 +1076,7 @@ type AppDataAction =
   | AssignmentHistoryPushAction
   | AssignmentRemoveAction
   | AddAlertAction
+  | StableAlertUpsertAction
   | MarkMessageReadAction
   | AppendConversationMessageAction
   | UserUpdateAction
@@ -853,6 +1100,16 @@ type AppDataAction =
   | GroupUpdateAction
   | GroupDeleteAction
   | HorseDayStatusUpsertAction
+  | FeedPlanUpsertAction
+  | FeedPlanDeleteAction
+  | FeedCheckUpsertAction
+  | FeedCheckDeleteAction
+  | PlannedRideUpsertAction
+  | PlannedRideDeleteAction
+  | ExternalContactUpsertAction
+  | ExternalContactDeleteAction
+  | CareEventUpsertAction
+  | CareEventDeleteAction
   | StableSetAction
   | StableUpsertAction
   | StableUpdateAction
@@ -924,10 +1181,25 @@ type AppDataContextValue = {
     updateAssignment: (input: UpdateAssignmentInput) => ActionResult<Assignment>;
     deleteAssignment: (assignmentId: string) => ActionResult;
     addEvent: (message: string, type?: AlertMessage['type']) => ActionResult<AlertMessage>;
+    createStableAlert: (input: CreateStableAlertInput) => ActionResult<StableAlert>;
+    resolveStableAlert: (alertId: string) => ActionResult<StableAlert>;
     toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => ActionResult<UserProfile>;
     upsertPaddock: (input: UpsertPaddockInput) => ActionResult<Paddock>;
     deletePaddock: (paddockId: string) => ActionResult;
     updateHorseDayStatus: (input: UpdateHorseDayStatusInput) => ActionResult<HorseDayStatus>;
+    upsertFeedPlan: (input: UpsertFeedPlanInput) => ActionResult<FeedPlanItem>;
+    deleteFeedPlan: (feedPlanId: string) => ActionResult;
+    upsertFeedCheck: (input: UpsertFeedCheckInput) => ActionResult<FeedCheck>;
+    createPlannedRide: (input: CreatePlannedRideInput) => ActionResult<PlannedRide>;
+    updatePlannedRide: (input: UpdatePlannedRideInput) => ActionResult<PlannedRide>;
+    deletePlannedRide: (plannedRideId: string) => ActionResult;
+    completePlannedRide: (input: CompletePlannedRideInput) => ActionResult<{ plannedRide: PlannedRide; rideLog: RideLogEntry }>;
+    upsertExternalContact: (input: UpsertExternalContactInput) => ActionResult<ExternalContact>;
+    deleteExternalContact: (contactId: string) => ActionResult;
+    createCareEvent: (input: CreateCareEventInput) => ActionResult<CareEvent>;
+    updateCareEvent: (input: UpdateCareEventInput) => ActionResult<CareEvent>;
+    deleteCareEvent: (careEventId: string) => ActionResult;
+    completeCareEvent: (input: CompleteCareEventInput) => ActionResult<CareEvent>;
     addDayEvent: (input: CreateDayEventInput) => ActionResult<DayEvent>;
     removeDayEvent: (eventId: string) => ActionResult;
     addArenaBooking: (input: CreateArenaBookingInput) => ActionResult<ArenaBooking>;
@@ -1184,6 +1456,7 @@ const initialState: AppDataState = {
   sessionUserId: null,
   users: {},
   alerts: [],
+  stableAlerts: [],
   assignments: [],
   assignmentHistory: [],
   messages: [],
@@ -1202,7 +1475,382 @@ const initialState: AppDataState = {
   rideLogs: [],
   paddocks: [],
   horseDayStatuses: [],
+  horseResponsibilities: [],
+  feedPlans: [],
+  feedChecks: [],
+  plannedRides: [],
+  externalContacts: [],
+  careEvents: [],
 };
+
+function addDaysIso(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function createQaDemoState(): AppDataState {
+  const now = new Date().toISOString();
+  const stableId = 'qa-stable-main';
+  const farmId = 'qa-farm-main';
+  const horseId = 'qa-horse-main';
+  const paddockId = 'qa-paddock-main';
+  const conversationId = 'qa-conversation-private';
+  const groupConversationId = 'qa-conversation-stable';
+  const groupId = 'qa-group-paddock';
+  const today = addDaysIso(0);
+  const tomorrow = addDaysIso(1);
+  const stableSettings = createDefaultStableSettings();
+
+  stableSettings.arena = {
+    hasArena: true,
+    hasRoundPen: true,
+    hasSchedule: true,
+    bookingMode: 'open',
+    rules: 'Mocka efter ridning och lämna bommar på plats.',
+  };
+  stableSettings.onboarding = { resourcesComplete: true, membersComplete: true };
+
+  return {
+    ...initialState,
+    currentStableId: stableId,
+    currentUserId: QA_DEMO_USER_ID,
+    sessionUserId: QA_DEMO_USER_ID,
+    farms: [
+      {
+        id: farmId,
+        name: 'QA Gården',
+        location: 'Stockholm',
+        hasIndoorArena: true,
+        arenaNote: 'Ridhus och utevolt används i QA-flödet.',
+      },
+    ],
+    stables: [
+      {
+        id: stableId,
+        name: 'QA Stallet',
+        location: 'Stockholm',
+        farmId,
+        joinCode: 'QATEST',
+        rideTypes: [
+          { id: 'qa-ride-dressage', code: 'DR', label: 'Dressyr' },
+          { id: 'qa-ride-hack', code: 'UT', label: 'Uteritt' },
+        ],
+        settings: stableSettings,
+      },
+    ],
+    users: {
+      [QA_DEMO_USER_ID]: {
+        id: QA_DEMO_USER_ID,
+        name: 'QA Admin',
+        email: 'qa-admin@example.com',
+        membership: [{ stableId, role: 'admin', access: 'owner', riderRole: 'owner' }],
+        horses: ['Saga'],
+        location: 'Stockholm',
+        phone: '070-000 00 01',
+        responsibilities: ['Schema', 'Hagar'],
+        defaultPasses: [{ weekday: 0, slot: 'Morning' }],
+        awayNotices: [],
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        onboardingDismissed: false,
+      },
+      [QA_DEMO_MEMBER_ID]: {
+        id: QA_DEMO_MEMBER_ID,
+        name: 'QA Medlem',
+        email: 'qa-member@example.com',
+        membership: [{ stableId, role: 'rider', access: 'view', riderRole: 'medryttare', horseIds: [horseId] }],
+        horses: ['Saga'],
+        location: 'Stockholm',
+        phone: '070-000 00 02',
+        responsibilities: ['Kvällsfodring'],
+        defaultPasses: [{ weekday: 2, slot: 'Evening' }],
+        awayNotices: [],
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        onboardingDismissed: true,
+      },
+    },
+    horses: [
+      {
+        id: horseId,
+        stableId,
+        name: 'Saga',
+        ownerUserId: QA_DEMO_USER_ID,
+        gender: 'mare',
+        age: 9,
+        boxNumber: '12',
+        canSleepInside: true,
+        note: 'Känslig för snabb foderändring.',
+      },
+    ],
+    horseResponsibilities: [
+      {
+        id: 'qa-horse-responsibility-1',
+        stableId,
+        horseId,
+        userId: QA_DEMO_MEMBER_ID,
+        kind: 'medryttare',
+        canLogRide: true,
+        canUpdateDailyStatus: true,
+        canSuggestPlanChanges: true,
+      },
+    ],
+    paddocks: [
+      {
+        id: paddockId,
+        stableId,
+        name: 'Vinterhagen',
+        horseNames: ['Saga'],
+        updatedAt: now,
+        season: 'winter',
+      },
+    ],
+    assignments: [
+      {
+        id: 'qa-assignment-open',
+        stableId,
+        date: today,
+        label: 'Lunchfodring',
+        slot: 'Lunch',
+        icon: 'clock',
+        time: '12:00',
+        status: 'open',
+      },
+      {
+        id: 'qa-assignment-mine',
+        stableId,
+        date: today,
+        label: 'Morgonfodring',
+        slot: 'Morning',
+        icon: 'sun',
+        time: '07:00',
+        status: 'assigned',
+        assigneeId: QA_DEMO_USER_ID,
+      },
+      {
+        id: 'qa-assignment-member',
+        stableId,
+        date: tomorrow,
+        label: 'Kvällsfodring',
+        slot: 'Evening',
+        icon: 'moon',
+        time: '19:00',
+        status: 'assigned',
+        assigneeId: QA_DEMO_MEMBER_ID,
+      },
+    ],
+    assignmentHistory: [
+      {
+        id: 'qa-history-1',
+        assignmentId: 'qa-assignment-open',
+        label: 'Lunchfodring 12:00',
+        timestamp: now,
+        action: 'created',
+      },
+    ],
+    stableAlerts: [
+      {
+        id: 'qa-stable-alert-1',
+        stableId,
+        title: 'Grinden till Vinterhagen är trög',
+        body: 'Stäng med kedjan tills den är justerad.',
+        severity: 'important',
+        paddockId,
+        createdByUserId: QA_DEMO_USER_ID,
+        createdAt: now,
+      },
+    ],
+    dayEvents: [
+      { id: 'qa-event-1', stableId, date: today, label: 'Hovslagare kl 14', tone: 'farrierAway' },
+    ],
+    arenaBookings: [
+      {
+        id: 'qa-booking-1',
+        stableId,
+        date: today,
+        startTime: '18:00',
+        endTime: '18:45',
+        purpose: 'Dressyr',
+        bookedByUserId: QA_DEMO_USER_ID,
+      },
+    ],
+    arenaStatuses: [
+      { id: 'qa-arena-status-1', stableId, date: today, label: 'Sladdad', createdByUserId: QA_DEMO_USER_ID, createdAt: now },
+    ],
+    groups: [
+      { id: groupId, stableId, name: 'Haggruppen', type: 'custom', createdAt: now, createdByUserId: QA_DEMO_USER_ID },
+    ],
+    messages: [
+      {
+        id: conversationId,
+        title: 'QA Medlem',
+        subtitle: 'Privat chatt',
+        description: 'Kan du ta kvällspasset imorgon?',
+        timeAgo: 'Nu',
+        unreadCount: 1,
+        stableId,
+      },
+      {
+        id: groupConversationId,
+        title: 'QA Stallet',
+        subtitle: 'Stallchatt',
+        description: 'Välkommen till QA-stallet.',
+        timeAgo: 'Idag',
+        group: true,
+        stableId,
+      },
+    ],
+    conversations: {
+      [conversationId]: [
+        {
+          id: 'qa-message-1',
+          conversationId,
+          authorId: QA_DEMO_MEMBER_ID,
+          text: 'Kan du ta kvällspasset imorgon?',
+          timestamp: now,
+          status: 'delivered',
+        },
+      ],
+      [groupConversationId]: [
+        {
+          id: 'qa-message-2',
+          conversationId: groupConversationId,
+          authorId: QA_DEMO_USER_ID,
+          text: 'Välkommen till QA-stallet.',
+          timestamp: now,
+          status: 'seen',
+        },
+      ],
+    },
+    posts: [
+      {
+        id: 'qa-post-1',
+        authorId: QA_DEMO_USER_ID,
+        author: 'QA Admin',
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        timeAgo: 'Nyss',
+        createdAt: now,
+        content: 'Saga gick fint i ridhuset idag.',
+        likes: 1,
+        comments: 1,
+        likedByUserIds: [QA_DEMO_MEMBER_ID],
+        commentsData: [
+          {
+            id: 'qa-comment-1',
+            postId: 'qa-post-1',
+            authorId: QA_DEMO_MEMBER_ID,
+            authorName: 'QA Medlem',
+            text: 'Härligt!',
+            createdAt: now,
+          },
+        ],
+        stableId,
+        groupIds: [groupId],
+      },
+    ],
+    postsHasMore: false,
+    ridingSchedule: [
+      { id: 'qa-ride-day-1', stableId, label: 'Idag', upcomingRides: 'Saga 18:00', isToday: true },
+    ],
+    competitionEvents: [
+      { id: 'qa-competition-1', start: today, end: tomorrow, title: 'Pay and ride', status: 'open' },
+    ],
+    horseDayStatuses: [
+      {
+        id: 'qa-horse-status-1',
+        stableId,
+        horseId,
+        date: today,
+        dayStatus: 'out',
+        nightStatus: 'in',
+        checked: true,
+        water: true,
+        hay: true,
+      },
+    ],
+    feedPlans: [
+      {
+        id: 'qa-feed-plan-default-morning',
+        stableId,
+        slot: 'morning',
+        label: 'Morgonfoder',
+        amount: '2 kg hösilage + 0.5 kg krossad havre',
+        isStableDefault: true,
+        active: true,
+      },
+      {
+        id: 'qa-feed-plan-saga-evening',
+        stableId,
+        horseId,
+        slot: 'evening',
+        label: 'Saga – kvällsfoder',
+        amount: '3 kg hösilage',
+        note: 'Trappa upp långsamt vid foderbyte.',
+        isStableDefault: false,
+        active: true,
+      },
+    ],
+    feedChecks: [
+      {
+        id: 'qa-feed-check-saga-morning',
+        stableId,
+        horseId,
+        date: today,
+        slot: 'morning',
+        checkedByUserId: QA_DEMO_USER_ID,
+        checkedAt: now,
+      },
+    ],
+    plannedRides: [
+      {
+        id: 'qa-planned-ride-1',
+        stableId,
+        horseId,
+        date: today,
+        time: '18:00',
+        rideTypeId: 'qa-ride-dressage',
+        note: 'Lugnt dressyrpass.',
+        riderUserId: QA_DEMO_USER_ID,
+        status: 'planned',
+        createdAt: now,
+      },
+    ],
+    externalContacts: [
+      {
+        id: 'qa-contact-vet',
+        stableId,
+        name: 'Anna Veterinär',
+        type: 'vet',
+        phone: '070-111 22 33',
+        email: 'anna@example.com',
+        createdAt: now,
+      },
+      {
+        id: 'qa-contact-farrier',
+        stableId,
+        name: 'Per Hovslagare',
+        type: 'farrier',
+        phone: '070-222 33 44',
+        createdAt: now,
+      },
+    ],
+    careEvents: [
+      {
+        id: 'qa-care-vaccin',
+        stableId,
+        horseIds: [horseId],
+        type: 'vaccination',
+        title: 'Årsvaccination',
+        date: tomorrow,
+        time: '14:00',
+        contactId: 'qa-contact-vet',
+        responsibleUserId: QA_DEMO_USER_ID,
+        status: 'planned',
+        note: 'Påminn om hälsointyg.',
+        createdAt: now,
+      },
+    ],
+  };
+}
 
 function reducer(state: AppDataState, action: AppDataAction): AppDataState {
   switch (action.type) {
@@ -1280,6 +1928,19 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         ...state,
         alerts: [action.payload, ...state.alerts],
       };
+    case 'STABLE_ALERT_UPSERT': {
+      const existingIndex = state.stableAlerts.findIndex((alert) => alert.id === action.payload.id);
+      const stableAlerts = [...state.stableAlerts];
+      if (existingIndex >= 0) {
+        stableAlerts[existingIndex] = action.payload;
+      } else {
+        stableAlerts.push(action.payload);
+      }
+      stableAlerts.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+      return { ...state, stableAlerts };
+    }
     case 'DAY_EVENT_ADD':
       return {
         ...state,
@@ -1472,6 +2133,87 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         horseDayStatuses: [...state.horseDayStatuses, action.payload],
       };
     }
+    case 'FEED_PLAN_UPSERT': {
+      const existingIndex = state.feedPlans.findIndex((plan) => plan.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.feedPlans];
+        next[existingIndex] = action.payload;
+        return { ...state, feedPlans: next };
+      }
+      return { ...state, feedPlans: [...state.feedPlans, action.payload] };
+    }
+    case 'FEED_PLAN_DELETE': {
+      return {
+        ...state,
+        feedPlans: state.feedPlans.filter((plan) => plan.id !== action.payload.id),
+      };
+    }
+    case 'FEED_CHECK_UPSERT': {
+      const existingIndex = state.feedChecks.findIndex((check) => check.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.feedChecks];
+        next[existingIndex] = action.payload;
+        return { ...state, feedChecks: next };
+      }
+      return { ...state, feedChecks: [...state.feedChecks, action.payload] };
+    }
+    case 'FEED_CHECK_DELETE': {
+      return {
+        ...state,
+        feedChecks: state.feedChecks.filter((check) => check.id !== action.payload.id),
+      };
+    }
+    case 'PLANNED_RIDE_UPSERT': {
+      const existingIndex = state.plannedRides.findIndex((ride) => ride.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.plannedRides];
+        next[existingIndex] = action.payload;
+        return { ...state, plannedRides: next };
+      }
+      return { ...state, plannedRides: [...state.plannedRides, action.payload] };
+    }
+    case 'PLANNED_RIDE_DELETE': {
+      return {
+        ...state,
+        plannedRides: state.plannedRides.filter((ride) => ride.id !== action.payload.id),
+      };
+    }
+    case 'EXTERNAL_CONTACT_UPSERT': {
+      const existingIndex = state.externalContacts.findIndex(
+        (contact) => contact.id === action.payload.id,
+      );
+      if (existingIndex >= 0) {
+        const next = [...state.externalContacts];
+        next[existingIndex] = action.payload;
+        return { ...state, externalContacts: next };
+      }
+      return { ...state, externalContacts: [...state.externalContacts, action.payload] };
+    }
+    case 'EXTERNAL_CONTACT_DELETE': {
+      return {
+        ...state,
+        externalContacts: state.externalContacts.filter(
+          (contact) => contact.id !== action.payload.id,
+        ),
+      };
+    }
+    case 'CARE_EVENT_UPSERT': {
+      const existingIndex = state.careEvents.findIndex(
+        (event) => event.id === action.payload.id,
+      );
+      if (existingIndex >= 0) {
+        const next = [...state.careEvents];
+        next[existingIndex] = action.payload;
+        return { ...state, careEvents: next };
+      }
+      return { ...state, careEvents: [...state.careEvents, action.payload] };
+    }
+    case 'CARE_EVENT_DELETE': {
+      return {
+        ...state,
+        careEvents: state.careEvents.filter((event) => event.id !== action.payload.id),
+      };
+    }
     case 'STATE_HYDRATE': {
       const hydratedStables = action.payload.stables?.map((stable) => ({
         ...stable,
@@ -1503,6 +2245,13 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         sessionUserId,
         groups,
         horseDayStatuses: action.payload.horseDayStatuses ?? state.horseDayStatuses,
+        horseResponsibilities: action.payload.horseResponsibilities ?? state.horseResponsibilities,
+        stableAlerts: action.payload.stableAlerts ?? state.stableAlerts,
+        feedPlans: action.payload.feedPlans ?? state.feedPlans,
+        feedChecks: action.payload.feedChecks ?? state.feedChecks,
+        plannedRides: action.payload.plannedRides ?? state.plannedRides,
+        externalContacts: action.payload.externalContacts ?? state.externalContacts,
+        careEvents: action.payload.careEvents ?? state.careEvents,
       };
     }
     case 'STATE_RESET':
@@ -1623,6 +2372,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         stables,
         currentStableId: nextStableId,
         assignments: state.assignments.filter((assignment) => assignment.stableId !== action.payload.id),
+        stableAlerts: state.stableAlerts.filter((alert) => alert.stableId !== action.payload.id),
         dayEvents: state.dayEvents.filter((event) => event.stableId !== action.payload.id),
         arenaBookings: state.arenaBookings.filter((booking) => booking.stableId !== action.payload.id),
         arenaStatuses: state.arenaStatuses.filter((status) => status.stableId !== action.payload.id),
@@ -1630,6 +2380,13 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         paddocks: state.paddocks.filter((paddock) => paddock.stableId !== action.payload.id),
         horses: state.horses.filter((horse) => horse.stableId !== action.payload.id),
         horseDayStatuses: state.horseDayStatuses.filter((status) => status.stableId !== action.payload.id),
+        feedPlans: state.feedPlans.filter((plan) => plan.stableId !== action.payload.id),
+        feedChecks: state.feedChecks.filter((check) => check.stableId !== action.payload.id),
+        plannedRides: state.plannedRides.filter((ride) => ride.stableId !== action.payload.id),
+        externalContacts: state.externalContacts.filter(
+          (contact) => contact.stableId !== action.payload.id,
+        ),
+        careEvents: state.careEvents.filter((event) => event.stableId !== action.payload.id),
         groups,
         posts,
       };
@@ -1668,6 +2425,18 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         horses: state.horses.filter((horse) => horse.id !== action.payload.id),
         rideLogs: state.rideLogs.filter((log) => log.horseId !== action.payload.id),
         horseDayStatuses: state.horseDayStatuses.filter((status) => status.horseId !== action.payload.id),
+        feedPlans: state.feedPlans.filter((plan) => plan.horseId !== action.payload.id),
+        feedChecks: state.feedChecks.filter((check) => check.horseId !== action.payload.id),
+        plannedRides: state.plannedRides.filter((ride) => ride.horseId !== action.payload.id),
+        stableAlerts: state.stableAlerts.map((alert) =>
+          alert.horseId === action.payload.id ? { ...alert, horseId: undefined } : alert,
+        ),
+        careEvents: state.careEvents
+          .map((event) => ({
+            ...event,
+            horseIds: event.horseIds.filter((horseId) => horseId !== action.payload.id),
+          }))
+          .filter((event) => event.horseIds.length > 0),
         groups,
         posts,
       };
@@ -2226,6 +2995,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentBatchInsert = React.useCallback(
     async (assignmentsToInsert: Assignment[]) => {
+      if (isQaDemoMode) return { error: null };
       if (!user) return { error: new Error('Missing session') };
       const payload = assignmentsToInsert.map(buildAssignmentInsertPayload);
       const { error } = await supabase.from('assignments').insert(payload);
@@ -2431,6 +3201,155 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [user],
   );
 
+  const persistFeedPlanUpsert = React.useCallback(
+    async (plan: FeedPlanItem) => {
+      if (!user) return;
+      const { error } = await supabase.from('feed_plans').upsert({
+        id: plan.id,
+        stable_id: plan.stableId,
+        horse_id: plan.horseId ?? null,
+        slot: plan.slot,
+        label: plan.label,
+        amount: plan.amount ?? null,
+        note: plan.note ?? null,
+        is_stable_default: plan.isStableDefault,
+        active: plan.active,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) {
+        console.warn('Kunde inte spara foderplan', error);
+      }
+    },
+    [user],
+  );
+
+  const persistFeedPlanDelete = React.useCallback(
+    async (planId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('feed_plans').delete().eq('id', planId);
+      if (error) {
+        console.warn('Kunde inte ta bort foderplan', error);
+      }
+    },
+    [user],
+  );
+
+  const persistFeedCheckUpsert = React.useCallback(
+    async (check: FeedCheck) => {
+      if (!user) return;
+      const { error } = await supabase.from('feed_checks').upsert(
+        {
+          id: check.id,
+          stable_id: check.stableId,
+          horse_id: check.horseId,
+          date: check.date,
+          slot: check.slot,
+          checked_by_user_id: check.checkedByUserId ?? null,
+          checked_at: check.checkedAt ?? null,
+          deviation_note: check.deviationNote ?? null,
+        },
+        { onConflict: 'horse_id,date,slot' },
+      );
+      if (error) {
+        console.warn('Kunde inte spara foderkoll', error);
+      }
+    },
+    [user],
+  );
+
+  const persistPlannedRideUpsert = React.useCallback(
+    async (ride: PlannedRide) => {
+      if (!user) return;
+      const { error } = await supabase.from('planned_rides').upsert({
+        id: ride.id,
+        stable_id: ride.stableId,
+        horse_id: ride.horseId,
+        rider_user_id: ride.riderUserId ?? null,
+        date: ride.date,
+        time: ride.time ?? null,
+        ride_type_id: ride.rideTypeId ?? null,
+        note: ride.note ?? null,
+        status: ride.status,
+        completed_ride_log_id: ride.completedRideLogId ?? null,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) {
+        console.warn('Kunde inte spara ridpass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistPlannedRideDelete = React.useCallback(
+    async (rideId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('planned_rides').delete().eq('id', rideId);
+      if (error) {
+        console.warn('Kunde inte ta bort ridpass', error);
+      }
+    },
+    [user],
+  );
+
+  const persistExternalContactUpsert = React.useCallback(
+    async (contact: ExternalContact) => {
+      if (!user) return;
+      const { error } = await supabase.from('external_contacts').upsert({
+        id: contact.id,
+        stable_id: contact.stableId,
+        name: contact.name,
+        type: contact.type,
+        phone: contact.phone ?? null,
+        email: contact.email ?? null,
+        note: contact.note ?? null,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) console.warn('Kunde inte spara kontakt', error);
+    },
+    [user],
+  );
+
+  const persistExternalContactDelete = React.useCallback(
+    async (contactId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('external_contacts').delete().eq('id', contactId);
+      if (error) console.warn('Kunde inte ta bort kontakt', error);
+    },
+    [user],
+  );
+
+  const persistCareEventUpsert = React.useCallback(
+    async (event: CareEvent) => {
+      if (!user) return;
+      const { error } = await supabase.from('care_events').upsert({
+        id: event.id,
+        stable_id: event.stableId,
+        horse_ids: event.horseIds,
+        type: event.type,
+        title: event.title,
+        date: event.date,
+        time: event.time ?? null,
+        contact_id: event.contactId ?? null,
+        responsible_user_id: event.responsibleUserId ?? null,
+        status: event.status,
+        note: event.note ?? null,
+        completed_at: event.completedAt ?? null,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) console.warn('Kunde inte spara vårdhändelse', error);
+    },
+    [user],
+  );
+
+  const persistCareEventDelete = React.useCallback(
+    async (eventId: string) => {
+      if (!user) return;
+      const { error } = await supabase.from('care_events').delete().eq('id', eventId);
+      if (error) console.warn('Kunde inte ta bort vårdhändelse', error);
+    },
+    [user],
+  );
+
   const persistDayEventInsert = React.useCallback(
     async (event: DayEvent) => {
       if (!user) return;
@@ -2595,6 +3514,29 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [user],
   );
 
+  const persistStableAlertUpsert = React.useCallback(
+    async (alert: StableAlert) => {
+      if (!user) return;
+      const { error } = await supabase.from('stable_alerts').upsert({
+        id: alert.id,
+        stable_id: alert.stableId,
+        title: alert.title,
+        body: alert.body ?? null,
+        severity: alert.severity,
+        horse_id: alert.horseId ?? null,
+        paddock_id: alert.paddockId ?? null,
+        assignment_id: alert.assignmentId ?? null,
+        created_by_user_id: alert.createdByUserId,
+        created_at: alert.createdAt,
+        resolved_at: alert.resolvedAt ?? null,
+      });
+      if (error) {
+        console.warn('Kunde inte spara viktig stallnotis', error);
+      }
+    },
+    [user],
+  );
+
   const persistDefaultPassToggle = React.useCallback(
     async (input: { userId: string; stableId: string; weekday: WeekdayIndex; slot: AssignmentSlot; enabled: boolean }) => {
       if (!user) return;
@@ -2677,6 +3619,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistPostInsert = React.useCallback(
     async (post: Post, rawImage?: string) => {
+      if (isQaDemoMode) return;
       if (!user || !post.stableId) return;
       try {
         let imagePath: string | null | undefined;
@@ -3056,6 +3999,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       try {
+        if (isQaDemoMode) {
+          if (requestId === refreshRequestId.current) {
+            dispatch({ type: 'STATE_HYDRATE', payload: createQaDemoState() });
+          }
+          return { success: true };
+        }
+
         const sessionResult = await supabase.auth.getSession();
         const sessionUser = sessionResult.data.session?.user ?? null;
         const authUser = sessionUser ?? user;
@@ -3197,7 +4147,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 arenaStatuses: [],
                 rideLogs: [],
                 horseDayStatuses: [],
+                feedPlans: [],
+                feedChecks: [],
+                plannedRides: [],
+                externalContacts: [],
+                careEvents: [],
                 alerts: [],
+                stableAlerts: [],
                 ridingSchedule: [],
                 competitionEvents: [],
                 posts: [],
@@ -3243,12 +4199,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           rideLogsResult,
           horseDayStatusesResult,
           alertsResult,
+          stableAlertsResult,
           ridingDaysResult,
           competitionEventsResult,
           groupsResult,
           defaultPassesResult,
           awayNoticesResult,
           conversationsResult,
+          feedPlansResult,
+          feedChecksResult,
+          plannedRidesResult,
+          externalContactsResult,
+          careEventsResult,
         ] = await Promise.all([
           supabase.from('stables').select('*').in('id', stableIds),
           supabase.from('farms').select('*'),
@@ -3262,12 +4224,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('ride_logs').select('*').in('stable_id', stableIds),
           supabase.from('horse_day_statuses').select('*').in('stable_id', stableIds),
           supabase.from('alerts').select('*').in('stable_id', stableIds),
+          supabase.from('stable_alerts').select('*').in('stable_id', stableIds),
           supabase.from('riding_days').select('*').in('stable_id', stableIds),
           supabase.from('competition_events').select('*').in('stable_id', stableIds),
           supabase.from('groups').select('*').in('stable_id', stableIds),
           supabase.from('default_passes').select('*').in('stable_id', stableIds),
           supabase.from('away_notices').select('*').in('stable_id', stableIds),
           supabase.from('conversations').select('*'),
+          supabase.from('feed_plans').select('*').in('stable_id', stableIds),
+          supabase.from('feed_checks').select('*').in('stable_id', stableIds),
+          supabase.from('planned_rides').select('*').in('stable_id', stableIds),
+          supabase.from('external_contacts').select('*').in('stable_id', stableIds),
+          supabase.from('care_events').select('*').in('stable_id', stableIds),
         ]);
 
         const stableRows = stablesResult.data ?? [];
@@ -3282,6 +4250,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const rideLogRows = rideLogsResult.data ?? [];
         const horseStatusRows = horseDayStatusesResult.data ?? [];
         const alertRows = alertsResult.data ?? [];
+        const stableAlertRows = stableAlertsResult.data ?? [];
         const ridingDayRows = ridingDaysResult.data ?? [];
         const competitionRows = competitionEventsResult.data ?? [];
         const groupRows = groupsResult.data ?? [];
@@ -3712,12 +4681,94 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           hay: row.hay ?? undefined,
         }));
 
+        const feedPlanRows = feedPlansResult.data ?? [];
+        const feedCheckRows = feedChecksResult.data ?? [];
+        const formattedFeedPlans: FeedPlanItem[] = feedPlanRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id ?? undefined,
+          slot: row.slot,
+          label: row.label,
+          amount: row.amount ?? undefined,
+          note: row.note ?? undefined,
+          isStableDefault: row.is_stable_default ?? false,
+          active: row.active ?? true,
+        }));
+        const formattedFeedChecks: FeedCheck[] = feedCheckRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          date: row.date,
+          slot: row.slot,
+          checkedByUserId: row.checked_by_user_id ?? undefined,
+          checkedAt: row.checked_at ?? undefined,
+          deviationNote: row.deviation_note ?? undefined,
+        }));
+
+        const plannedRideRows = plannedRidesResult.data ?? [];
+        const formattedPlannedRides: PlannedRide[] = plannedRideRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          riderUserId: row.rider_user_id ?? undefined,
+          date: row.date,
+          time: row.time ?? undefined,
+          rideTypeId: row.ride_type_id ?? undefined,
+          note: row.note ?? undefined,
+          status: row.status ?? 'planned',
+          completedRideLogId: row.completed_ride_log_id ?? undefined,
+          createdAt: row.created_at,
+        }));
+
+        const externalContactRows = externalContactsResult.data ?? [];
+        const formattedExternalContacts: ExternalContact[] = externalContactRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          name: row.name,
+          type: row.type,
+          phone: row.phone ?? undefined,
+          email: row.email ?? undefined,
+          note: row.note ?? undefined,
+          createdAt: row.created_at,
+        }));
+
+        const careEventRows = careEventsResult.data ?? [];
+        const formattedCareEvents: CareEvent[] = careEventRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseIds: row.horse_ids ?? [],
+          type: row.type,
+          title: row.title,
+          date: row.date,
+          time: row.time ?? undefined,
+          contactId: row.contact_id ?? undefined,
+          responsibleUserId: row.responsible_user_id ?? undefined,
+          status: row.status ?? 'planned',
+          note: row.note ?? undefined,
+          completedAt: row.completed_at ?? undefined,
+          createdAt: row.created_at,
+        }));
+
         const formattedAlerts: AlertMessage[] = alertRows.map((row) => ({
           id: row.id,
           stableId: row.stable_id,
           message: row.message,
           type: row.type,
           createdAt: row.created_at,
+        }));
+
+        const formattedStableAlerts: StableAlert[] = stableAlertRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          title: row.title,
+          body: row.body ?? undefined,
+          severity: row.severity ?? 'info',
+          horseId: row.horse_id ?? undefined,
+          paddockId: row.paddock_id ?? undefined,
+          assignmentId: row.assignment_id ?? undefined,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+          resolvedAt: row.resolved_at ?? undefined,
         }));
 
         const formattedRidingDays: RidingDay[] = ridingDayRows.map((row) => ({
@@ -3765,7 +4816,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             arenaStatuses: formattedArenaStatuses,
             rideLogs: formattedRideLogs,
             horseDayStatuses: formattedHorseStatuses,
+            feedPlans: formattedFeedPlans,
+            feedChecks: formattedFeedChecks,
+            plannedRides: formattedPlannedRides,
+            externalContacts: formattedExternalContacts,
+            careEvents: formattedCareEvents,
             alerts: formattedAlerts,
+            stableAlerts: formattedStableAlerts,
             ridingSchedule: formattedRidingDays,
             competitionEvents: formattedCompetitionEvents,
             posts,
@@ -3821,7 +4878,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   // Realtime subscription for new messages
   React.useEffect(() => {
-    if (!user) return;
+    if (!user || isQaDemoMode) return;
 
     const channel = supabase
       .channel('messages-realtime')
@@ -4018,7 +5075,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [hydrating, persistAssignmentUpdate, refreshing, state.assignments, state.users]);
 
   const derived = React.useMemo(() => {
-    const { assignments, alerts, currentUserId, currentStableId, horses } = state;
+    const { assignments, alerts, currentUserId, currentStableId, horses, stableAlerts } = state;
     const currentUser = state.users[currentUserId];
     const membership = state.users[currentUserId]?.membership?.find((m) => m.stableId === currentStableId);
     const currentAccess = membership?.access ?? 'view';
@@ -4050,7 +5107,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return endMinutes !== null ? formatMinutesToTime(endMinutes) : null;
     };
     const cleanAssignmentNote = (note?: string) => stripAssignmentNoteMetadata(note);
-    const stableAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
+    const stableEventAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
+    const activeImportantAlerts = stableAlerts.filter(
+      (alert) =>
+        alert.stableId === currentStableId &&
+        !alert.resolvedAt &&
+        alert.severity !== 'info',
+    );
     const completed = activeAssignments.filter((assignment) => assignment.status === 'completed').length;
     const open = activeAssignments.filter((assignment) => assignment.status === 'open').length;
     const isFirstTimeOnboarding =
@@ -4081,7 +5144,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       total: activeAssignments.length,
       completed,
       open,
-      alerts: stableAlerts.length,
+      alerts: activeImportantAlerts.length || stableEventAlerts.length,
       openSlotLabels: formatSlotList(activeAssignments, 'open'),
       nextUpdateLabel: formatNextUpdate(activeAssignments),
     };
@@ -4681,6 +5744,74 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistAlertInsert],
   );
 
+  const ensureStableAlertAccess = React.useCallback(
+    (stableId: string) =>
+      ensurePermission(
+        stableId,
+        (permissions) =>
+          permissions.canManageAssignments ||
+          permissions.canManageDayEvents ||
+          permissions.canManageOnboarding,
+      ),
+    [ensurePermission],
+  );
+
+  const createStableAlert = React.useCallback(
+    (input: CreateStableAlertInput): ActionResult<StableAlert> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensureStableAlertAccess(stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const title = input.title.trim();
+      if (!title) {
+        return { success: false, reason: 'Skriv vad som är viktigt.' };
+      }
+      const alert: StableAlert = {
+        id: generateId(),
+        stableId,
+        title,
+        body: input.body?.trim() || undefined,
+        severity: input.severity ?? 'important',
+        horseId: input.horseId,
+        paddockId: input.paddockId,
+        assignmentId: input.assignmentId,
+        createdByUserId: current.currentUserId,
+        createdAt: new Date().toISOString(),
+      };
+      dispatch({ type: 'STABLE_ALERT_UPSERT', payload: alert });
+      void persistStableAlertUpsert(alert);
+      return { success: true, data: alert };
+    },
+    [ensureStableAlertAccess, persistStableAlertUpsert],
+  );
+
+  const resolveStableAlert = React.useCallback(
+    (alertId: string): ActionResult<StableAlert> => {
+      const current = stateRef.current;
+      const existing = current.stableAlerts.find((alert) => alert.id === alertId);
+      if (!existing) {
+        return { success: false, reason: 'Notisen kunde inte hittas.' };
+      }
+      const accessCheck = ensureStableAlertAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (existing.resolvedAt) {
+        return { success: false, reason: 'Notisen är redan löst.' };
+      }
+      const next: StableAlert = {
+        ...existing,
+        resolvedAt: new Date().toISOString(),
+      };
+      dispatch({ type: 'STABLE_ALERT_UPSERT', payload: next });
+      void persistStableAlertUpsert(next);
+      return { success: true, data: next };
+    },
+    [ensureStableAlertAccess, persistStableAlertUpsert],
+  );
+
   const toggleDefaultPass = React.useCallback(
     (weekday: WeekdayIndex, slot: AssignmentSlot): ActionResult<UserProfile> => {
       const current = stateRef.current;
@@ -4947,6 +6078,140 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistHorseDayStatusUpsert],
   );
 
+  const upsertFeedPlan = React.useCallback(
+    (input: UpsertFeedPlanInput): ActionResult<FeedPlanItem> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const label = input.label.trim();
+      if (!label) {
+        return { success: false, reason: 'Foderplanen måste ha en titel.' };
+      }
+      const horseId = input.horseId ?? undefined;
+      const horse = horseId ? current.horses.find((entry) => entry.id === horseId) : undefined;
+      if (horseId && (!horse || horse.stableId !== stableId)) {
+        return { success: false, reason: 'Hästen kunde inte hittas.' };
+      }
+      const isHorseOwner =
+        Boolean(horse) && horse?.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(stableId, (permissions) => {
+        if (input.isStableDefault) {
+          return permissions.canManageHorses || permissions.canManageOnboarding;
+        }
+        if (isHorseOwner) {
+          return true;
+        }
+        return permissions.canManageHorses || permissions.canManageOnboarding;
+      });
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const existing = input.id
+        ? current.feedPlans.find((plan) => plan.id === input.id)
+        : undefined;
+      const id = existing?.id ?? input.id ?? generateId();
+      const plan: FeedPlanItem = {
+        id,
+        stableId,
+        horseId: input.isStableDefault ? undefined : horseId ?? existing?.horseId,
+        slot: input.slot,
+        label,
+        amount: input.amount?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        isStableDefault: input.isStableDefault,
+        active: input.active ?? existing?.active ?? true,
+      };
+
+      dispatch({ type: 'FEED_PLAN_UPSERT', payload: plan });
+      void persistFeedPlanUpsert(plan);
+      return { success: true, data: plan };
+    },
+    [ensurePermission, persistFeedPlanUpsert],
+  );
+
+  const deleteFeedPlan = React.useCallback(
+    (feedPlanId: string): ActionResult => {
+      const current = stateRef.current;
+      const existing = current.feedPlans.find((plan) => plan.id === feedPlanId);
+      if (!existing) {
+        return { success: false, reason: 'Foderplanen kunde inte hittas.' };
+      }
+      const horse = existing.horseId
+        ? current.horses.find((entry) => entry.id === existing.horseId)
+        : undefined;
+      const isHorseOwner = Boolean(horse) && horse?.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(existing.stableId, (permissions) => {
+        if (existing.isStableDefault) {
+          return permissions.canManageHorses || permissions.canManageOnboarding;
+        }
+        if (isHorseOwner) {
+          return true;
+        }
+        return permissions.canManageHorses || permissions.canManageOnboarding;
+      });
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+
+      dispatch({ type: 'FEED_PLAN_DELETE', payload: { id: feedPlanId } });
+      void persistFeedPlanDelete(feedPlanId);
+      return { success: true };
+    },
+    [ensurePermission, persistFeedPlanDelete],
+  );
+
+  const upsertFeedCheck = React.useCallback(
+    (input: UpsertFeedCheckInput): ActionResult<FeedCheck> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const horse = current.horses.find((entry) => entry.id === input.horseId);
+      if (!horse || horse.stableId !== stableId) {
+        return { success: false, reason: 'Hästen kunde inte hittas.' };
+      }
+      const isHorseOwner = horse.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(
+        stableId,
+        (permissions) => permissions.canUpdateHorseStatus || isHorseOwner,
+      );
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (!input.date) {
+        return { success: false, reason: 'Datum saknas.' };
+      }
+      const existing = current.feedChecks.find(
+        (check) =>
+          check.horseId === input.horseId &&
+          check.date === input.date &&
+          check.slot === input.slot,
+      );
+      const id = existing?.id ?? generateId();
+      const checked = input.checked ?? Boolean(existing?.checkedAt);
+      const trimmedNote = input.deviationNote?.trim();
+      const deviationNote =
+        input.deviationNote === undefined
+          ? existing?.deviationNote
+          : trimmedNote || undefined;
+      const checkedAt = checked
+        ? existing?.checkedAt ?? new Date().toISOString()
+        : undefined;
+      const next: FeedCheck = {
+        id,
+        stableId,
+        horseId: input.horseId,
+        date: input.date,
+        slot: input.slot,
+        checkedByUserId: checked ? existing?.checkedByUserId ?? current.currentUserId : undefined,
+        checkedAt,
+        deviationNote,
+      };
+
+      dispatch({ type: 'FEED_CHECK_UPSERT', payload: next });
+      void persistFeedCheckUpsert(next);
+      return { success: true, data: next };
+    },
+    [ensurePermission, persistFeedCheckUpsert],
+  );
+
   const addDayEvent = React.useCallback(
     (input: CreateDayEventInput): ActionResult<DayEvent> => {
       const current = stateRef.current;
@@ -5211,6 +6476,311 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistRideLogDelete],
   );
 
+  const ensurePlannedRideAccess = React.useCallback(
+    (stableId: string, horseId: string) => {
+      const horse = stateRef.current.horses.find((entry) => entry.id === horseId);
+      const isHorseOwner = Boolean(horse) && horse?.ownerUserId === stateRef.current.currentUserId;
+      return ensurePermission(
+        stableId,
+        (permissions) => permissions.canManageRideLogs || isHorseOwner,
+      );
+    },
+    [ensurePermission],
+  );
+
+  const createPlannedRide = React.useCallback(
+    (input: CreatePlannedRideInput): ActionResult<PlannedRide> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      if (!input.horseId) {
+        return { success: false, reason: 'Välj en häst.' };
+      }
+      if (!input.date) {
+        return { success: false, reason: 'Datum saknas.' };
+      }
+      const horse = current.horses.find((item) => item.id === input.horseId);
+      if (!horse || horse.stableId !== stableId) {
+        return { success: false, reason: 'Hästen finns inte i valt stall.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(stableId, input.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+
+      const ride: PlannedRide = {
+        id: generateId(),
+        stableId,
+        horseId: input.horseId,
+        riderUserId: input.riderUserId ?? current.currentUserId,
+        date: input.date,
+        time: input.time?.trim() || undefined,
+        rideTypeId: input.rideTypeId?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        status: 'planned',
+        createdAt: new Date().toISOString(),
+      };
+      dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: ride });
+      void persistPlannedRideUpsert(ride);
+      return { success: true, data: ride };
+    },
+    [ensurePlannedRideAccess, persistPlannedRideUpsert],
+  );
+
+  const updatePlannedRide = React.useCallback(
+    (input: UpdatePlannedRideInput): ActionResult<PlannedRide> => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(existing.stableId, existing.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const next: PlannedRide = { ...existing, ...input.updates };
+      dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: next });
+      void persistPlannedRideUpsert(next);
+      return { success: true, data: next };
+    },
+    [ensurePlannedRideAccess, persistPlannedRideUpsert],
+  );
+
+  const deletePlannedRide = React.useCallback(
+    (plannedRideId: string): ActionResult => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === plannedRideId);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(existing.stableId, existing.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      dispatch({ type: 'PLANNED_RIDE_DELETE', payload: { id: plannedRideId } });
+      void persistPlannedRideDelete(plannedRideId);
+      return { success: true };
+    },
+    [ensurePlannedRideAccess, persistPlannedRideDelete],
+  );
+
+  const completePlannedRide = React.useCallback(
+    (input: CompletePlannedRideInput): ActionResult<{ plannedRide: PlannedRide; rideLog: RideLogEntry }> => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      if (existing.status === 'done') {
+        return { success: false, reason: 'Passet är redan markerat som klart.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(existing.stableId, existing.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const stable = current.stables.find((item) => item.id === existing.stableId);
+      if (!stable) {
+        return { success: false, reason: 'Stallet kunde inte hittas.' };
+      }
+      // Falla tillbaka till ride type från planet om det finns, annars kräv att stallet har en
+      const rideTypeId = existing.rideTypeId ?? stable.rideTypes?.[0]?.id;
+      if (!rideTypeId) {
+        return { success: false, reason: 'Stallet saknar ridpass-typer. Lägg till en först.' };
+      }
+
+      const rideLog: RideLogEntry = {
+        id: generateId(),
+        stableId: existing.stableId,
+        horseId: existing.horseId,
+        date: existing.date,
+        rideTypeId,
+        length: input.length?.trim() || undefined,
+        note: input.note?.trim() || existing.note,
+        createdByUserId: current.currentUserId,
+      };
+      const updatedRide: PlannedRide = {
+        ...existing,
+        status: 'done',
+        completedRideLogId: rideLog.id,
+      };
+
+      dispatch({ type: 'RIDE_LOG_ADD', payload: rideLog });
+      dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: updatedRide });
+      void persistRideLogInsert(rideLog);
+      void persistPlannedRideUpsert(updatedRide);
+      return { success: true, data: { plannedRide: updatedRide, rideLog } };
+    },
+    [ensurePlannedRideAccess, persistRideLogInsert, persistPlannedRideUpsert],
+  );
+
+  const upsertExternalContact = React.useCallback(
+    (input: UpsertExternalContactInput): ActionResult<ExternalContact> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageOnboarding || permissions.canManageMembers);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const name = input.name.trim();
+      if (!name) {
+        return { success: false, reason: 'Ange ett namn för kontakten.' };
+      }
+      const existing = input.id
+        ? current.externalContacts.find((entry) => entry.id === input.id)
+        : undefined;
+      const id = existing?.id ?? input.id ?? generateId();
+      const contact: ExternalContact = {
+        id,
+        stableId,
+        name,
+        type: input.type,
+        phone: input.phone?.trim() || undefined,
+        email: input.email?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+      };
+      dispatch({ type: 'EXTERNAL_CONTACT_UPSERT', payload: contact });
+      void persistExternalContactUpsert(contact);
+      return { success: true, data: contact };
+    },
+    [ensurePermission, persistExternalContactUpsert],
+  );
+
+  const deleteExternalContact = React.useCallback(
+    (contactId: string): ActionResult => {
+      const current = stateRef.current;
+      const existing = current.externalContacts.find((entry) => entry.id === contactId);
+      if (!existing) {
+        return { success: false, reason: 'Kontakten kunde inte hittas.' };
+      }
+      const accessCheck = ensurePermission(existing.stableId, (permissions) => permissions.canManageOnboarding || permissions.canManageMembers);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      dispatch({ type: 'EXTERNAL_CONTACT_DELETE', payload: { id: contactId } });
+      void persistExternalContactDelete(contactId);
+      return { success: true };
+    },
+    [ensurePermission, persistExternalContactDelete],
+  );
+
+  const ensureCareEventAccess = React.useCallback(
+    (stableId: string) =>
+      ensurePermission(
+        stableId,
+        (permissions) => permissions.canManageDayEvents || permissions.canManageOnboarding,
+      ),
+    [ensurePermission],
+  );
+
+  const createCareEvent = React.useCallback(
+    (input: CreateCareEventInput): ActionResult<CareEvent> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensureCareEventAccess(stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const title = input.title.trim();
+      if (!title) {
+        return { success: false, reason: 'Vårdhändelsen behöver en titel.' };
+      }
+      if (!input.date) {
+        return { success: false, reason: 'Datum saknas.' };
+      }
+      if (!input.horseIds.length) {
+        return { success: false, reason: 'Välj minst en häst.' };
+      }
+      const validHorseIds = input.horseIds.filter((horseId) =>
+        current.horses.some((horse) => horse.id === horseId && horse.stableId === stableId),
+      );
+      if (!validHorseIds.length) {
+        return { success: false, reason: 'Inga giltiga hästar valda.' };
+      }
+      const event: CareEvent = {
+        id: generateId(),
+        stableId,
+        horseIds: validHorseIds,
+        type: input.type,
+        title,
+        date: input.date,
+        time: input.time?.trim() || undefined,
+        contactId: input.contactId,
+        responsibleUserId: input.responsibleUserId,
+        status: 'planned',
+        note: input.note?.trim() || undefined,
+        createdAt: new Date().toISOString(),
+      };
+      dispatch({ type: 'CARE_EVENT_UPSERT', payload: event });
+      void persistCareEventUpsert(event);
+      return { success: true, data: event };
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
+  const updateCareEvent = React.useCallback(
+    (input: UpdateCareEventInput): ActionResult<CareEvent> => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const next: CareEvent = { ...existing, ...input.updates };
+      dispatch({ type: 'CARE_EVENT_UPSERT', payload: next });
+      void persistCareEventUpsert(next);
+      return { success: true, data: next };
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
+  const deleteCareEvent = React.useCallback(
+    (careEventId: string): ActionResult => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === careEventId);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      dispatch({ type: 'CARE_EVENT_DELETE', payload: { id: careEventId } });
+      void persistCareEventDelete(careEventId);
+      return { success: true };
+    },
+    [ensureCareEventAccess, persistCareEventDelete],
+  );
+
+  const completeCareEvent = React.useCallback(
+    (input: CompleteCareEventInput): ActionResult<CareEvent> => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (existing.status === 'done') {
+        return { success: false, reason: 'Vårdhändelsen är redan klar.' };
+      }
+      const next: CareEvent = {
+        ...existing,
+        status: 'done',
+        completedAt: new Date().toISOString(),
+        note: input.note?.trim() || existing.note,
+      };
+      dispatch({ type: 'CARE_EVENT_UPSERT', payload: next });
+      void persistCareEventUpsert(next);
+      return { success: true, data: next };
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
   const addPost = React.useCallback(
     (input: CreatePostInput): ActionResult<Post> => {
       const current = stateRef.current;
@@ -5239,6 +6809,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         timeAgo: 'Nu',
         createdAt: new Date().toISOString(),
         content,
+        image: isQaDemoMode ? input.image : undefined,
+        imageSignedUrl: isQaDemoMode ? input.image : undefined,
         imagePath: imagePath || undefined,
         likes: 0,
         comments: 0,
@@ -6165,10 +7737,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updateAssignment,
         deleteAssignment,
         addEvent,
+        createStableAlert,
+        resolveStableAlert,
         toggleDefaultPass,
         upsertPaddock,
         deletePaddock,
         updateHorseDayStatus,
+        upsertFeedPlan,
+        deleteFeedPlan,
+        upsertFeedCheck,
         addDayEvent,
         removeDayEvent,
         addArenaBooking,
@@ -6178,6 +7755,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         removeArenaStatus,
         addRideLog,
         removeRideLog,
+        createPlannedRide,
+        updatePlannedRide,
+        deletePlannedRide,
+        completePlannedRide,
+        upsertExternalContact,
+        deleteExternalContact,
+        createCareEvent,
+        updateCareEvent,
+        deleteCareEvent,
+        completeCareEvent,
         addPost,
         togglePostLike,
         addPostComment,
@@ -6225,10 +7812,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       updateAssignment,
       deleteAssignment,
       addEvent,
+      createStableAlert,
+      resolveStableAlert,
       toggleDefaultPass,
       upsertPaddock,
       deletePaddock,
       updateHorseDayStatus,
+      upsertFeedPlan,
+      deleteFeedPlan,
+      upsertFeedCheck,
       addDayEvent,
       removeDayEvent,
       addArenaBooking,
@@ -6238,6 +7830,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       removeArenaStatus,
       addRideLog,
       removeRideLog,
+      createPlannedRide,
+      updatePlannedRide,
+      deletePlannedRide,
+      completePlannedRide,
+      upsertExternalContact,
+      deleteExternalContact,
+      createCareEvent,
+      updateCareEvent,
+      deleteCareEvent,
+      completeCareEvent,
       addPost,
       togglePostLike,
       addPostComment,

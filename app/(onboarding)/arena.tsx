@@ -7,6 +7,7 @@ import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { isQaDemoMode } from '@/lib/qaDemo';
 import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
@@ -138,7 +139,6 @@ export default function OnboardingResources() {
 
     setSaving(true);
     try {
-      const userId = state.currentUserId;
       if (useFarmResources && activeFarmId) {
         const accessStableId =
           farmStables.find((stable) => manageableStableIds.has(stable.id))?.id ||
@@ -156,7 +156,9 @@ export default function OnboardingResources() {
           has_indoor_arena: draft.hasArena,
           arena_note: activeFarm?.arenaNote ?? null,
         };
-        const farmResult = await supabase.from('farms').upsert(farmPayload);
+        const farmResult = isQaDemoMode
+          ? { error: null }
+          : await supabase.from('farms').upsert(farmPayload);
         if (farmResult.error) {
           toast.showToast(`Kunde inte spara gård. ${farmResult.error.message}`, 'error');
           return false;
@@ -197,7 +199,9 @@ export default function OnboardingResources() {
             },
           };
           const stablePayload = { settings: nextSettings };
-          const stableResult = await supabase.from('stables').update(stablePayload).eq('id', stable.id);
+          const stableResult = isQaDemoMode
+            ? { error: null }
+            : await supabase.from('stables').update(stablePayload).eq('id', stable.id);
           if (stableResult.error) {
             toast.showToast(`Kunde inte spara resurser för ${stable.name}. ${stableResult.error.message}`, 'error');
             return false;
@@ -226,7 +230,9 @@ export default function OnboardingResources() {
           },
         };
         const stablePayload = { settings: nextSettings };
-        const stableResult = await supabase.from('stables').update(stablePayload).eq('id', activeStableId);
+        const stableResult = isQaDemoMode
+          ? { error: null }
+          : await supabase.from('stables').update(stablePayload).eq('id', activeStableId);
         if (stableResult.error) {
           toast.showToast(`Kunde inte spara resurser. ${stableResult.error.message}`, 'error');
           return false;
@@ -260,7 +266,6 @@ export default function OnboardingResources() {
     manageableStableIds,
     saving,
     stables,
-    state.currentUserId,
     toast,
     useFarmResources,
   ]);

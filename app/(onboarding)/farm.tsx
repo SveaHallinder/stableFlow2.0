@@ -8,6 +8,7 @@ import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
+import { isQaDemoMode } from '@/lib/qaDemo';
 import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
@@ -91,7 +92,9 @@ export default function OnboardingFarm() {
         arena_note: null,
         created_by: userId,
       };
-      const farmInsert = await supabase.from('farms').insert(farmPayload);
+      const farmInsert = isQaDemoMode
+        ? { error: null }
+        : await supabase.from('farms').insert(farmPayload);
       if (farmInsert.error) {
         toast.showToast(`Kunde inte skapa gård. ${farmInsert.error.message}`, 'error');
         return;
@@ -125,7 +128,9 @@ export default function OnboardingFarm() {
           ride_types: [],
           settings: null,
         };
-        const stableInsert = await supabase.from('stables').insert(stablePayload);
+        const stableInsert = isQaDemoMode
+          ? { error: null }
+          : await supabase.from('stables').insert(stablePayload);
         if (stableInsert.error) {
           toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
           return;
@@ -138,7 +143,9 @@ export default function OnboardingFarm() {
           access: 'owner',
           rider_role: 'owner',
         };
-        const memberInsert = await supabase.from('stable_members').insert(memberPayload);
+        const memberInsert = isQaDemoMode
+          ? { error: null }
+          : await supabase.from('stable_members').insert(memberPayload);
         if (memberInsert.error) {
           toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
           return;
@@ -150,7 +157,9 @@ export default function OnboardingFarm() {
           is_group: true,
           created_by_user_id: userId,
         };
-        const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
+        const conversationInsert = isQaDemoMode
+          ? { error: null, code: undefined }
+          : await supabase.from('conversations').insert(conversationPayload);
         if (conversationInsert.error && conversationInsert.error.code !== '23505') {
           toast.showToast('Kunde inte skapa stallchatten.', 'error');
         }

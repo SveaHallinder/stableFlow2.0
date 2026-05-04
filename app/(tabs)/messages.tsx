@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   Platform,
   RefreshControl,
   ScrollView,
@@ -287,10 +286,10 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   contentDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
+    paddingHorizontal: 40,
   },
   desktopLayout: {
     flexDirection: 'row',
@@ -298,9 +297,9 @@ const styles = StyleSheet.create({
     gap: 24,
   },
   desktopPanel: {
-    width: 300,
+    width: 240,
     flexShrink: 0,
-    gap: 16,
+    gap: 12,
   },
   desktopList: {
     flex: 1,
@@ -310,11 +309,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   pageHeaderDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
-    marginBottom: 12,
+    paddingHorizontal: 40,
+    marginBottom: 8,
   },
   list: {
     gap: 14,
@@ -338,8 +337,9 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   itemDesktop: {
-    paddingVertical: 20,
-    paddingHorizontal: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: radii.lg,
   },
   panelCard: {
     paddingHorizontal: 16,

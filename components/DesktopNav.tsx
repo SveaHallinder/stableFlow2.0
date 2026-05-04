@@ -1,7 +1,8 @@
 import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { usePathname, useRouter, type Href } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
@@ -11,15 +12,42 @@ import { roleLabels } from '@/lib/roleLabels';
 
 const palette = theme.colors;
 
-const navItems = [
-  { label: 'Överblick', route: '/' },
-  { label: 'Schema', route: '/calendar' },
-  { label: 'Meddelanden', route: '/messages' },
-  { label: 'Inlägg', route: '/feed' },
-  { label: 'Admin', route: '/admin', adminOnly: true },
-  { label: 'Stall', route: '/stables', adminOnly: true },
-  { label: 'Medlemmar', route: '/members' },
-  { label: 'Profil', route: '/profile' },
+type NavItem = {
+  label: string;
+  route: string;
+  icon: keyof typeof Feather.glyphMap;
+  adminOnly?: boolean;
+};
+
+type NavGroup = {
+  title?: string;
+  items: NavItem[];
+};
+
+const navGroups: NavGroup[] = [
+  {
+    items: [
+      { label: 'Idag', route: '/', icon: 'layout' },
+      { label: 'Hästar', route: '/stable-horses', icon: 'activity' },
+      { label: 'Schema', route: '/calendar', icon: 'calendar' },
+      { label: 'Feed', route: '/feed', icon: 'edit-3' },
+      { label: 'Chat', route: '/messages', icon: 'message-circle' },
+    ],
+  },
+  {
+    title: 'Hantering',
+    items: [
+      { label: 'Admin', route: '/admin', icon: 'settings', adminOnly: true },
+      { label: 'Stall', route: '/stables', icon: 'home', adminOnly: true },
+      { label: 'Medlemmar', route: '/members', icon: 'users' },
+    ],
+  },
+  {
+    title: 'Konto',
+    items: [
+      { label: 'Profil', route: '/profile', icon: 'user' },
+    ],
+  },
 ];
 
 type DesktopNavProps = {
@@ -55,107 +83,140 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const metaLabel = accessLabel ? `${roleLabel} · ${accessLabel}` : roleLabel;
   const showSidebarHeader = isSidebar && showHeader;
 
+  // Flatten for inline variant
+  const allItems = navGroups.flatMap((group) => group.items);
+
+  if (!isSidebar) {
+    return (
+      <View style={[styles.container, style]}>
+        {allItems
+          .filter((item) => !item.adminOnly || canManageOnboarding)
+          .map((item) => {
+            const isActive = item.route === '/' ? pathname === '/' : pathname.startsWith(item.route);
+            return (
+              <TouchableOpacity
+                key={item.route}
+                onPress={() => router.push(item.route as Href)}
+                activeOpacity={0.85}
+                style={[styles.item, isActive && styles.itemActive]}
+              >
+                <Text style={[styles.label, isActive && styles.labelActive]}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={[
-        styles.container,
-        isSidebar && styles.containerSidebar,
-        style,
-      ]}
-    >
+    <View style={[styles.containerSidebar, style]}>
       {showSidebarHeader ? (
         <View style={styles.sidebarHeader}>
           <View style={styles.brandRow}>
-            <Logo width={28} height={28} />
-            <View>
+            <Logo width={24} height={24} />
+            <View style={styles.brandTextCol}>
               <Text style={styles.brandTitle}>StableFlow</Text>
-              <Text style={styles.brandMeta}>
-                {currentFarm?.name ? `Aktiv gård: ${currentFarm.name}` : 'Ingen gård vald'}
-              </Text>
+              {currentFarm?.name ? (
+                <Text style={styles.brandMeta} numberOfLines={1}>{currentFarm.name}</Text>
+              ) : null}
             </View>
           </View>
-          <View style={styles.stableSwitcher}>
-            <Text style={styles.stableLabel}>Stall</Text>
-            <View style={styles.stableList}>
-              {stablesToShow.length ? (
-                stablesToShow.map((stable) => {
+
+          {stablesToShow.length > 0 ? (
+            <View style={styles.stableSwitcher}>
+              <Text style={styles.sectionLabel}>STALL</Text>
+              <View style={styles.stableChips}>
+                {stablesToShow.map((stable) => {
                   const active = stable.id === currentStableId;
                   return (
                     <TouchableOpacity
                       key={stable.id}
-                      style={[styles.stableItem, active && styles.stableItemActive]}
+                      style={[styles.stableChip, active && styles.stableChipActive]}
                       onPress={() => actions.setCurrentStable(stable.id)}
                       activeOpacity={0.85}
                     >
-                      <Text style={[styles.stableName, active && styles.stableNameActive]}>
+                      <Text style={[styles.stableChipText, active && styles.stableChipTextActive]} numberOfLines={1}>
                         {stable.name}
                       </Text>
-                      {stable.location ? (
-                        <Text
-                          style={[styles.stableLocation, active && styles.stableLocationActive]}
-                          numberOfLines={1}
-                        >
-                          {stable.location}
-                        </Text>
-                      ) : null}
                     </TouchableOpacity>
                   );
-                })
-              ) : (
-                <Text style={styles.stableEmpty}>Inga stall än</Text>
-              )}
+                })}
+              </View>
             </View>
-          </View>
-          <TouchableOpacity
-            style={styles.profileRow}
-            onPress={() => router.push('/profile')}
-            activeOpacity={0.85}
-          >
-            <Avatar
-              source={currentUser?.avatar}
-              style={styles.profileAvatar}
-              accessibilityLabel={`${currentUser?.name ?? 'Användare'} profilbild`}
-            />
-            <View style={styles.profileText}>
-              <Text style={styles.profileName}>{currentUser?.name ?? 'Okänd användare'}</Text>
-              <Text style={styles.profileMeta}>{metaLabel}</Text>
-            </View>
-          </TouchableOpacity>
+          ) : null}
         </View>
       ) : null}
-      {navItems
-        .filter((item) => !item.adminOnly || canManageOnboarding)
-        .map((item) => {
-        const isActive = item.route === '/' ? pathname === '/' : pathname.startsWith(item.route);
-        return (
-          <TouchableOpacity
-            key={item.route}
-            onPress={() => router.push(item.route as Href)}
-            activeOpacity={0.85}
-            style={[
-              styles.item,
-              isSidebar && styles.itemSidebar,
-              isActive && styles.itemActive,
-              isActive && isSidebar && styles.itemSidebarActive,
-            ]}
-          >
-            <Text
-              style={[
-                styles.label,
-                isSidebar && styles.labelSidebar,
-                isActive && styles.labelActive,
-              ]}
-            >
-              {item.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
+
+      <View style={styles.navBody}>
+        {navGroups.map((group, groupIndex) => {
+          const filteredItems = group.items.filter(
+            (item) => !item.adminOnly || canManageOnboarding,
+          );
+          if (filteredItems.length === 0) return null;
+
+          return (
+            <View key={groupIndex} style={styles.navGroup}>
+              {group.title ? (
+                <Text style={styles.sectionLabel}>{group.title.toUpperCase()}</Text>
+              ) : null}
+              {filteredItems.map((item) => {
+                const isActive = item.route === '/' ? pathname === '/' : pathname.startsWith(item.route);
+                return (
+                  <TouchableOpacity
+                    key={item.route}
+                    onPress={() => router.push(item.route as Href)}
+                    activeOpacity={0.7}
+                    style={[
+                      styles.navItem,
+                      isActive && styles.navItemActive,
+                    ]}
+                  >
+                    <Feather
+                      name={item.icon}
+                      size={16}
+                      color={isActive ? palette.primary : palette.secondaryText}
+                    />
+                    <Text
+                      style={[
+                        styles.navLabel,
+                        isActive && styles.navLabelActive,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          );
+        })}
+      </View>
+
+      {showSidebarHeader ? (
+        <TouchableOpacity
+          style={styles.profileRow}
+          onPress={() => router.push('/profile')}
+          activeOpacity={0.85}
+        >
+          <Avatar
+            source={currentUser?.avatar}
+            style={styles.profileAvatar}
+            accessibilityLabel={`${currentUser?.name ?? 'Användare'} profilbild`}
+          />
+          <View style={styles.profileText}>
+            <Text style={styles.profileName} numberOfLines={1}>{currentUser?.name ?? 'Okänd'}</Text>
+            <Text style={styles.profileMeta} numberOfLines={1}>{metaLabel}</Text>
+          </View>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // Inline variant (horizontal, unchanged)
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -168,119 +229,6 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  containerSidebar: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-    gap: 6,
-    maxWidth: '100%',
-    width: '100%',
-  },
-  sidebarHeader: {
-    gap: 14,
-    paddingBottom: 20,
-    marginBottom: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(27, 30, 47, 0.06)',
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  brandTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: palette.primaryText,
-  },
-  brandMeta: {
-    fontSize: 12,
-    color: palette.secondaryText,
-  },
-  stableSwitcher: {
-    gap: 8,
-  },
-  stableLabel: {
-    fontSize: 12,
-    letterSpacing: 0.6,
-    color: palette.secondaryText,
-    textTransform: 'uppercase',
-  },
-  stableList: {
-    gap: 8,
-  },
-  stableItem: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
-    backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-  },
-  stableItemActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
-  },
-  stableName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.primaryText,
-  },
-  stableNameActive: {
-    color: palette.inverseText,
-  },
-  stableLocation: {
-    fontSize: 11,
-    color: palette.secondaryText,
-  },
-  stableLocationActive: {
-    color: 'rgba(255,255,255,0.8)',
-  },
-  stableEmpty: {
-    fontSize: 12,
-    color: palette.secondaryText,
-  },
-  profileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  profileAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.full,
-  },
-  profileText: {
-    flex: 1,
-    minWidth: 0,
-    gap: 2,
-  },
-  profileName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: palette.primaryText,
-  },
-  profileMeta: {
-    fontSize: 11,
-    color: palette.secondaryText,
-  },
-  profileActionButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    alignSelf: 'flex-start',
-  },
-  profileActionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: palette.primaryText,
-  },
   item: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -289,37 +237,146 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
   },
-  itemSidebar: {
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    width: '100%',
-  },
   itemActive: {
     backgroundColor: palette.primary,
     borderColor: palette.primary,
-  },
-  itemSidebarActive: {
-    shadowColor: palette.primary,
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 2,
-    borderWidth: 0,
   },
   label: {
     fontSize: 13,
     fontWeight: '600',
     color: palette.primaryText,
   },
-  labelSidebar: {
-    fontSize: 15,
-    fontWeight: '500',
-    letterSpacing: -0.1,
-  },
   labelActive: {
     color: palette.inverseText,
+  },
+
+  // Sidebar variant
+  containerSidebar: {
+    flex: 1,
+    justifyContent: 'flex-start',
+  },
+  sidebarHeader: {
+    gap: 16,
+    paddingBottom: 16,
+    marginBottom: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(27, 30, 47, 0.06)',
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  brandTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  brandTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.primaryText,
+    letterSpacing: -0.3,
+  },
+  brandMeta: {
+    fontSize: 11,
+    color: palette.secondaryText,
+    marginTop: 1,
+  },
+  sectionLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: palette.secondaryText,
+    opacity: 0.7,
+    marginBottom: 2,
+  },
+  stableSwitcher: {
+    gap: 6,
+  },
+  stableChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  stableChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  stableChipActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
+  stableChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  stableChipTextActive: {
+    color: palette.inverseText,
+  },
+
+  // Navigation body
+  navBody: {
+    flex: 1,
+    gap: 20,
+    paddingTop: 12,
+  },
+  navGroup: {
+    gap: 2,
+  },
+  navItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  navItemActive: {
+    backgroundColor: 'rgba(45, 108, 246, 0.08)',
+  },
+  navLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: palette.secondaryText,
+    letterSpacing: -0.1,
+  },
+  navLabelActive: {
+    color: palette.primary,
+    fontWeight: '600',
+  },
+
+  // Profile footer
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(27, 30, 47, 0.06)',
+  },
+  profileAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.full,
+  },
+  profileText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  profileName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  profileMeta: {
+    fontSize: 11,
+    color: palette.secondaryText,
   },
 });

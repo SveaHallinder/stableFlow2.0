@@ -55,11 +55,11 @@ export const PostCard = React.memo(function PostCard({
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
   const [imageFailed, setImageFailed] = React.useState(false);
-  const prevImageUrl = React.useRef(data.imageSignedUrl);
-  if (prevImageUrl.current !== data.imageSignedUrl) {
-    prevImageUrl.current = data.imageSignedUrl;
-    if (imageFailed) setImageFailed(false);
-  }
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [data.imageSignedUrl]);
+
   const isLiked = currentUserId ? data.likedByUserIds?.includes(currentUserId) : false;
   const comments = data.commentsData ?? [];
   const visibleComments = comments.slice(-2);

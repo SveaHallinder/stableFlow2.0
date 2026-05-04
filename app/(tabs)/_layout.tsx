@@ -1,6 +1,6 @@
 import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
-import { ActivityIndicator, View, StyleSheet, Platform } from 'react-native';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
@@ -60,12 +60,25 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          tabBarAccessibilityLabel: 'Överblick',
+          tabBarAccessibilityLabel: 'Idag',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <DashFillIcon width={23} height={25} />
             ) : (
               <DashOutlineIcon width={23} height={25} />
+            )
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="stable-horses"
+        options={{
+          tabBarAccessibilityLabel: 'Hästar',
+          tabBarIcon: ({ color, focused }) => (
+            focused ? (
+              <ProfileFillIcon width={22} height={25} />
+            ) : (
+              <ProfileOutlineIcon width={22} height={25} />
             )
           ),
         }}
@@ -86,7 +99,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="feed"
         options={{
-          tabBarAccessibilityLabel: 'Inlägg',
+          tabBarAccessibilityLabel: 'Feed',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <HomeFillIcon width={24} height={24} />
@@ -99,7 +112,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          tabBarAccessibilityLabel: 'Meddelanden',
+          tabBarAccessibilityLabel: 'Chat',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <MessageFillIcon width={25} height={25} />
@@ -112,6 +125,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
+          href: null,
           tabBarAccessibilityLabel: 'Profil',
           tabBarIcon: ({ color, focused }) => (
             focused ? (

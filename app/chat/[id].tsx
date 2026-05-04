@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -30,6 +29,7 @@ const palette = theme.colors;
 export default function ChatScreen() {
   const router = useRouter();
   const { state, actions } = useAppData();
+  const { markConversationRead, sendConversationMessage } = actions;
   const { id: rawId, name } = useLocalSearchParams<{ id?: string; name?: string }>();
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
   const isDesktopWeb = useIsDesktopWeb();
@@ -46,9 +46,9 @@ export default function ChatScreen() {
 
   React.useEffect(() => {
     if (conversationId) {
-      actions.markConversationRead(conversationId);
+      markConversationRead(conversationId);
     }
-  }, [conversationId, actions]);
+  }, [conversationId, markConversationRead]);
 
   // Auto-scroll to bottom when messages change
   React.useEffect(() => {
@@ -63,7 +63,7 @@ export default function ChatScreen() {
     if (!conversationId || !trimmed) {
       return;
     }
-    const result = actions.sendConversationMessage(conversationId, composerText);
+    const result = sendConversationMessage(conversationId, composerText);
     if (result.success) {
       setComposerText('');
     } else if (!result.success) {
