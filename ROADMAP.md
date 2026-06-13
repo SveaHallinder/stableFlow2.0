@@ -40,7 +40,7 @@ sök, och full kontohantering under GDPR. Säljs som prenumeration till stall & 
 Stäng varje server-side auktoriserings-, integritets- och secrets-hål så klienten inte längre är säkerhetsgränsen.
 - Begränsa `stables_update` till owner/can_edit_stable (inte vilken medlem som helst); skydda join_code-rotation.
 - Skriv om `posts_select` så group_ids respekteras; fixa group-filter i `loadMorePosts`.
-- Smalna av `profiles_select` — ta bort telefon/PII från bred exponering, exponera via scopad vy/RPC.
+- [FLAGGAD: risk + roll-nyans] Smalna av `profiles_select` (PII/telefon). → Kräver: strama base-tabell till self-only + repointa LOAD-BEARING co-member-profil-läsningar (namn/avatar) till säker vy/RPC + en admin-only contact-RPC (admins behöver se telefon, vanliga medlemmar inte). Fel gjord försvinner namn/avatarer överallt — kan ej runtime-verifieras autonomt. För Svea med staging.
 - Fixa `conversation_members_insert` (bara egna/inbjudna konversationer); RPC för deltagarnamn; UPDATE/DELETE-policy på messages för moderering.
 - Kolumn/operation-scoping på `can_claim_assignments` (rider får bara claim/decline).
 - Flytta service-role-nyckeln från plaintext GUC till Supabase Vault/edge secrets.
@@ -66,7 +66,7 @@ Få tillväxt- och multiuser-looparna att fungera end-to-end.
 ### Fas 3 — UGC-säkerhet, kontolivscykel & store-compliance  `[L]`
 Möt App Store / Google Play + EU-legala krav för en UGC + persondata-produkt.
 - Moderering: report/flag inlägg & kommentarer, block/mute, admin removal-kö.
-- Kontohantering: byt e-post, byt lösenord, radera konto (GDPR-radering) + dataexport.
+- [~] Kontohantering: [x] byt lösenord + [x] byt e-post (Säkerhet-card i settings/account, supabase.auth.updateUser, 2026-06-13, codex: inga blockerande problem). KVAR: radera konto (GDPR) — kräver edge function med service-role för auth-user-radering + cascade; dataexport.
 - Rate limiting / abuse-skydd på inlägg, kommentarer, likes, alerts, meddelanden.
 - Wire EAS: riktig projectId, updates.url, eas.json submit-credentials; synka app-version.
 - Cleanup av döda push-tokens (läs Expo-receipts, radera DeviceNotRegistered).

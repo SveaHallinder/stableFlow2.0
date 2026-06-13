@@ -17,10 +17,12 @@ import { Card, HeaderIconButton } from '@/components/Primitives';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ToastProvider';
 import { useAppData } from '@/context/AppDataContext';
+import { supabase } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
+const EMAIL_CONFIRM_REDIRECT = 'stableflow://confirm';
 
 export default function AccountSettingsScreen() {
   const router = useRouter();
@@ -61,6 +63,64 @@ export default function AccountSettingsScreen() {
         toast.showToast('Kunde inte logga ut.', 'error');
       });
   }, [router, signOut, toast]);
+
+  const [security, setSecurity] = React.useState({
+    newPassword: '',
+    confirmPassword: '',
+    newEmail: '',
+  });
+  const [savingPassword, setSavingPassword] = React.useState(false);
+  const [savingEmail, setSavingEmail] = React.useState(false);
+
+  const handleChangePassword = React.useCallback(async () => {
+    if (savingPassword) {
+      return;
+    }
+    if (security.newPassword.length < 8) {
+      toast.showToast('Lösenordet måste vara minst 8 tecken.', 'error');
+      return;
+    }
+    if (security.newPassword !== security.confirmPassword) {
+      toast.showToast('Lösenorden matchar inte.', 'error');
+      return;
+    }
+    setSavingPassword(true);
+    const { error } = await supabase.auth.updateUser({ password: security.newPassword });
+    setSavingPassword(false);
+    if (error) {
+      toast.showToast('Kunde inte byta lösenord. Logga in igen och försök på nytt.', 'error');
+      return;
+    }
+    setSecurity((prev) => ({ ...prev, newPassword: '', confirmPassword: '' }));
+    toast.showToast('Lösenordet är uppdaterat.', 'success');
+  }, [savingPassword, security.newPassword, security.confirmPassword, toast]);
+
+  const handleChangeEmail = React.useCallback(async () => {
+    if (savingEmail) {
+      return;
+    }
+    const nextEmail = security.newEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
+      toast.showToast('Ange en giltig e-postadress.', 'error');
+      return;
+    }
+    if (nextEmail.toLowerCase() === (user?.email ?? '').toLowerCase()) {
+      toast.showToast('Det är redan din e-postadress.', 'error');
+      return;
+    }
+    setSavingEmail(true);
+    const { error } = await supabase.auth.updateUser(
+      { email: nextEmail },
+      { emailRedirectTo: EMAIL_CONFIRM_REDIRECT },
+    );
+    setSavingEmail(false);
+    if (error) {
+      toast.showToast('Kunde inte byta e-post. Försök igen.', 'error');
+      return;
+    }
+    setSecurity((prev) => ({ ...prev, newEmail: '' }));
+    toast.showToast('Bekräftelselänk skickad till den nya adressen.', 'success');
+  }, [savingEmail, security.newEmail, user?.email, toast]);
 
   const handleSave = React.useCallback(() => {
     if (!currentUser) {
@@ -146,7 +206,90 @@ export default function AccountSettingsScreen() {
                 Spara ändringar
               </Text>
             </TouchableOpacity>
-            <Text style={styles.sectionHint}>E-post ändras i inloggningskontot.</Text>
+            <Text style={styles.sectionHint}>E-post och lösenord ändras under Säkerhet nedan.</Text>
+          </Card>
+
+          <Card tone="muted" style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Säkerhet</Text>
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Nytt lösenord</Text>
+              <TextInput
+                placeholder="Minst 8 tecken"
+                placeholderTextColor={palette.mutedText}
+                value={security.newPassword}
+                onChangeText={(text) => setSecurity((prev) => ({ ...prev, newPassword: text }))}
+                style={styles.input}
+                secureTextEntry
+              />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Bekräfta nytt lösenord</Text>
+              <TextInput
+                placeholder="Upprepa lösenord"
+                placeholderTextColor={palette.mutedText}
+                value={security.confirmPassword}
+                onChangeText={(text) => setSecurity((prev) => ({ ...prev, confirmPassword: text }))}
+                style={styles.input}
+                secureTextEntry
+              />
+            </View>
+            <TouchableOpacity
+              style={[
+                styles.saveButton,
+                (savingPassword || !security.newPassword || !security.confirmPassword) &&
+                  styles.saveButtonDisabled,
+              ]}
+              onPress={handleChangePassword}
+              activeOpacity={0.85}
+              disabled={savingPassword || !security.newPassword || !security.confirmPassword}
+              accessibilityRole="button"
+              accessibilityLabel="Byt lösenord"
+            >
+              <Text
+                style={[
+                  styles.saveButtonText,
+                  (savingPassword || !security.newPassword || !security.confirmPassword) &&
+                    styles.saveButtonTextDisabled,
+                ]}
+              >
+                {savingPassword ? 'Byter...' : 'Byt lösenord'}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.field}>
+              <Text style={styles.infoLabel}>Ny e-post</Text>
+              <TextInput
+                placeholder="ny@exempel.se"
+                placeholderTextColor={palette.mutedText}
+                value={security.newEmail}
+                onChangeText={(text) => setSecurity((prev) => ({ ...prev, newEmail: text }))}
+                style={styles.input}
+                autoCapitalize="none"
+                keyboardType="email-address"
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.saveButton, (savingEmail || !security.newEmail) && styles.saveButtonDisabled]}
+              onPress={handleChangeEmail}
+              activeOpacity={0.85}
+              disabled={savingEmail || !security.newEmail}
+              accessibilityRole="button"
+              accessibilityLabel="Byt e-post"
+            >
+              <Text
+                style={[
+                  styles.saveButtonText,
+                  (savingEmail || !security.newEmail) && styles.saveButtonTextDisabled,
+                ]}
+              >
+                {savingEmail ? 'Skickar...' : 'Byt e-post'}
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.sectionHint}>
+              Vid e-postbyte skickas en bekräftelselänk till den nya adressen.
+            </Text>
           </Card>
 
           <Card tone="muted" style={styles.card}>
