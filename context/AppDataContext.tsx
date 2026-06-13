@@ -2976,6 +2976,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     [showToast],
   );
+  // Stable ref so persist callbacks can report errors without listing reportPersistError
+  // in every dependency array. Persist calls run async after commit, so the effect-synced
+  // ref is always current by the time it is invoked.
+  const reportPersistErrorRef = React.useRef(reportPersistError);
+  React.useEffect(() => {
+    reportPersistErrorRef.current = reportPersistError;
+  }, [reportPersistError]);
   const recurringDurationById = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
@@ -3098,7 +3105,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         const { error } = await supabase.from('paddocks').upsert(payload);
         if (error) {
-          console.warn('Kunde inte spara hage', error);
+          reportPersistErrorRef.current('Kunde inte spara hage', error);
           return;
         }
 
@@ -3109,7 +3116,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           });
         }
       } catch (error) {
-        console.warn('Kunde inte spara hage', error);
+        reportPersistErrorRef.current('Kunde inte spara hage', error);
       }
     },
     [user],
@@ -3120,7 +3127,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('paddocks').delete().eq('id', paddockId);
       if (error) {
-        console.warn('Kunde inte ta bort hage', error);
+        reportPersistErrorRef.current('Kunde inte ta bort hage', error);
       }
     },
     [user],
@@ -3160,7 +3167,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         const { error } = await supabase.from('horses').upsert(payload);
         if (error) {
-          console.warn('Kunde inte spara häst', error);
+          reportPersistErrorRef.current('Kunde inte spara häst', error);
           return;
         }
 
@@ -3175,7 +3182,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           });
         }
       } catch (error) {
-        console.warn('Kunde inte spara häst', error);
+        reportPersistErrorRef.current('Kunde inte spara häst', error);
       }
     },
     [user],
@@ -3186,7 +3193,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('horses').delete().eq('id', horseId);
       if (error) {
-        console.warn('Kunde inte ta bort häst', error);
+        reportPersistErrorRef.current('Kunde inte ta bort häst', error);
       }
     },
     [user],
@@ -3319,7 +3326,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: contact.note ?? null,
         updated_at: new Date().toISOString(),
       });
-      if (error) console.warn('Kunde inte spara kontakt', error);
+      if (error) reportPersistErrorRef.current('Kunde inte spara kontakt', error);
     },
     [user],
   );
@@ -3328,7 +3335,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     async (contactId: string) => {
       if (!user) return;
       const { error } = await supabase.from('external_contacts').delete().eq('id', contactId);
-      if (error) console.warn('Kunde inte ta bort kontakt', error);
+      if (error) reportPersistErrorRef.current('Kunde inte ta bort kontakt', error);
     },
     [user],
   );
@@ -3376,7 +3383,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         tone: event.tone,
       });
       if (error) {
-        console.warn('Kunde inte spara dagsnotis', error);
+        reportPersistErrorRef.current('Kunde inte spara dagsnotis', error);
       }
     },
     [user],
@@ -3387,7 +3394,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('day_events').delete().eq('id', eventId);
       if (error) {
-        console.warn('Kunde inte ta bort dagsnotis', error);
+        reportPersistErrorRef.current('Kunde inte ta bort dagsnotis', error);
       }
     },
     [user],
@@ -3407,7 +3414,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         booked_by_user_id: booking.bookedByUserId,
       });
       if (error) {
-        console.warn('Kunde inte spara ridhusbokning', error);
+        reportPersistErrorRef.current('Kunde inte spara ridhusbokning', error);
       }
     },
     [user],
@@ -3437,7 +3444,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const { error } = await supabase.from('arena_bookings').update(payload).eq('id', bookingId);
       if (error) {
-        console.warn('Kunde inte uppdatera ridhusbokning', error);
+        reportPersistErrorRef.current('Kunde inte uppdatera ridhusbokning', error);
       }
     },
     [user],
@@ -3448,7 +3455,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('arena_bookings').delete().eq('id', bookingId);
       if (error) {
-        console.warn('Kunde inte ta bort ridhusbokning', error);
+        reportPersistErrorRef.current('Kunde inte ta bort ridhusbokning', error);
       }
     },
     [user],
@@ -3465,7 +3472,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         created_by_user_id: status.createdByUserId,
       });
       if (error) {
-        console.warn('Kunde inte spara ridhusstatus', error);
+        reportPersistErrorRef.current('Kunde inte spara ridhusstatus', error);
       }
     },
     [user],
@@ -3476,7 +3483,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('arena_statuses').delete().eq('id', statusId);
       if (error) {
-        console.warn('Kunde inte ta bort ridhusstatus', error);
+        reportPersistErrorRef.current('Kunde inte ta bort ridhusstatus', error);
       }
     },
     [user],
@@ -3523,7 +3530,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: alert.type,
       });
       if (error) {
-        console.warn('Kunde inte spara notis', error);
+        reportPersistErrorRef.current('Kunde inte spara notis', error);
       }
     },
     [user],
@@ -3546,7 +3553,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         resolved_at: alert.resolvedAt ?? null,
       });
       if (error) {
-        console.warn('Kunde inte spara viktig stallnotis', error);
+        reportPersistErrorRef.current('Kunde inte spara viktig stallnotis', error);
       }
     },
     [user],
@@ -3564,7 +3571,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           slot: input.slot,
         });
         if (error && error.code !== '23505') {
-          console.warn('Kunde inte spara standardpass', error);
+          reportPersistErrorRef.current('Kunde inte spara standardpass', error);
         }
         return;
       }
@@ -3577,7 +3584,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .eq('weekday', input.weekday)
         .eq('slot', input.slot);
       if (error) {
-        console.warn('Kunde inte ta bort standardpass', error);
+        reportPersistErrorRef.current('Kunde inte ta bort standardpass', error);
       }
     },
     [user],
@@ -3597,7 +3604,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         created_at: group.createdAt,
       });
       if (error) {
-        console.warn('Kunde inte spara grupp', error);
+        reportPersistErrorRef.current('Kunde inte spara grupp', error);
       }
     },
     [user],
@@ -3615,7 +3622,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const { error } = await supabase.from('groups').update(payload).eq('id', groupId);
       if (error) {
-        console.warn('Kunde inte uppdatera grupp', error);
+        reportPersistErrorRef.current('Kunde inte uppdatera grupp', error);
       }
     },
     [user],
@@ -3626,7 +3633,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('groups').delete().eq('id', groupId);
       if (error) {
-        console.warn('Kunde inte ta bort grupp', error);
+        reportPersistErrorRef.current('Kunde inte ta bort grupp', error);
       }
     },
     [user],
@@ -3680,7 +3687,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           image_url: imageReference,
         });
         if (error) {
-          console.warn('Kunde inte spara inlägg', error);
+          reportPersistErrorRef.current('Kunde inte spara inlägg', error);
           return;
         }
 
@@ -3698,7 +3705,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           });
         }
       } catch (error) {
-        console.warn('Kunde inte spara inlägg', error);
+        reportPersistErrorRef.current('Kunde inte spara inlägg', error);
       }
     },
     [user],
@@ -3710,7 +3717,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (enabled) {
         const { error } = await supabase.from('likes').insert({ user_id: userId, post_id: postId });
         if (error && error.code !== '23505') {
-          console.warn('Kunde inte gilla inlägg', error);
+          reportPersistErrorRef.current('Kunde inte gilla inlägg', error);
         }
         return;
       }
@@ -3721,7 +3728,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .eq('user_id', userId)
         .eq('post_id', postId);
       if (error) {
-        console.warn('Kunde inte ta bort gillning', error);
+        reportPersistErrorRef.current('Kunde inte ta bort gillning', error);
       }
     },
     [user],
@@ -3736,7 +3743,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         content: text,
       });
       if (error) {
-        console.warn('Kunde inte spara kommentar', error);
+        reportPersistErrorRef.current('Kunde inte spara kommentar', error);
       }
     },
     [user],
@@ -3747,7 +3754,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return { error: null };
       const { error } = await supabase.from('posts').delete().eq('id', postId);
       if (error) {
-        console.warn('Kunde inte ta bort inlägg', error);
+        reportPersistErrorRef.current('Kunde inte ta bort inlägg', error);
       }
       return { error };
     },
@@ -3766,7 +3773,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
       const result = await supabase.from('farms').upsert(payload);
       if (result.error) {
-        console.warn('Kunde inte spara gård', result.error);
+        reportPersistErrorRef.current('Kunde inte spara gård', result.error);
       }
     },
     [user],
@@ -3777,7 +3784,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const result = await supabase.from('farms').delete().eq('id', farmId);
       if (result.error) {
-        console.warn('Kunde inte ta bort gård', result.error);
+        reportPersistErrorRef.current('Kunde inte ta bort gård', result.error);
       }
     },
     [user],
@@ -3800,7 +3807,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const result = await supabase.from('stables').upsert(payload);
       if (result.error) {
-        console.warn('Kunde inte spara stall', result.error);
+        reportPersistErrorRef.current('Kunde inte spara stall', result.error);
         return;
       }
 
@@ -3859,7 +3866,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const result = await supabase.from('stables').update(payload).eq('id', stableId);
       if (result.error) {
-        console.warn('Kunde inte uppdatera stall', result.error);
+        reportPersistErrorRef.current('Kunde inte uppdatera stall', result.error);
         return;
       }
       if (hasOwnProperty(updates, 'name')) {
@@ -3881,7 +3888,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const result = await supabase.from('stables').delete().eq('id', stableId);
       if (result.error) {
-        console.warn('Kunde inte ta bort stall', result.error);
+        reportPersistErrorRef.current('Kunde inte ta bort stall', result.error);
       }
     },
     [user],
@@ -3908,7 +3915,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }));
       const { error } = await supabase.from('stable_invites').insert(invites);
       if (error) {
-        console.warn('Kunde inte skicka inbjudan', error);
+        reportPersistErrorRef.current('Kunde inte skicka inbjudan', error);
       }
     },
     [user],
@@ -3942,7 +3949,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .eq('stable_id', stableId)
         .eq('user_id', userId);
       if (error) {
-        console.warn('Kunde inte uppdatera medlem', error);
+        reportPersistErrorRef.current('Kunde inte uppdatera medlem', error);
       }
     },
     [user],
@@ -3957,7 +3964,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .eq('stable_id', stableId)
         .eq('user_id', userId);
       if (error) {
-        console.warn('Kunde inte ta bort medlem', error);
+        reportPersistErrorRef.current('Kunde inte ta bort medlem', error);
       }
     },
     [user],
@@ -3975,7 +3982,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         ) {
           return;
         }
-        console.warn('Kunde inte uppdatera profil', error);
+        reportPersistErrorRef.current('Kunde inte uppdatera profil', error);
       }
     },
     [user],
@@ -3992,7 +3999,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         status: message.status ?? null,
       });
       if (error) {
-        console.warn('Kunde inte spara meddelande', error);
+        reportPersistErrorRef.current('Kunde inte spara meddelande', error);
       }
     },
     [user],

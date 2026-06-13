@@ -48,7 +48,7 @@ Stäng varje server-side auktoriserings-, integritets- och secrets-hål så klie
 
 ### Fas 1 — Skriv-korrekthet & datatillit  `[L]`
 Eliminera tyst dataförlust — UI:t får aldrig rapportera success när DB:n inte ändrades.
-- [~] Felhantering på fire-and-forget-skrivningar: `reportPersistError` (debounced toast) på de 13 säkerhetskritiska (pass-lifecycle, häststatus, foderplan/koll, ridpass, vård) — 2026-06-13, codex: inga problem. KVAR: rollback/resync + övriga persists (arena/grupp/inlägg/stall/medlem/paddock/dagshändelse).
+- [x] Felvisning på ALLA fire-and-forget-skrivningar: `reportPersistError` (debounced toast) på 13 säkerhetskritiska + ref-mönster (`reportPersistErrorRef`) på resten (paddock/häst/kontakt/grupp/gård/stall/medlem/inbjudan/profil/dagsnotis/arena/alert/standardpass/inlägg/kommentar/meddelande) — 2026-06-13, codex: inga problem. Läs/sekundär-warns lämnade medvetet. KVAR: rollback/resync, STATE_HYDRATE merge-by-id.
 - Visa skrivfel för användaren (toast + failed-state) istället för bara console.warn.
 - Fixa `STATE_HYDRATE` att merga per id/updated_at istället för att byta hela collections; blockera refresh medan skrivningar pågår.
 - Fixa admins post-radering (no-op idag): lägg posts_delete admin/owner RLS + kolla rows-affected.
