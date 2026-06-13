@@ -58,7 +58,7 @@ Eliminera tyst dataförlust — UI:t får aldrig rapportera success när DB:n in
 ### Fas 2 — Stäng kärnlooparna (acquisition, inbjudningar, realtid)  `[XL]`
 Få tillväxt- och multiuser-looparna att fungera end-to-end.
 - [x] Self-serve owner-signup som skapar stall (2026-06-13: 'create'/'join'-intent i auth, återupplivad pendingOwnerStable bunden till e-post, onboarding tar vid). Codex-reviewad.
-- Riktig inbjudningsleverans via Edge Function + e-postleverantör (t.ex. Resend); engångs-, utgående, server-validerade koder; admin-synlig inbjudningslista.
+- [x] Invite-leverans: `send-invite` edge function (Resend, env-gated) + `on_invite_created`-trigger + 14-dagars expiry på invites (2026-06-13, codex-reviewad: per-rad-unik kod, e-post-centrerad acceptans, enqueue-fel kan ej abortera insert). KVAR: admin-synlig inbjudningslista; server-validering single-use; RESEND_API_KEY-deploy.
 - Hantera email-confirmation: "kolla din mejl/skicka igen"-skärm + fungerande emailRedirectTo deep link (eller stäng av confirmation explicit).
 - Aktivera Supabase realtime-publication för messages; realtid (eller server-authoritative claim) för assignments & stable_alerts.
 - Persistent unread/read (per-member last_read_at); fixa privat-chatt-namn + dedup-race.

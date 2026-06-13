@@ -3875,7 +3875,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistStableInvite = React.useCallback(
     async (input: AddMemberInput, stableIds: string[], inviteCode?: string) => {
       if (!user) return;
-      const code = inviteCode ?? null;
+      const code = inviteCode ?? generateInviteCode();
+      // Invites expire after 14 days. The on_invite_created trigger emails the code.
+      const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
       const invites = stableIds.map((stableId) => ({
         stable_id: stableId,
         email: input.email.trim(),
@@ -3884,7 +3886,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         access: input.access ?? 'view',
         rider_role: input.role === 'rider' ? input.riderRole ?? 'medryttare' : null,
         horse_ids: stableId === input.stableId ? input.horseIds ?? [] : [],
-        code,
+        // stable_invites.code has a unique partial index, so each row needs its own
+        // code. The primary stable keeps the code addMember surfaced to the admin.
+        code: stableId === input.stableId ? code : generateInviteCode(),
+        expires_at: expiresAt,
       }));
       const { error } = await supabase.from('stable_invites').insert(invites);
       if (error) {
