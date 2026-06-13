@@ -41,6 +41,7 @@ type PostCardProps = {
   canInteract?: boolean;
   canDelete?: boolean;
   onDelete?: () => void;
+  onReport?: () => void;
 };
 
 export const PostCard = React.memo(function PostCard({
@@ -51,6 +52,7 @@ export const PostCard = React.memo(function PostCard({
   canInteract = true,
   canDelete = false,
   onDelete,
+  onReport,
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
@@ -84,8 +86,25 @@ export const PostCard = React.memo(function PostCard({
           <Text style={styles.author}>{data.author}</Text>
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
+        {onReport ? (
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onReport}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Rapportera inlägg"
+          >
+            <Feather name="flag" size={16} color={palette.secondaryText} />
+          </TouchableOpacity>
+        ) : null}
         {canDelete && onDelete ? (
-          <TouchableOpacity style={styles.moreButton} onPress={onDelete} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onDelete}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Ta bort inlägg"
+          >
             <Feather name="more-vertical" size={18} color={palette.secondaryText} />
           </TouchableOpacity>
         ) : null}

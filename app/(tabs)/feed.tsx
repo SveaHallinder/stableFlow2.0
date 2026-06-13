@@ -488,6 +488,31 @@ export default function FeedScreen() {
     [actions, toast],
   );
 
+  const handleReportPost = React.useCallback(
+    (postId: string) => {
+      Alert.alert(
+        'Rapportera inlägg?',
+        'Inlägget skickas till stallets administratörer för granskning.',
+        [
+          { text: 'Avbryt', style: 'cancel' },
+          {
+            text: 'Rapportera',
+            style: 'destructive',
+            onPress: async () => {
+              const result = await actions.reportPost(postId);
+              if (result.success) {
+                toast.showToast('Tack, rapporten har skickats.', 'success');
+              } else {
+                toast.showToast(result.reason, 'error');
+              }
+            },
+          },
+        ],
+      );
+    },
+    [actions, toast],
+  );
+
   const handleLoadMore = React.useCallback(async () => {
     const result = await actions.loadMorePosts();
     if (!result.success && result.reason) {
@@ -999,6 +1024,11 @@ export default function FeedScreen() {
                             canInteract={canInteract}
                             canDelete={canDeletePost(post)}
                             onDelete={() => handleDeletePost(post.id)}
+                            onReport={
+                              currentUserId && post.authorId && post.authorId !== currentUserId
+                                ? () => handleReportPost(post.id)
+                                : undefined
+                            }
                           />
                         ))}
                         {renderLoadMoreFooter()}
@@ -1030,6 +1060,11 @@ export default function FeedScreen() {
                   canInteract={canInteract}
                   canDelete={canDeletePost(post)}
                   onDelete={() => handleDeletePost(post.id)}
+                  onReport={
+                    currentUserId && post.authorId && post.authorId !== currentUserId
+                      ? () => handleReportPost(post.id)
+                      : undefined
+                  }
                 />
               </View>
             )}

@@ -11,6 +11,7 @@
 -- 8. supabase/migrations/20260613_fas0a_stables_update.sql
 -- 9. supabase/migrations/20260613_fas2_invite_delivery.sql
 -- 10. supabase/migrations/20260613_fas0b_post_moderation.sql
+-- 11. supabase/migrations/20260613_fas3_content_reports.sql
 
 create extension if not exists "pgcrypto";
 create extension if not exists pg_net with schema net;

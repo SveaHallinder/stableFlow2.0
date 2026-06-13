@@ -1213,6 +1213,7 @@ type AppDataContextValue = {
     togglePostLike: (postId: string) => ActionResult<Post>;
     addPostComment: (postId: string, text: string) => ActionResult<PostComment>;
     deletePost: (postId: string) => Promise<ActionResult>;
+    reportPost: (postId: string, reason?: string) => Promise<ActionResult>;
     loadMorePosts: () => Promise<ActionResult>;
     createGroup: (input: CreateGroupInput) => ActionResult<Group>;
     renameGroup: (input: RenameGroupInput) => ActionResult<Group>;
@@ -6978,6 +6979,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [persistPostDelete],
   );
 
+  const reportPost = React.useCallback(
+    async (postId: string, reason?: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const post = current.posts.find((entry) => entry.id === postId);
+      if (!post) {
+        return { success: false, reason: 'Inlägget kunde inte hittas.' };
+      }
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      const { error } = await supabase.from('content_reports').insert({
+        id: generateId(),
+        stable_id: post.stableId ?? current.currentStableId,
+        reporter_user_id: userId,
+        target_type: 'post',
+        target_id: postId,
+        reason: reason?.trim() ? reason.trim() : null,
+      });
+      if (error) {
+        reportPersistErrorRef.current('Kunde inte skicka rapport', error);
+        return { success: false, reason: 'Kunde inte skicka rapporten.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
   const loadMorePosts = React.useCallback(async (): Promise<ActionResult> => {
     const current = stateRef.current;
     const stableId = current.currentStableId;
@@ -7845,6 +7874,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         togglePostLike,
         addPostComment,
         deletePost,
+        reportPost,
         loadMorePosts,
         createGroup,
         renameGroup,
@@ -7920,6 +7950,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       togglePostLike,
       addPostComment,
       deletePost,
+      reportPost,
       loadMorePosts,
       createGroup,
       renameGroup,
