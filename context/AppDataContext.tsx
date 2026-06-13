@@ -3752,11 +3752,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistPostDelete = React.useCallback(
     async (postId: string) => {
       if (!user) return { error: null };
-      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      // .select('id') returns the deleted rows so we can detect an RLS-blocked delete
+      // (0 rows, no error) and surface it as a failure instead of silently diverging.
+      const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id');
       if (error) {
         reportPersistErrorRef.current('Kunde inte ta bort inlägg', error);
+        return { error };
       }
-      return { error };
+      if (!data || data.length === 0) {
+        const blocked = new Error('Inlägget kunde inte tas bort (behörighet saknas).');
+        reportPersistErrorRef.current('Kunde inte ta bort inlägg', blocked);
+        return { error: blocked };
+      }
+      return { error: null };
     },
     [user],
   );

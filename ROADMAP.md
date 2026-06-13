@@ -50,10 +50,10 @@ Stäng varje server-side auktoriserings-, integritets- och secrets-hål så klie
 Eliminera tyst dataförlust — UI:t får aldrig rapportera success när DB:n inte ändrades.
 - [x] Felvisning på ALLA fire-and-forget-skrivningar: `reportPersistError` (debounced toast) på 13 säkerhetskritiska + ref-mönster (`reportPersistErrorRef`) på resten (paddock/häst/kontakt/grupp/gård/stall/medlem/inbjudan/profil/dagsnotis/arena/alert/standardpass/inlägg/kommentar/meddelande) — 2026-06-13, codex: inga problem. Läs/sekundär-warns lämnade medvetet. KVAR: rollback/resync, STATE_HYDRATE merge-by-id.
 - Visa skrivfel för användaren (toast + failed-state) istället för bara console.warn.
-- Fixa `STATE_HYDRATE` att merga per id/updated_at istället för att byta hela collections; blockera refresh medan skrivningar pågår.
-- Fixa admins post-radering (no-op idag): lägg posts_delete admin/owner RLS + kolla rows-affected.
+- [FLAGGAD: risk] Fixa `STATE_HYDRATE` att merga per id/updated_at + blockera refresh medan skrivningar pågår. → Riskabel core-reducer-ändring som inte kan runtime-verifieras autonomt; rekommenderas göras med staging + manuell test. Skippad av loopen.
+- [x] Fixa admins post-radering (no-op): posts_delete RLS = författare ELLER can_manage_groups + rows-affected-koll (0 rader → fail+rollback) — 2026-06-13, codex: inga findings.
 - [x] Last-owner-guard i updateMemberRole + removeMemberFromStable (countStableOwners blockerar demote/remove av sista ägaren) — 2026-06-13, codex: bara teoretisk same-tick-race (ej reellt UI-flöde), dokumenterad.
-- Ersätt namn-baserad hage↔häst-länk med häst-ID-referenser.
+- [FLAGGAD: produktbeslut + schema] Ersätt namn-baserad hage↔häst-länk med häst-ID. → Kräver: bygga om UX från fritext-namn till häst-väljare, schema-migration (horse_ids på paddocks) + backfill, och produktbeslut (tillåts oregistrerade hästar i hage?). Skippad av loopen — för Svea.
 
 ### Fas 2 — Stäng kärnlooparna (acquisition, inbjudningar, realtid)  `[XL]`
 Få tillväxt- och multiuser-looparna att fungera end-to-end.

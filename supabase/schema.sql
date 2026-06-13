@@ -1158,7 +1158,12 @@ create policy "posts_insert" on public.posts for insert with check (public.is_st
 drop policy if exists "posts_update" on public.posts;
 create policy "posts_update" on public.posts for update using ((select auth.uid()) = user_id);
 drop policy if exists "posts_delete" on public.posts;
-create policy "posts_delete" on public.posts for delete using ((select auth.uid()) = user_id);
+-- Fas 0B #7: författaren eller feed-/gruppansvarig (admin/staff) får radera (moderering).
+create policy "posts_delete" on public.posts
+  for delete using (
+    (select auth.uid()) = user_id
+    or public.can_manage_groups(stable_id)
+  );
 
 drop policy if exists "likes_select" on public.likes;
 drop policy if exists "likes_insert_self" on public.likes;
