@@ -24,7 +24,10 @@ test('staging database setup is reproducible from repo files', async () => {
   assert.match(setupSql, /supabase\/schema\.sql/i);
   assert.match(setupSql, /supabase\/storage_policies\.sql/i);
   assert.match(setupSql, /app\.settings\.supabase_url/i);
-  assert.match(setupSql, /app\.settings\.service_role_key/i);
+  // Fas 0A #6: service-role key now lives in Supabase Vault, not a plaintext GUC.
+  assert.match(setupSql, /vault\.create_secret/i);
+  assert.match(setupSql, /'service_role_key'/i);
+  assert.doesNotMatch(setupSql, /app\.settings\.service_role_key/i);
 });
 
 test('invite validation migration is present for staging rebuilds', async () => {

@@ -302,6 +302,38 @@ as $$
   );
 $$;
 
+-- Fas 0A #4: chatt-helpers (security definer, row_security off → ingen RLS-rekursion).
+create or replace function public.is_conversation_member(p_conversation_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.conversation_members cm
+    where cm.conversation_id = p_conversation_id
+      and cm.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.shares_stable_with(p_other uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stable_members a
+    join public.stable_members b on a.stable_id = b.stable_id
+    where a.user_id = auth.uid()
+      and b.user_id = p_other
+  );
+$$;
+
 create or replace function public.storage_stable_id(path text)
 returns uuid
 language sql
@@ -809,16 +841,12 @@ create policy "stables_select" on public.stables
 drop policy if exists "stables_insert" on public.stables;
 create policy "stables_insert" on public.stables for insert with check (created_by = auth.uid());
 drop policy if exists "stables_update" on public.stables;
+-- Fas 0A #1: owner-only (behåll creator-fallback mot lockout). join_code ligger på
+-- samma rad, så edit-access får inte UPDATE:a stallet.
 create policy "stables_update" on public.stables
-  for update using (
-    created_by = auth.uid()
-    or exists (
-      select 1
-      from public.stable_members m
-      where m.stable_id = stables.id
-        and m.user_id = auth.uid()
-    )
-  );
+  for update
+  using (created_by = auth.uid() or public.is_stable_owner(id))
+  with check (created_by = auth.uid() or public.is_stable_owner(id));
 drop policy if exists "stables_delete" on public.stables;
 create policy "stables_delete" on public.stables for delete using (created_by = auth.uid());
 
@@ -1212,11 +1240,24 @@ create policy "conversations_update" on public.conversations
   );
 
 drop policy if exists "conversation_members_select" on public.conversation_members;
+-- Fas 0A #4: se medlemsrader för konversationer du tillhör (för namn-rendering).
 create policy "conversation_members_select" on public.conversation_members
-  for select using ((select auth.uid()) = user_id);
+  for select using (public.is_conversation_member(conversation_id));
 drop policy if exists "conversation_members_insert" on public.conversation_members;
+-- Fas 0A #4: bara i konversationer DU skapat, och bara dig själv eller en stallkamrat
+-- (stänger self-insert-i-andras-konversation samt force-chat-på-främling).
 create policy "conversation_members_insert" on public.conversation_members
-  for insert with check ((select auth.uid()) = user_id);
+  for insert with check (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id
+        and c.created_by_user_id = (select auth.uid())
+    )
+    and (
+      user_id = (select auth.uid())
+      or public.shares_stable_with(user_id)
+    )
+  );
 drop policy if exists "conversation_members_delete" on public.conversation_members;
 create policy "conversation_members_delete" on public.conversation_members
   for delete using ((select auth.uid()) = user_id);
@@ -1254,6 +1295,21 @@ create policy "messages_insert" on public.messages
             where cm.conversation_id = c.id and cm.user_id = (select auth.uid())
           )
         )
+    )
+  );
+-- Fas 0A #4: moderering. Författaren äger sina meddelanden; stall-owner får radera.
+drop policy if exists "messages_update" on public.messages;
+create policy "messages_update" on public.messages
+  for update using ((select auth.uid()) = author_id);
+drop policy if exists "messages_delete" on public.messages;
+create policy "messages_delete" on public.messages
+  for delete using (
+    (select auth.uid()) = author_id
+    or exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and c.stable_id is not null
+        and public.is_stable_owner(c.stable_id)
     )
   );
 
