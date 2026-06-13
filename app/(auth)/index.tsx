@@ -27,6 +27,7 @@ import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
+const EMAIL_CONFIRM_REDIRECT = 'stableflow://confirm';
 
 type AuthMode = 'login' | 'signup';
 type SignupIntent = 'create' | 'join';
@@ -43,6 +44,10 @@ export default function AuthScreen() {
   const [inviteCode, setInviteCode] = React.useState('');
   const [stableName, setStableName] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  // When signup needs email confirmation, we show a dedicated panel instead of
+  // stranding the user on the login form.
+  const [pendingConfirmEmail, setPendingConfirmEmail] = React.useState<string | null>(null);
+  const [resending, setResending] = React.useState(false);
 
   const roleHintLines =
     signupIntent === 'create'
@@ -138,6 +143,7 @@ export default function AuthScreen() {
         email: trimmedEmail,
         password,
         options: {
+          emailRedirectTo: EMAIL_CONFIRM_REDIRECT,
           data: {
             username: trimmedName,
             full_name: trimmedName,
@@ -159,10 +165,7 @@ export default function AuthScreen() {
       if (!data.user || !data.session) {
         // Email confirmation required. The pending stable is kept and created
         // on the first login after the user confirms their address.
-        toast.showToast(
-          'Kontot är skapat. Bekräfta din e-post – ditt stall skapas när du loggar in.',
-          'success',
-        );
+        setPendingConfirmEmail(trimmedEmail);
         setSubmitting(false);
         return;
       }
@@ -200,6 +203,7 @@ export default function AuthScreen() {
       email: trimmedEmail,
       password,
       options: {
+        emailRedirectTo: EMAIL_CONFIRM_REDIRECT,
         data: {
           username: trimmedName,
           full_name: trimmedName,
@@ -219,7 +223,7 @@ export default function AuthScreen() {
 
     if (!data.user || !data.session) {
       await savePendingJoinCode(trimmedInviteCode);
-      toast.showToast('Kontot är skapat. Kontrollera din epost för att aktivera.', 'success');
+      setPendingConfirmEmail(trimmedEmail);
       setSubmitting(false);
       return;
     }
@@ -274,6 +278,30 @@ export default function AuthScreen() {
   const handleForgotPassword = React.useCallback(() => {
     router.push('/(auth)/forgot-password');
   }, [router]);
+
+  const handleResendConfirmation = React.useCallback(async () => {
+    if (!pendingConfirmEmail || resending) {
+      return;
+    }
+    setResending(true);
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: pendingConfirmEmail,
+      options: { emailRedirectTo: EMAIL_CONFIRM_REDIRECT },
+    });
+    if (error) {
+      toast.showToast('Kunde inte skicka igen. Försök om en stund.', 'error');
+    } else {
+      toast.showToast('Bekräftelsemejl skickat igen.', 'success');
+    }
+    setResending(false);
+  }, [pendingConfirmEmail, resending, toast]);
+
+  const handleBackToLogin = React.useCallback(() => {
+    setPendingConfirmEmail(null);
+    setMode('login');
+    setPassword('');
+  }, []);
 
   const modeLabel = mode === 'login' ? 'Logga in' : 'Skapa konto';
 
@@ -509,6 +537,44 @@ export default function AuthScreen() {
     </Card>
   );
 
+  const confirmCard = (
+    <Card elevated style={[styles.card, isDesktop && styles.cardDesktop]}>
+      <View style={styles.formHeader}>
+        <Text style={[styles.title, isDesktop && styles.titleDesktop]}>Bekräfta din e-post</Text>
+        <Text style={[styles.helperText, isDesktop && styles.helperTextDesktop]}>
+          {`Vi har skickat en bekräftelselänk till ${pendingConfirmEmail ?? 'din e-post'}. Öppna den för att aktivera kontot och logga sedan in.`}
+        </Text>
+      </View>
+      <TouchableOpacity
+        style={[
+          styles.primaryButton,
+          isDesktop && styles.primaryButtonDesktop,
+          resending && styles.primaryButtonDisabled,
+        ]}
+        onPress={handleResendConfirmation}
+        activeOpacity={0.9}
+        disabled={resending}
+        accessibilityRole="button"
+        accessibilityLabel="Skicka bekräftelsemejl igen"
+        accessibilityState={{ disabled: resending }}
+      >
+        <Text style={[styles.primaryButtonText, isDesktop && styles.primaryButtonTextDesktop]}>
+          {resending ? 'Skickar...' : 'Skicka igen'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={handleBackToLogin}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Till inloggning"
+      >
+        <Text style={[styles.footerText, isDesktop && styles.footerTextDesktop]}>
+          Till inloggning
+        </Text>
+      </TouchableOpacity>
+    </Card>
+  );
+
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
@@ -524,12 +590,12 @@ export default function AuthScreen() {
             {isDesktop ? (
               <View style={styles.desktopLayout}>
                 {heroPanel}
-                {formCard}
+                {pendingConfirmEmail ? confirmCard : formCard}
               </View>
             ) : (
               <>
                 {heroPanel}
-                {formCard}
+                {pendingConfirmEmail ? confirmCard : formCard}
               </>
             )}
           </ScrollView>
