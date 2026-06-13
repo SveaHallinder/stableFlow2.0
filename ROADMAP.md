@@ -66,7 +66,7 @@ Få tillväxt- och multiuser-looparna att fungera end-to-end.
 ### Fas 3 — UGC-säkerhet, kontolivscykel & store-compliance  `[L]`
 Möt App Store / Google Play + EU-legala krav för en UGC + persondata-produkt.
 - Moderering: report/flag inlägg & kommentarer, block/mute, admin removal-kö.
-- [~] Kontohantering: [x] byt lösenord + [x] byt e-post (Säkerhet-card i settings/account, supabase.auth.updateUser, 2026-06-13, codex: inga blockerande problem). KVAR: radera konto (GDPR) — kräver edge function med service-role för auth-user-radering + cascade; dataexport.
+- [x] Kontohantering: byt lösenord + byt e-post + radera konto (GDPR). Radera = `delete-account` edge fn (verifierar caller-JWT, blockerar ensam-ägare med fler medlemmar, fail-closed på guard-fel, auth.admin.deleteUser → cascade) + två-stegs danger-card i settings/account. 2026-06-13, codex: caller-identitet säker, fixade fail-open-guard. KVAR: dataexport (nice-to-have). KRÄVER DEPLOY: deploya delete-account edge fn.
 - Rate limiting / abuse-skydd på inlägg, kommentarer, likes, alerts, meddelanden.
 - Wire EAS: riktig projectId, updates.url, eas.json submit-credentials; synka app-version.
 - Cleanup av döda push-tokens (läs Expo-receipts, radera DeviceNotRegistered).

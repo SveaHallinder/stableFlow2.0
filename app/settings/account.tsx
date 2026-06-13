@@ -71,6 +71,8 @@ export default function AccountSettingsScreen() {
   });
   const [savingPassword, setSavingPassword] = React.useState(false);
   const [savingEmail, setSavingEmail] = React.useState(false);
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
 
   const handleChangePassword = React.useCallback(async () => {
     if (savingPassword) {
@@ -121,6 +123,35 @@ export default function AccountSettingsScreen() {
     setSecurity((prev) => ({ ...prev, newEmail: '' }));
     toast.showToast('Bekräftelselänk skickad till den nya adressen.', 'success');
   }, [savingEmail, security.newEmail, user?.email, toast]);
+
+  const handleDeleteAccount = React.useCallback(async () => {
+    if (deleting) {
+      return;
+    }
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      return;
+    }
+    setDeleting(true);
+    const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
+    if (error) {
+      let reason = 'Kunde inte radera kontot. Försök igen.';
+      const ctx = (error as { context?: Response }).context;
+      if (ctx) {
+        const body = await ctx.json().catch(() => null);
+        if (body?.error === 'sole_owner') {
+          reason = 'Du är ensam ägare av ett stall med fler medlemmar. Överlåt ägarskapet först.';
+        }
+      }
+      setDeleting(false);
+      setConfirmingDelete(false);
+      toast.showToast(reason, 'error');
+      return;
+    }
+    toast.showToast('Ditt konto har raderats.', 'success');
+    await signOut().catch(() => undefined);
+    router.replace('/(auth)');
+  }, [deleting, confirmingDelete, toast, signOut, router]);
 
   const handleSave = React.useCallback(() => {
     if (!currentUser) {
@@ -305,6 +336,42 @@ export default function AccountSettingsScreen() {
             </TouchableOpacity>
             <Text style={styles.sectionHint}>Du kommer tillbaka till inloggningen.</Text>
           </Card>
+
+          <Card tone="muted" style={styles.card}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Radera konto</Text>
+            </View>
+            <Text style={styles.sectionHint}>
+              Permanent radering av ditt konto och dina personuppgifter (GDPR). Detta går
+              inte att ångra. Är du ensam ägare av ett stall behöver du överlåta ägarskapet först.
+            </Text>
+            <TouchableOpacity
+              style={[styles.dangerButton, deleting && styles.saveButtonDisabled]}
+              onPress={handleDeleteAccount}
+              activeOpacity={0.85}
+              disabled={deleting}
+              accessibilityRole="button"
+              accessibilityLabel={confirmingDelete ? 'Bekräfta radering av konto' : 'Radera konto'}
+            >
+              <Text style={styles.dangerText}>
+                {deleting
+                  ? 'Raderar...'
+                  : confirmingDelete
+                    ? 'Tryck igen för att bekräfta'
+                    : 'Radera mitt konto'}
+              </Text>
+            </TouchableOpacity>
+            {confirmingDelete && !deleting ? (
+              <TouchableOpacity
+                onPress={() => setConfirmingDelete(false)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Avbryt radering"
+              >
+                <Text style={styles.sectionHint}>Avbryt</Text>
+              </TouchableOpacity>
+            ) : null}
+          </Card>
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -414,5 +481,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: palette.error,
+  },
+  dangerButton: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.full,
+    backgroundColor: palette.error,
+  },
+  dangerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.inverseText,
   },
 });
