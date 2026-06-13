@@ -457,6 +457,17 @@ export type PostComment = {
   createdAt: string;
 };
 
+export type ContentReport = {
+  id: string;
+  stableId: string | null;
+  reporterUserId: string | null;
+  targetType: 'post' | 'comment';
+  targetId: string;
+  reason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
 export type CreatePostInput = {
   content: string;
   stableId?: string;
@@ -1215,6 +1226,8 @@ type AppDataContextValue = {
     deletePost: (postId: string) => Promise<ActionResult>;
     reportPost: (postId: string, reason?: string) => Promise<ActionResult>;
     reportComment: (postId: string, commentId: string, reason?: string) => Promise<ActionResult>;
+    fetchContentReports: (includeResolved?: boolean) => Promise<ActionResult<ContentReport[]>>;
+    resolveContentReport: (reportId: string) => Promise<ActionResult>;
     loadMorePosts: () => Promise<ActionResult>;
     createGroup: (input: CreateGroupInput) => ActionResult<Group>;
     renameGroup: (input: RenameGroupInput) => ActionResult<Group>;
@@ -7036,6 +7049,56 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [],
   );
 
+  const fetchContentReports = React.useCallback(
+    async (includeResolved = false): Promise<ActionResult<ContentReport[]>> => {
+      const current = stateRef.current;
+      const stableId = current.currentStableId;
+      if (!stableId) {
+        return { success: false, reason: 'Inget aktivt stall.' };
+      }
+      let query = supabase
+        .from('content_reports')
+        .select('id, stable_id, reporter_user_id, target_type, target_id, reason, created_at, resolved_at')
+        .eq('stable_id', stableId)
+        .order('created_at', { ascending: false });
+      if (!includeResolved) {
+        query = query.is('resolved_at', null);
+      }
+      const { data, error } = await query;
+      if (error || !data) {
+        return { success: false, reason: 'Kunde inte hämta rapporter.' };
+      }
+      const reports: ContentReport[] = data.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id ?? null,
+        reporterUserId: row.reporter_user_id ?? null,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        reason: row.reason ?? null,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at ?? null,
+      }));
+      return { success: true, data: reports };
+    },
+    [],
+  );
+
+  const resolveContentReport = React.useCallback(
+    async (reportId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const { error } = await supabase
+        .from('content_reports')
+        .update({ resolved_at: new Date().toISOString(), resolved_by_user_id: current.currentUserId })
+        .eq('id', reportId);
+      if (error) {
+        reportPersistErrorRef.current('Kunde inte lösa rapport', error);
+        return { success: false, reason: 'Kunde inte markera rapporten som löst.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
   const loadMorePosts = React.useCallback(async (): Promise<ActionResult> => {
     const current = stateRef.current;
     const stableId = current.currentStableId;
@@ -7905,6 +7968,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         deletePost,
         reportPost,
         reportComment,
+        fetchContentReports,
+        resolveContentReport,
         loadMorePosts,
         createGroup,
         renameGroup,
@@ -7982,6 +8047,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       deletePost,
       reportPost,
       reportComment,
+      fetchContentReports,
+      resolveContentReport,
       loadMorePosts,
       createGroup,
       renameGroup,

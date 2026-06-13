@@ -65,7 +65,8 @@ Få tillväxt- och multiuser-looparna att fungera end-to-end.
 
 ### Fas 3 — UGC-säkerhet, kontolivscykel & store-compliance  `[L]`
 Möt App Store / Google Play + EU-legala krav för en UGC + persondata-produkt.
-- [~] Moderering: [x] rapportera inlägg + [x] rapportera kommentarer (content_reports + RLS + reportPost/reportComment + flagg-knappar i Post, codex-reviewad 2026-06-13). KVAR: block/mute-användare (kräver state/hydration-tillägg), admin removal-kö (UI för att se/lösa rapporter).
+- [~] Moderering: [x] rapportera inlägg + [x] rapportera kommentarer + [x] admin removal-kö (app/admin/reports.tsx: fetch/resolve content_reports, ta-bort-inlägg, gate canManageOnboardingAny + RLS). 2026-06-13. KVAR: block/mute-användare (kräver state/hydration-tillägg — flaggad).
+  - OBS: removal-kön self-reviewad (codex rate-limited vid commit); rekommenderas codex-granskas när limit återställts.
 - [x] Kontohantering: byt lösenord + byt e-post + radera konto (GDPR). Radera = `delete-account` edge fn (verifierar caller-JWT, blockerar ensam-ägare med fler medlemmar, fail-closed på guard-fel, auth.admin.deleteUser → cascade) + två-stegs danger-card i settings/account. 2026-06-13, codex: caller-identitet säker, fixade fail-open-guard. KVAR: dataexport (nice-to-have). KRÄVER DEPLOY: deploya delete-account edge fn.
 - Rate limiting / abuse-skydd på inlägg, kommentarer, likes, alerts, meddelanden.
 - Wire EAS: riktig projectId, updates.url, eas.json submit-credentials; synka app-version.

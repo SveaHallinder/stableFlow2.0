@@ -77,6 +77,12 @@ const adminLinks: AdminLink[] = [
     route: '/contacts',
     action: 'Öppna kontakter',
   },
+  {
+    title: 'Rapporter & moderering',
+    description: 'Granska och lös rapporterat innehåll från medlemmar.',
+    route: '/admin/reports',
+    action: 'Öppna rapporter',
+  },
 ];
 
 type QuickRole = 'admin' | 'staff' | 'rider';
