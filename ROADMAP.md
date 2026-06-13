@@ -52,7 +52,7 @@ Eliminera tyst dataförlust — UI:t får aldrig rapportera success när DB:n in
 - Visa skrivfel för användaren (toast + failed-state) istället för bara console.warn.
 - Fixa `STATE_HYDRATE` att merga per id/updated_at istället för att byta hela collections; blockera refresh medan skrivningar pågår.
 - Fixa admins post-radering (no-op idag): lägg posts_delete admin/owner RLS + kolla rows-affected.
-- Last-admin / self-demotion-guard i updateMemberRole + member removal.
+- [x] Last-owner-guard i updateMemberRole + removeMemberFromStable (countStableOwners blockerar demote/remove av sista ägaren) — 2026-06-13, codex: bara teoretisk same-tick-race (ej reellt UI-flöde), dokumenterad.
 - Ersätt namn-baserad hage↔häst-länk med häst-ID-referenser.
 
 ### Fas 2 — Stäng kärnlooparna (acquisition, inbjudningar, realtid)  `[XL]`

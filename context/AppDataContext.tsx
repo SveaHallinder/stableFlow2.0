@@ -7542,6 +7542,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistStableInvite],
   );
 
+  // An owner = admin role with owner access (matches is_stable_owner in RLS).
+  // Reads last-rendered state via stateRef, so it assumes sequential user actions
+  // (a re-render happens between promoting a new owner and demoting the old one).
+  // A two-step transfer fired in a single synchronous tick is not a real UI flow.
+  const countStableOwners = React.useCallback((stableId: string) => {
+    const current = stateRef.current;
+    return Object.values(current.users).filter((u) =>
+      u.membership?.some(
+        (e) => e.stableId === stableId && e.role === 'admin' && (e.access ?? 'view') === 'owner',
+      ),
+    ).length;
+  }, []);
+
   const updateMemberRole = React.useCallback(
     (input: UpdateMemberRoleInput): ActionResult<UserProfile> => {
       const accessCheck = ensurePermission(input.stableId, (permissions) => permissions.canManageMembers);
@@ -7552,6 +7565,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const user = current.users[input.userId];
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
+      }
+      // Guard against demoting the last owner — would lock the stable out of administration.
+      const currentEntry = user.membership.find((entry) => entry.stableId === input.stableId);
+      const wasOwner =
+        currentEntry?.role === 'admin' && (currentEntry.access ?? 'view') === 'owner';
+      const nextAccess =
+        input.access ??
+        (input.role === 'admin' ? 'owner' : input.role === 'staff' ? 'edit' : currentEntry?.access ?? 'view');
+      const staysOwner = input.role === 'admin' && nextAccess === 'owner';
+      if (wasOwner && !staysOwner && countStableOwners(input.stableId) <= 1) {
+        return {
+          success: false,
+          reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.',
+        };
       }
       const membership = user.membership.map((entry) =>
         entry.stableId === input.stableId
@@ -7593,7 +7620,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission, persistStableMemberUpdate],
+    [ensurePermission, persistStableMemberUpdate, countStableOwners],
   );
 
   const updateMemberHorseIds = React.useCallback(
@@ -7679,6 +7706,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
       }
+      // Guard against removing the last owner — would lock the stable out of administration.
+      const targetEntry = user.membership.find((entry) => entry.stableId === stableId);
+      const targetIsOwner =
+        targetEntry?.role === 'admin' && (targetEntry.access ?? 'view') === 'owner';
+      if (targetIsOwner && countStableOwners(stableId) <= 1) {
+        return {
+          success: false,
+          reason: 'Stallet måste ha minst en ägare. Utse en ny ägare innan du tar bort denna.',
+        };
+      }
       const membership = user.membership.filter((entry) => entry.stableId !== stableId);
       dispatch({
         type: 'USER_UPDATE',
@@ -7690,7 +7727,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       return { success: true, data: { ...user, membership } };
     },
-    [ensurePermission, persistStableMemberDelete, refreshData],
+    [ensurePermission, persistStableMemberDelete, refreshData, countStableOwners],
   );
 
   const joinStableByCode = React.useCallback(
