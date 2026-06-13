@@ -42,6 +42,7 @@ type PostCardProps = {
   canDelete?: boolean;
   onDelete?: () => void;
   onReport?: () => void;
+  onReportComment?: (commentId: string) => void;
 };
 
 export const PostCard = React.memo(function PostCard({
@@ -53,6 +54,7 @@ export const PostCard = React.memo(function PostCard({
   canDelete = false,
   onDelete,
   onReport,
+  onReportComment,
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
@@ -135,8 +137,21 @@ export const PostCard = React.memo(function PostCard({
         <View style={styles.commentList}>
           {visibleComments.map((comment) => (
             <View key={comment.id} style={styles.commentRow}>
-              <Text style={styles.commentAuthor}>{comment.authorName}</Text>
-              <Text style={styles.commentText}>{comment.text}</Text>
+              <View style={styles.commentBody}>
+                <Text style={styles.commentAuthor}>{comment.authorName}</Text>
+                <Text style={styles.commentText}>{comment.text}</Text>
+              </View>
+              {onReportComment && comment.authorId && comment.authorId !== currentUserId ? (
+                <TouchableOpacity
+                  onPress={() => onReportComment(comment.id)}
+                  activeOpacity={0.85}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Rapportera kommentar"
+                >
+                  <Feather name="flag" size={13} color={palette.secondaryText} />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))}
         </View>
@@ -283,7 +298,15 @@ const styles = StyleSheet.create({
   },
   commentRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
+  },
+  commentBody: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+    flexWrap: 'wrap',
   },
   commentAuthor: {
     fontSize: 12,

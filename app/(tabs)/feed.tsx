@@ -513,6 +513,31 @@ export default function FeedScreen() {
     [actions, toast],
   );
 
+  const handleReportComment = React.useCallback(
+    (postId: string, commentId: string) => {
+      Alert.alert(
+        'Rapportera kommentar?',
+        'Kommentaren skickas till stallets administratörer för granskning.',
+        [
+          { text: 'Avbryt', style: 'cancel' },
+          {
+            text: 'Rapportera',
+            style: 'destructive',
+            onPress: async () => {
+              const result = await actions.reportComment(postId, commentId);
+              if (result.success) {
+                toast.showToast('Tack, rapporten har skickats.', 'success');
+              } else {
+                toast.showToast(result.reason, 'error');
+              }
+            },
+          },
+        ],
+      );
+    },
+    [actions, toast],
+  );
+
   const handleLoadMore = React.useCallback(async () => {
     const result = await actions.loadMorePosts();
     if (!result.success && result.reason) {
@@ -1029,6 +1054,11 @@ export default function FeedScreen() {
                                 ? () => handleReportPost(post.id)
                                 : undefined
                             }
+                            onReportComment={
+                              currentUserId
+                                ? (commentId) => handleReportComment(post.id, commentId)
+                                : undefined
+                            }
                           />
                         ))}
                         {renderLoadMoreFooter()}
@@ -1063,6 +1093,11 @@ export default function FeedScreen() {
                   onReport={
                     currentUserId && post.authorId && post.authorId !== currentUserId
                       ? () => handleReportPost(post.id)
+                      : undefined
+                  }
+                  onReportComment={
+                    currentUserId
+                      ? (commentId) => handleReportComment(post.id, commentId)
                       : undefined
                   }
                 />
