@@ -36,21 +36,28 @@ export async function clearPendingJoinCode() {
 export type PendingOwnerStable = {
   id: string;
   name: string;
+  // Email the stable was requested under. Binds the pending stable to one account
+  // so an abandoned signup can't be claimed by a different user on the same device.
+  email: string;
 };
 
-export async function savePendingOwnerStable(input: PendingOwnerStable) {
+// Returns true only if the pending stable was durably stored. Callers must abort
+// signup on false, otherwise an account can be created with no stable to claim.
+export async function savePendingOwnerStable(input: PendingOwnerStable): Promise<boolean> {
   const id = input.id.trim();
   const name = input.name.trim();
-  if (!id || !name) {
-    return;
+  const email = input.email.trim().toLowerCase();
+  if (!id || !name || !email) {
+    return false;
   }
   try {
     await SecureStore.setItemAsync(
       PENDING_OWNER_STABLE_KEY,
-      JSON.stringify({ id, name }),
+      JSON.stringify({ id, name, email }),
     );
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 
@@ -63,10 +70,11 @@ export async function loadPendingOwnerStable(): Promise<PendingOwnerStable | nul
     const parsed = JSON.parse(stored) as Partial<PendingOwnerStable> | null;
     const id = typeof parsed?.id === 'string' ? parsed.id.trim() : '';
     const name = typeof parsed?.name === 'string' ? parsed.name.trim() : '';
-    if (!id || !name) {
+    const email = typeof parsed?.email === 'string' ? parsed.email.trim().toLowerCase() : '';
+    if (!id || !name || !email) {
       return null;
     }
-    return { id, name };
+    return { id, name, email };
   } catch {
     return null;
   }

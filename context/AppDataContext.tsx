@@ -4018,7 +4018,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const sessionUserId = sessionUser?.id ?? authUser.id;
 
         const pendingOwnerStable = await loadPendingOwnerStable();
-        if (pendingOwnerStable) {
+        const authEmail = (authUser.email ?? '').trim().toLowerCase();
+        // Only claim a pending stable that was requested by THIS account. Guards
+        // against an abandoned signup being claimed by a different user on the
+        // same device. A mismatch is left in storage for the right user to claim.
+        if (pendingOwnerStable && pendingOwnerStable.email === authEmail) {
           const stablePayload = {
             id: pendingOwnerStable.id,
             name: pendingOwnerStable.name,
