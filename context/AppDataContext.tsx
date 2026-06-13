@@ -2961,6 +2961,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [refreshError, setRefreshError] = React.useState<string | null>(null);
   const refreshRequestId = React.useRef(0);
   const pendingOwnerStableErrorShown = React.useRef(false);
+  // Surfaces a failed background write to the user instead of swallowing it in a
+  // console.warn. Debounced so a burst of failed writes shows one toast, not many.
+  // The toast tells the user the optimistic change did not persist so they can reload.
+  const persistErrorAt = React.useRef(0);
+  const reportPersistError = React.useCallback(
+    (context: string, error: unknown) => {
+      console.warn(context, error);
+      const now = Date.now();
+      if (now - persistErrorAt.current > 4000) {
+        persistErrorAt.current = now;
+        showToast('Kunde inte spara ändringen. Ladda om för att se senaste data.', 'error');
+      }
+    },
+    [showToast],
+  );
   const recurringDurationById = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
@@ -2986,11 +3001,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .from('assignments')
         .insert(buildAssignmentInsertPayload(assignment));
       if (error) {
-        console.warn('Kunde inte spara pass', error);
+        reportPersistError('Kunde inte spara pass', error);
       }
       return { error };
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistAssignmentBatchInsert = React.useCallback(
@@ -3000,11 +3015,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const payload = assignmentsToInsert.map(buildAssignmentInsertPayload);
       const { error } = await supabase.from('assignments').insert(payload);
       if (error) {
-        console.warn('Kunde inte spara återkommande pass', error);
+        reportPersistError('Kunde inte spara återkommande pass', error);
       }
       return { error };
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistAssignmentUpdate = React.useCallback(
@@ -3016,10 +3031,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
       const { error } = await supabase.from('assignments').update(payload).eq('id', assignmentId);
       if (error) {
-        console.warn('Kunde inte uppdatera pass', error);
+        reportPersistError('Kunde inte uppdatera pass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistAssignmentDelete = React.useCallback(
@@ -3027,10 +3042,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
       if (error) {
-        console.warn('Kunde inte ta bort pass', error);
+        reportPersistError('Kunde inte ta bort pass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistAssignmentHistory = React.useCallback(
@@ -3044,10 +3059,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         action,
       });
       if (error) {
-        console.warn('Kunde inte spara passhistorik', error);
+        reportPersistError('Kunde inte spara passhistorik', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistPaddockUpsert = React.useCallback(
@@ -3195,10 +3210,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         { onConflict: 'stable_id,horse_id,date' },
       );
       if (error) {
-        console.warn('Kunde inte spara häststatus', error);
+        reportPersistError('Kunde inte spara häststatus', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistFeedPlanUpsert = React.useCallback(
@@ -3217,10 +3232,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updated_at: new Date().toISOString(),
       });
       if (error) {
-        console.warn('Kunde inte spara foderplan', error);
+        reportPersistError('Kunde inte spara foderplan', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistFeedPlanDelete = React.useCallback(
@@ -3228,10 +3243,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('feed_plans').delete().eq('id', planId);
       if (error) {
-        console.warn('Kunde inte ta bort foderplan', error);
+        reportPersistError('Kunde inte ta bort foderplan', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistFeedCheckUpsert = React.useCallback(
@@ -3251,10 +3266,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         { onConflict: 'horse_id,date,slot' },
       );
       if (error) {
-        console.warn('Kunde inte spara foderkoll', error);
+        reportPersistError('Kunde inte spara foderkoll', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistPlannedRideUpsert = React.useCallback(
@@ -3274,10 +3289,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updated_at: new Date().toISOString(),
       });
       if (error) {
-        console.warn('Kunde inte spara ridpass', error);
+        reportPersistError('Kunde inte spara ridpass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistPlannedRideDelete = React.useCallback(
@@ -3285,10 +3300,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('planned_rides').delete().eq('id', rideId);
       if (error) {
-        console.warn('Kunde inte ta bort ridpass', error);
+        reportPersistError('Kunde inte ta bort ridpass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistExternalContactUpsert = React.useCallback(
@@ -3336,18 +3351,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         completed_at: event.completedAt ?? null,
         updated_at: new Date().toISOString(),
       });
-      if (error) console.warn('Kunde inte spara vårdhändelse', error);
+      if (error) reportPersistError('Kunde inte spara vårdhändelse', error);
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistCareEventDelete = React.useCallback(
     async (eventId: string) => {
       if (!user) return;
       const { error } = await supabase.from('care_events').delete().eq('id', eventId);
-      if (error) console.warn('Kunde inte ta bort vårdhändelse', error);
+      if (error) reportPersistError('Kunde inte ta bort vårdhändelse', error);
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistDayEventInsert = React.useCallback(
@@ -3481,10 +3496,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         created_by_user_id: log.createdByUserId,
       });
       if (error) {
-        console.warn('Kunde inte spara ridpass', error);
+        reportPersistError('Kunde inte spara ridpass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistRideLogDelete = React.useCallback(
@@ -3492,10 +3507,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const { error } = await supabase.from('ride_logs').delete().eq('id', rideLogId);
       if (error) {
-        console.warn('Kunde inte ta bort ridpass', error);
+        reportPersistError('Kunde inte ta bort ridpass', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistAlertInsert = React.useCallback(
