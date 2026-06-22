@@ -122,7 +122,7 @@ export default function OnboardingMembers() {
 
   React.useEffect(() => {
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!selectedStableIds.length && fallbackStableId) {
