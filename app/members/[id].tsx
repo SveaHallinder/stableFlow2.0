@@ -161,6 +161,23 @@ export default function MemberProfileScreen() {
     toast.showToast('Direktsamtal öppnas snart.', 'info');
   }, [toast]);
 
+  const isSelf = member?.id === state.currentUserId;
+  const isBlocked = member ? state.blockedUserIds.includes(member.id) : false;
+  const handleToggleBlock = React.useCallback(async () => {
+    if (!member) return;
+    const result = isBlocked
+      ? await actions.unblockUser(member.id)
+      : await actions.blockUser(member.id);
+    if (result.success) {
+      toast.showToast(
+        isBlocked ? 'Blockeringen är hävd.' : `${member.name} är blockerad.`,
+        'success',
+      );
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, isBlocked, member, toast]);
+
   const handleRoleCycle = React.useCallback(() => {
     if (!member || !membership) {
       return;
@@ -250,9 +267,29 @@ export default function MemberProfileScreen() {
           <Text style={styles.primaryActionLabel}>Ring</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage} activeOpacity={0.85}>
-          <Feather name="message-circle" size={16} color="#2D6CF6" />
+          <Feather name="message-circle" size={16} color={palette.primary} />
           <Text style={styles.secondaryActionLabel}>Chatta</Text>
         </TouchableOpacity>
+        {!isSelf ? (
+          <TouchableOpacity
+            style={styles.blockActionButton}
+            onPress={handleToggleBlock}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={isBlocked ? 'Avblockera användare' : 'Blockera användare'}
+          >
+            <Feather
+              name={isBlocked ? 'user-check' : 'slash'}
+              size={16}
+              color={isBlocked ? palette.secondaryText : palette.error}
+            />
+            <Text
+              style={[styles.blockActionLabel, { color: isBlocked ? palette.secondaryText : palette.error }]}
+            >
+              {isBlocked ? 'Avblockera' : 'Blockera'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </Card>
   );
@@ -262,7 +299,13 @@ export default function MemberProfileScreen() {
       <Text style={styles.sectionTitle}>Kontakt</Text>
       <View style={styles.detailList}>
         <DetailRow icon="mail" value={member.email ?? 'Ingen e-post'} />
-        <DetailRow icon="phone" value={member.phone || 'Inget nummer'} />
+        <DetailRow
+          icon="phone"
+          value={
+            member.phone ||
+            (isSelf || canManageMembers ? 'Inget nummer' : 'Endast synligt för admin')
+          }
+        />
         <DetailRow icon="map-pin" value={member.location || 'Okänd plats'} />
       </View>
     </Card>
@@ -548,7 +591,7 @@ const styles = StyleSheet.create({
   heroName: { fontSize: 20, fontWeight: '700', color: palette.primaryText },
   heroMeta: { fontSize: 13, fontWeight: '600', color: palette.secondaryText },
   heroStable: { fontSize: 12, color: palette.secondaryText },
-  heroActions: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  heroActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   primaryActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -566,9 +609,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45, 108, 246, 0.12)',
+    backgroundColor: 'rgba(62, 155, 95, 0.12)',
   },
   secondaryActionLabel: { fontSize: 13, fontWeight: '600', color: palette.primary },
+  blockActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceMuted,
+  },
+  blockActionLabel: { fontSize: 13, fontWeight: '600' },
   sectionCard: {
     paddingHorizontal: 18,
     paddingVertical: 16,
@@ -596,8 +649,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   ownerChip: {
-    backgroundColor: 'rgba(45, 108, 246, 0.08)',
-    borderColor: 'rgba(45, 108, 246, 0.25)',
+    backgroundColor: 'rgba(62, 155, 95, 0.08)',
+    borderColor: 'rgba(62, 155, 95, 0.25)',
   },
   disabledChip: {
     opacity: 0.7,

@@ -62,6 +62,7 @@ export default function FeedScreen() {
       currentUserId,
       groups,
       stableAlerts,
+      blockedUserIds,
     },
     derived,
     actions,
@@ -186,13 +187,16 @@ export default function FeedScreen() {
       stableGroupIdValue,
     ]);
     return posts.filter((post) => {
+      if (post.authorId && blockedUserIds.includes(post.authorId)) {
+        return false;
+      }
       const groups = getPostGroups(post);
       if (!groups.length) {
         return !post.stableId || post.stableId === currentStableId;
       }
       return groups.some((groupId) => accessibleGroups.has(groupId));
     });
-  }, [currentFarmId, currentStableId, getPostGroups, groups, posts, stableGroupIdValue]);
+  }, [blockedUserIds, currentFarmId, currentStableId, getPostGroups, groups, posts, stableGroupIdValue]);
 
   const filteredPosts = React.useMemo(() => {
     if (groupFilter === 'all') {
@@ -239,9 +243,20 @@ export default function FeedScreen() {
         .filter((label): label is string => Boolean(label));
       const groupLabels = Array.from(new Set(labels));
       const timeAgo = post.createdAt ? formatTimeAgo(post.createdAt) : post.timeAgo;
-      return { ...post, groupLabels, timeAgo };
+      // Hide comments from blocked users and keep the visible count honest.
+      const visibleComments = post.commentsData?.filter(
+        (comment) => !blockedUserIds.includes(comment.authorId),
+      );
+      const hiddenComments = (post.commentsData?.length ?? 0) - (visibleComments?.length ?? 0);
+      return {
+        ...post,
+        commentsData: visibleComments ?? post.commentsData,
+        comments: Math.max(0, post.comments - hiddenComments),
+        groupLabels,
+        timeAgo,
+      };
     });
-  }, [filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
+  }, [blockedUserIds, filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
 
   const canDeletePost = React.useCallback(
     (post: PostData) => {
@@ -1411,8 +1426,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   groupChipLocked: {
-    backgroundColor: 'rgba(45, 108, 246, 0.12)',
-    borderColor: 'rgba(45, 108, 246, 0.3)',
+    backgroundColor: 'rgba(62, 155, 95, 0.12)',
+    borderColor: 'rgba(62, 155, 95, 0.3)',
   },
   groupChipText: {
     fontSize: 12,

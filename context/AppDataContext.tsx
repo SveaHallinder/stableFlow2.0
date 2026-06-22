@@ -827,6 +827,7 @@ export type AppDataState = {
   plannedRides: PlannedRide[];
   externalContacts: ExternalContact[];
   careEvents: CareEvent[];
+  blockedUserIds: string[];
 };
 
 type AssignmentUpdateAction = {
@@ -1228,6 +1229,8 @@ type AppDataContextValue = {
     reportComment: (postId: string, commentId: string, reason?: string) => Promise<ActionResult>;
     fetchContentReports: (includeResolved?: boolean) => Promise<ActionResult<ContentReport[]>>;
     resolveContentReport: (reportId: string) => Promise<ActionResult>;
+    blockUser: (targetUserId: string) => Promise<ActionResult>;
+    unblockUser: (targetUserId: string) => Promise<ActionResult>;
     loadMorePosts: () => Promise<ActionResult>;
     createGroup: (input: CreateGroupInput) => ActionResult<Group>;
     renameGroup: (input: RenameGroupInput) => ActionResult<Group>;
@@ -1496,6 +1499,7 @@ const initialState: AppDataState = {
   plannedRides: [],
   externalContacts: [],
   careEvents: [],
+  blockedUserIds: [],
 };
 
 function addDaysIso(days: number) {
@@ -2267,6 +2271,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         plannedRides: action.payload.plannedRides ?? state.plannedRides,
         externalContacts: action.payload.externalContacts ?? state.externalContacts,
         careEvents: action.payload.careEvents ?? state.careEvents,
+        blockedUserIds: action.payload.blockedUserIds ?? state.blockedUserIds,
       };
     }
     case 'STATE_RESET':
@@ -2983,6 +2988,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const reportPersistError = React.useCallback(
     (context: string, error: unknown) => {
       console.warn(context, error);
+      // qaDemo is a backend-free demo seeded entirely from local state — every write
+      // "fails" because there is no live Supabase session. Optimistic state is the
+      // source of truth there, so don't alarm with persist-error toasts.
+      if (isQaDemoMode) return;
       const now = Date.now();
       if (now - persistErrorAt.current > 4000) {
         persistErrorAt.current = now;
@@ -4265,6 +4274,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           plannedRidesResult,
           externalContactsResult,
           careEventsResult,
+          blockedUsersResult,
         ] = await Promise.all([
           supabase.from('stables').select('*').in('id', stableIds),
           supabase.from('farms').select('*'),
@@ -4290,7 +4300,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('planned_rides').select('*').in('stable_id', stableIds),
           supabase.from('external_contacts').select('*').in('stable_id', stableIds),
           supabase.from('care_events').select('*').in('stable_id', stableIds),
+          supabase.from('blocked_users').select('blocked_user_id').eq('blocker_user_id', authUser.id),
         ]);
+
+        const blockedUserIds = (blockedUsersResult.data ?? [])
+          .map((row) => row.blocked_user_id as string)
+          .filter(Boolean);
 
         const stableRows = stablesResult.data ?? [];
         const farmRows = farmsResult.data ?? [];
@@ -4359,16 +4374,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           {},
         );
 
-        const profileIds = new Set<string>([authUser.id]);
-        membership.forEach((row) => profileIds.add(row.user_id));
-        conversationMemberRows.forEach((row) => profileIds.add(row.user_id));
-        const profilesResult = await supabase
-          .from('profiles')
-          .select('*')
-          .in('id', Array.from(profileIds));
+        // PII-safe: co-member name/avatar/location come from get_member_directory()
+        // (phone masked for non-admins). The base profiles table is self-only RLS, so a
+        // direct `.from('profiles').select('*')` would only ever return our own row.
+        const profilesResult = await supabase.rpc('get_member_directory');
 
-        const profiles = profilesResult.data ?? [];
-        const profilesById = profiles.reduce<Record<string, (typeof profiles)[number]>>(
+        type DirectoryRow = {
+          id: string;
+          username: string | null;
+          full_name: string | null;
+          avatar_url: string | null;
+          location: string | null;
+          responsibilities: string[] | null;
+          onboarding_dismissed: boolean | null;
+          phone: string | null;
+        };
+        const profiles = (profilesResult.data ?? []) as DirectoryRow[];
+        const profilesById = profiles.reduce<Record<string, DirectoryRow>>(
           (acc, profile) => {
             acc[profile.id] = profile;
             return acc;
@@ -4891,6 +4913,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             currentStableId: selectedStableId,
             currentUserId: authUser.id,
             sessionUserId,
+            blockedUserIds,
           },
         });
         return { success: true };
@@ -5966,6 +5989,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!current.currentUserId) {
         return { success: false, reason: 'Ingen inloggad användare.' };
       }
+      if (current.blockedUserIds.includes(otherUserId)) {
+        return {
+          success: false,
+          reason: 'Du har blockerat den här användaren. Häv blockeringen för att chatta.',
+        };
+      }
 
       // Look through conversations for an existing private chat with this user
       for (const preview of current.messages) {
@@ -5979,32 +6008,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
       }
 
-      // Create new conversation
-      const { data: conversationData, error: convError } = await supabase
-        .from('conversations')
-        .insert({
-          is_group: false,
-          created_by_user_id: current.currentUserId,
-        })
-        .select('id')
-        .single();
+      // Create new conversation. qaDemo is backend-free, so fabricate a local id and
+      // skip the Supabase round-trip (which would otherwise fail and block the chat).
+      let conversationId: string;
+      if (isQaDemoMode) {
+        conversationId = generateId();
+      } else {
+        const { data: conversationData, error: convError } = await supabase
+          .from('conversations')
+          .insert({
+            is_group: false,
+            created_by_user_id: current.currentUserId,
+          })
+          .select('id')
+          .single();
 
-      if (convError || !conversationData) {
-        return { success: false, reason: 'Kunde inte skapa konversation.' };
-      }
+        if (convError || !conversationData) {
+          return { success: false, reason: 'Kunde inte skapa konversation.' };
+        }
 
-      const conversationId = conversationData.id;
+        conversationId = conversationData.id;
 
-      // Add both users as conversation members
-      const { error: memberError } = await supabase
-        .from('conversation_members')
-        .insert([
-          { conversation_id: conversationId, user_id: current.currentUserId },
-          { conversation_id: conversationId, user_id: otherUserId },
-        ]);
+        // Add both users as conversation members
+        const { error: memberError } = await supabase
+          .from('conversation_members')
+          .insert([
+            { conversation_id: conversationId, user_id: current.currentUserId },
+            { conversation_id: conversationId, user_id: otherUserId },
+          ]);
 
-      if (memberError) {
-        console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
+        if (memberError) {
+          console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
+        }
       }
 
       // Add preview to local state
@@ -7004,6 +7039,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!userId) {
         return { success: false, reason: 'Ingen aktiv användare.' };
       }
+      if (isQaDemoMode) return { success: true };
       const { error } = await supabase.from('content_reports').insert({
         id: generateId(),
         stable_id: post.stableId ?? current.currentStableId,
@@ -7032,6 +7068,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!userId) {
         return { success: false, reason: 'Ingen aktiv användare.' };
       }
+      if (isQaDemoMode) return { success: true };
       const { error } = await supabase.from('content_reports').insert({
         id: generateId(),
         stable_id: post.stableId ?? current.currentStableId,
@@ -7056,6 +7093,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!stableId) {
         return { success: false, reason: 'Inget aktivt stall.' };
       }
+      if (isQaDemoMode) return { success: true, data: [] };
       let query = supabase
         .from('content_reports')
         .select('id, stable_id, reporter_user_id, target_type, target_id, reason, created_at, resolved_at')
@@ -7086,6 +7124,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const resolveContentReport = React.useCallback(
     async (reportId: string): Promise<ActionResult> => {
       const current = stateRef.current;
+      if (isQaDemoMode) return { success: true };
       const { error } = await supabase
         .from('content_reports')
         .update({ resolved_at: new Date().toISOString(), resolved_by_user_id: current.currentUserId })
@@ -7093,6 +7132,70 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (error) {
         reportPersistErrorRef.current('Kunde inte lösa rapport', error);
         return { success: false, reason: 'Kunde inte markera rapporten som löst.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const blockUser = React.useCallback(
+    async (targetUserId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (targetUserId === userId) {
+        return { success: false, reason: 'Du kan inte blockera dig själv.' };
+      }
+      if (current.blockedUserIds.includes(targetUserId)) {
+        return { success: true };
+      }
+      // Optimistic: hide their content immediately.
+      const previous = current.blockedUserIds;
+      dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: [...previous, targetUserId] } });
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase.from('blocked_users').insert({
+        id: generateId(),
+        blocker_user_id: userId,
+        blocked_user_id: targetUserId,
+      });
+      if (error) {
+        // Roll back the optimistic update so UI never lies about a failed write.
+        dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: previous } });
+        reportPersistErrorRef.current('Kunde inte blockera användaren', error);
+        return { success: false, reason: 'Kunde inte blockera användaren.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const unblockUser = React.useCallback(
+    async (targetUserId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (!current.blockedUserIds.includes(targetUserId)) {
+        return { success: true };
+      }
+      const previous = current.blockedUserIds;
+      dispatch({
+        type: 'STATE_HYDRATE',
+        payload: { blockedUserIds: previous.filter((id) => id !== targetUserId) },
+      });
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase
+        .from('blocked_users')
+        .delete()
+        .eq('blocker_user_id', userId)
+        .eq('blocked_user_id', targetUserId);
+      if (error) {
+        dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: previous } });
+        reportPersistErrorRef.current('Kunde inte häva blockeringen', error);
+        return { success: false, reason: 'Kunde inte häva blockeringen.' };
       }
       return { success: true };
     },
@@ -7970,6 +8073,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         reportComment,
         fetchContentReports,
         resolveContentReport,
+        blockUser,
+        unblockUser,
         loadMorePosts,
         createGroup,
         renameGroup,
@@ -8049,6 +8154,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       reportComment,
       fetchContentReports,
       resolveContentReport,
+      blockUser,
+      unblockUser,
       loadMorePosts,
       createGroup,
       renameGroup,

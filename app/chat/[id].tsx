@@ -39,7 +39,14 @@ export default function ChatScreen() {
   const displayName = name ?? conversationPreview?.title ?? 'Konversation';
   const isGroup = conversationPreview?.group ?? false;
 
-  const messages = state.conversations[conversationId] ?? [];
+  const conversationMessages = state.conversations[conversationId];
+  const messages = React.useMemo(
+    () =>
+      (conversationMessages ?? []).filter(
+        (message) => !state.blockedUserIds.includes(message.authorId),
+      ),
+    [conversationMessages, state.blockedUserIds],
+  );
   const [composerText, setComposerText] = React.useState('');
   const toast = useToast();
   const scrollViewRef = React.useRef<ScrollView>(null);

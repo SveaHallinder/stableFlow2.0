@@ -798,24 +798,66 @@ alter table public.profiles enable row level security;
 drop policy if exists "profiles_select" on public.profiles;
 drop policy if exists "profiles_update_self" on public.profiles;
 drop policy if exists "profiles_insert_self" on public.profiles;
+-- Fas 0B: self-only. Co-member name/avatar served via get_member_directory() (PII-safe).
 create policy "profiles_select" on public.profiles
-  for select using (
-    (select auth.role()) = 'authenticated'
-    and (
-      (select auth.uid()) = id
-      or exists (
-        select 1
-        from public.stable_members m_self
-        join public.stable_members m_other on m_self.stable_id = m_other.stable_id
-        where m_self.user_id = (select auth.uid())
-          and m_other.user_id = profiles.id
-      )
-    )
-  );
+  for select using ((select auth.uid()) = id);
 create policy "profiles_update_self" on public.profiles
   for update using ((select auth.uid()) = id);
 create policy "profiles_insert_self" on public.profiles
   for insert with check ((select auth.uid()) = id);
+
+-- PII-safe co-member directory. Definer bypasses profiles-RLS but only exposes
+-- non-PII columns; phone is returned only for self or admins of a shared stable.
+create or replace function public.get_member_directory()
+returns table (
+  id uuid,
+  username text,
+  full_name text,
+  avatar_url text,
+  location text,
+  responsibilities text[],
+  onboarding_dismissed boolean,
+  phone text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    p.id,
+    p.username,
+    p.full_name,
+    p.avatar_url,
+    p.location,
+    p.responsibilities,
+    p.onboarding_dismissed,
+    case
+      when p.id = (select auth.uid()) then p.phone
+      when exists (
+        select 1
+        from public.stable_members m_self
+        join public.stable_members m_other
+          on m_self.stable_id = m_other.stable_id
+        where m_self.user_id = (select auth.uid())
+          and m_other.user_id = p.id
+          and m_self.role = 'admin'
+      ) then p.phone
+      else null
+    end as phone
+  from public.profiles p
+  where p.id = (select auth.uid())
+     or exists (
+       select 1
+       from public.stable_members m_self
+       join public.stable_members m_other
+         on m_self.stable_id = m_other.stable_id
+       where m_self.user_id = (select auth.uid())
+         and m_other.user_id = p.id
+     );
+$$;
+revoke all on function public.get_member_directory() from public;
+grant execute on function public.get_member_directory() to authenticated;
 
 drop policy if exists "farms_select" on public.farms;
 create policy "farms_select" on public.farms
@@ -1347,6 +1389,30 @@ create policy "content_reports_update" on public.content_reports
 create index if not exists content_reports_stable_open_idx
   on public.content_reports(stable_id, created_at desc)
   where resolved_at is null;
+
+-- Fas 3: blocked users (UGC — block/mute). Each row owned by the blocker.
+create table if not exists public.blocked_users (
+  id uuid primary key default gen_random_uuid(),
+  blocker_user_id uuid not null references public.profiles(id) on delete cascade,
+  blocked_user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (blocker_user_id, blocked_user_id),
+  check (blocker_user_id <> blocked_user_id)
+);
+alter table public.blocked_users enable row level security;
+drop policy if exists "blocked_users_select" on public.blocked_users;
+create policy "blocked_users_select" on public.blocked_users
+  for select using (blocker_user_id = (select auth.uid()));
+drop policy if exists "blocked_users_insert" on public.blocked_users;
+create policy "blocked_users_insert" on public.blocked_users
+  for insert with check (
+    blocker_user_id = (select auth.uid()) and blocked_user_id <> (select auth.uid())
+  );
+drop policy if exists "blocked_users_delete" on public.blocked_users;
+create policy "blocked_users_delete" on public.blocked_users
+  for delete using (blocker_user_id = (select auth.uid()));
+create index if not exists blocked_users_blocker_idx
+  on public.blocked_users(blocker_user_id);
 
 -- Foreign key indexes for performance
 create index if not exists alerts_stable_id_idx on public.alerts(stable_id);

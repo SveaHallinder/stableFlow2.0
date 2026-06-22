@@ -40,7 +40,7 @@ sök, och full kontohantering under GDPR. Säljs som prenumeration till stall & 
 Stäng varje server-side auktoriserings-, integritets- och secrets-hål så klienten inte längre är säkerhetsgränsen.
 - Begränsa `stables_update` till owner/can_edit_stable (inte vilken medlem som helst); skydda join_code-rotation.
 - Skriv om `posts_select` så group_ids respekteras; fixa group-filter i `loadMorePosts`.
-- [FLAGGAD: risk + roll-nyans] Smalna av `profiles_select` (PII/telefon). → Kräver: strama base-tabell till self-only + repointa LOAD-BEARING co-member-profil-läsningar (namn/avatar) till säker vy/RPC + en admin-only contact-RPC (admins behöver se telefon, vanliga medlemmar inte). Fel gjord försvinner namn/avatarer överallt — kan ej runtime-verifieras autonomt. För Svea med staging.
+- [x] Smalna av `profiles_select` (PII/telefon) — 2026-06-15. `profiles`-bas-tabell self-only RLS; co-member namn/avatar/location via SECURITY DEFINER-RPC `get_member_directory()` (phone maskas → bara self eller admin i delat stall); klientens bulk-load repointad till RPC:n; phone-rad gated i medlemsprofil-UI. Migration `20260615_fas0b_profiles_pii.sql` + schema.sql-spegel. Gates: tsc/lint/39 tester gröna. KAN EJ runtime-verifieras autonomt (qaDemo kringgår Supabase/RLS) → staging-spec: `supabase/tests/rls_profiles_pii.sql`. KRÄVER DEPLOY + Svea-verifiering på staging.
 - Fixa `conversation_members_insert` (bara egna/inbjudna konversationer); RPC för deltagarnamn; UPDATE/DELETE-policy på messages för moderering.
 - Kolumn/operation-scoping på `can_claim_assignments` (rider får bara claim/decline).
 - Flytta service-role-nyckeln från plaintext GUC till Supabase Vault/edge secrets.
@@ -65,7 +65,7 @@ Få tillväxt- och multiuser-looparna att fungera end-to-end.
 
 ### Fas 3 — UGC-säkerhet, kontolivscykel & store-compliance  `[L]`
 Möt App Store / Google Play + EU-legala krav för en UGC + persondata-produkt.
-- [~] Moderering: [x] rapportera inlägg + [x] rapportera kommentarer + [x] admin removal-kö (app/admin/reports.tsx: fetch/resolve content_reports, ta-bort-inlägg, gate canManageOnboardingAny + RLS). 2026-06-13. KVAR: block/mute-användare (kräver state/hydration-tillägg — flaggad).
+- [x] Moderering: [x] rapportera inlägg + [x] rapportera kommentarer + [x] admin removal-kö (app/admin/reports.tsx) + [x] blockera/tysta användare (2026-06-15: blocked_users-tabell + own-row RLS, state/hydration/reducer, blockUser/unblockUser optimistiskt + rollback, createPrivateConversation-guard, feed-post+kommentar-filter, chatt-meddelande-filter, konversationslista-filter, Blockera-knapp i medlemsprofil. Gates: tsc/lint/39 tester gröna. KVAR: server-side message-insert-enforce (flaggad, kräver conversation-membership-modell); KRÄVER DEPLOY: applicera 20260615_fas3_blocked_users.sql).
   - OBS: removal-kön self-reviewad (codex rate-limited vid commit); rekommenderas codex-granskas när limit återställts.
 - [x] Kontohantering: byt lösenord + byt e-post + radera konto (GDPR). Radera = `delete-account` edge fn (verifierar caller-JWT, blockerar ensam-ägare med fler medlemmar, fail-closed på guard-fel, auth.admin.deleteUser → cascade) + två-stegs danger-card i settings/account. 2026-06-13, codex: caller-identitet säker, fixade fail-open-guard. KVAR: dataexport (nice-to-have). KRÄVER DEPLOY: deploya delete-account edge fn.
 - Rate limiting / abuse-skydd på inlägg, kommentarer, likes, alerts, meddelanden.
