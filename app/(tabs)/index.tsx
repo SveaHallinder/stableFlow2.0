@@ -2154,7 +2154,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.1)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
   },
   summaryBadgeText: {
     fontSize: 12,
@@ -2394,8 +2394,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   eventKindChipActive: {
-    borderColor: 'rgba(45,108,246,0.35)',
-    backgroundColor: 'rgba(45,108,246,0.12)',
+    borderColor: 'rgba(62,155,95,0.35)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
   },
   eventKindText: {
     fontSize: 12,
@@ -2871,7 +2871,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surfaceTint,
   },
-  userRowActive: { borderColor: 'rgba(45,108,246,0.4)', backgroundColor: 'rgba(45,108,246,0.08)' },
+  userRowActive: { borderColor: 'rgba(62,155,95,0.4)', backgroundColor: 'rgba(62,155,95,0.08)' },
   userName: { fontSize: 15, fontWeight: '700', color: palette.primaryText },
   userMeta: { fontSize: 12, color: palette.secondaryText, marginTop: 2 },
 });

@@ -19,7 +19,7 @@ if (Platform.OS === 'android') {
     name: 'Standard',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#2D6CF6',
+    lightColor: '#3E9B5F',
   });
 }
 

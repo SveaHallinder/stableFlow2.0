@@ -3520,7 +3520,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.12)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
   },
   todayPillText: {
     fontSize: 10,

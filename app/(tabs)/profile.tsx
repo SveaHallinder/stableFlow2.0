@@ -222,7 +222,7 @@ export default function ProfileScreen() {
       <View style={styles.heroChips}>
         {currentUser.horses.map((horse) => (
           <View key={horse} style={styles.heroChip}>
-            <Feather name="heart" size={12} color="#2D6CF6" />
+            <Feather name="heart" size={12} color={palette.primary} />
             <Text style={styles.heroChipText}>{horse}</Text>
           </View>
         ))}

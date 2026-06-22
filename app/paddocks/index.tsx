@@ -1128,8 +1128,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   statusChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.12)',
-    borderColor: 'rgba(45,108,246,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: 'rgba(62,155,95,0.3)',
   },
   statusChipDisabled: { opacity: 0.5 },
   statusChipText: { fontSize: 11, fontWeight: '600', color: palette.primaryText },
@@ -1263,8 +1263,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   chipActive: {
-    backgroundColor: 'rgba(45,108,246,0.1)',
-    borderColor: 'rgba(45,108,246,0.26)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
+    borderColor: 'rgba(62,155,95,0.26)',
   },
   chipLabel: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   chipLabelActive: { color: palette.primary },

@@ -709,7 +709,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(45, 108, 246, 0.4)',
+    backgroundColor: 'rgba(62, 155, 95, 0.4)',
   },
   heroListDotDesktop: {
     width: 7,

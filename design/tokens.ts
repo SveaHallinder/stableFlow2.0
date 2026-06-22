@@ -22,7 +22,7 @@ export const color = {
   text: '#101622',
   textMuted: 'rgba(16, 22, 34, 0.55)',
   divider: 'rgba(16, 22, 34, 0.08)',
-  tint: '#0A84FF',
+  tint: '#3E9B5F',
 };
 
 export const shadow = {
@@ -58,7 +58,7 @@ export const shadow = {
       shadowOffset: { width: 0, height: 14 },
     },
     glow: {
-      shadowColor: 'rgba(12, 101, 255, 0.22)',
+      shadowColor: 'rgba(62, 155, 95, 0.22)',
       shadowOpacity: 1,
       shadowRadius: 24,
       shadowOffset: { width: 0, height: 12 },

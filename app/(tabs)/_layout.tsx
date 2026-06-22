@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: 'rgba(27, 30, 47, 0.06)',
-    backgroundColor: '#FBFCFE',
+    backgroundColor: '#FFFFFF',
     shadowColor: 'rgba(15,22,34,0.04)',
     shadowOpacity: 0.06,
     shadowRadius: 20,
@@ -212,6 +212,6 @@ const styles = StyleSheet.create({
   desktopMain: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: '#F8FAFD',
+    backgroundColor: '#FBFCFB',
   },
 });

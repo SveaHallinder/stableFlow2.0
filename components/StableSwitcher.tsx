@@ -115,8 +115,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   chipActive: {
-    backgroundColor: 'rgba(45,108,246,0.12)',
-    borderColor: 'rgba(45,108,246,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: 'rgba(62,155,95,0.32)',
   },
   chipText: {
     fontSize: 13,

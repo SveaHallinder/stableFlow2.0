@@ -36,7 +36,7 @@ export const Card = ({ style, children, elevated, tone = 'default', ...props }: 
       {
         backgroundColor: tone === 'muted' ? color.cardGlass : color.card,
         borderRadius: radius.lg,
-        borderWidth: 0,
+        borderWidth: StyleSheet.hairlineWidth,
         borderColor: color.divider,
         ...getCardShadow(elevated),
       },
