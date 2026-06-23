@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 
 export type WeatherData = {
   location: string;
@@ -80,11 +81,29 @@ function findParam(params: Array<{ name: string; values: number[] }>, name: stri
   return params.find((p) => p.name === name)?.values[0];
 }
 
-export function useWeather(stableLocation?: string): WeatherData | null {
+export type WeatherStatus = 'loading' | 'ready' | 'error';
+
+export type WeatherState = {
+  data: WeatherData | null;
+  status: WeatherStatus;
+};
+
+export function useWeather(stableLocation?: string): WeatherState {
   const [data, setData] = useState<WeatherData | null>(null);
+  const [status, setStatus] = useState<WeatherStatus>('loading');
 
   useEffect(() => {
     let cancelled = false;
+
+    // SMHI's open data API does not send CORS headers, so a direct browser
+    // fetch can never succeed on web — it only logs noisy CORS/network errors.
+    // Skip it and surface 'error' so the panel hides cleanly.
+    if (Platform.OS === 'web') {
+      setStatus('error');
+      return;
+    }
+
+    setStatus('loading');
     const [lat, lon] = resolveCoords(stableLocation);
     const locationLabel = stableLocation?.trim() || 'Stockholm';
 
@@ -106,7 +125,10 @@ export function useWeather(stableLocation?: string): WeatherData | null {
           parameters: Array<{ name: string; values: number[] }>;
         }> = json.timeSeries ?? [];
 
-        if (timeSeries.length === 0) return;
+        if (timeSeries.length === 0) {
+          setStatus('error');
+          return;
+        }
 
         // Current (first entry)
         const now = timeSeries[0];
@@ -134,9 +156,13 @@ export function useWeather(stableLocation?: string): WeatherData | null {
           summary: WEATHER_DESCRIPTIONS[symbol] ?? 'Okänt',
           updatedAt: `${hh}:${mm}`,
         });
+        setStatus('ready');
       })
       .catch(() => {
-        // Weather is non-critical — panel shows null state gracefully
+        // Weather is non-critical (e.g. SMHI unreachable, or CORS-blocked on
+        // web). Surface an error status so the panel can hide instead of
+        // hanging on a perpetual "Laddar väder..." state.
+        if (!cancelled) setStatus('error');
       })
       .finally(() => {
         clearTimeout(timeoutId);
@@ -147,5 +173,5 @@ export function useWeather(stableLocation?: string): WeatherData | null {
     };
   }, [stableLocation]);
 
-  return data;
+  return { data, status };
 }

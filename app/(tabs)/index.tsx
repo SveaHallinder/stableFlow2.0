@@ -1239,7 +1239,13 @@ export default function OverviewScreen() {
 }
 
 function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
-  const weather = useWeather(stableLocation);
+  const { data: weather, status } = useWeather(stableLocation);
+
+  // Weather is non-critical. If it can't load (SMHI unreachable, or CORS-blocked
+  // on web), hide the panel rather than hang on "Laddar väder..." forever.
+  if (status === 'error') {
+    return null;
+  }
 
   if (!weather) {
     return (
