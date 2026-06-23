@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton } from '@/components/Primitives';
+import { DesktopNav } from '@/components/DesktopNav';
 import { radius } from '@/design/tokens';
 import { useAppData, type ContentReport } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
@@ -83,20 +84,36 @@ export default function ModerationReportsScreen() {
     [actions, toast],
   );
 
+  const wrapDesktop = (content: React.ReactNode) => {
+    if (!isDesktopWeb) {
+      return content;
+    }
+    return (
+      <View style={styles.desktopShell}>
+        <View style={styles.desktopSidebar}>
+          <DesktopNav variant="sidebar" />
+        </View>
+        <View style={styles.desktopMain}>{content}</View>
+      </View>
+    );
+  };
+
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
-        <ScreenHeader
-          style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Rapporter"
-          showSearch={false}
-          left={
-            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
-              <Feather name="chevron-left" size={18} color={palette.primaryText} />
-            </HeaderIconButton>
-          }
-        />
-        <ScrollView
+        {wrapDesktop(
+          <>
+            <ScreenHeader
+              style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
+              title="Rapporter"
+              showSearch={false}
+              left={
+                <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+                  <Feather name="chevron-left" size={18} color={palette.primaryText} />
+                </HeaderIconButton>
+              }
+            />
+            <ScrollView
           style={styles.scroll}
           contentContainerStyle={[styles.scrollContent, isDesktopWeb && styles.scrollContentDesktop]}
           showsVerticalScrollIndicator={false}
@@ -160,7 +177,9 @@ export default function ModerationReportsScreen() {
               );
             })
           )}
-        </ScrollView>
+            </ScrollView>
+          </>,
+        )}
       </SafeAreaView>
     </LinearGradient>
   );
@@ -169,6 +188,9 @@ export default function ModerationReportsScreen() {
 const styles = StyleSheet.create({
   background: { flex: 1 },
   safeArea: { flex: 1 },
+  desktopShell: { flex: 1, flexDirection: 'row' },
+  desktopSidebar: { width: 280, paddingHorizontal: 24, paddingTop: 24 },
+  desktopMain: { flex: 1, paddingRight: 24 },
   pageHeader: { marginBottom: 0 },
   pageHeaderDesktop: {
     maxWidth: 920,
