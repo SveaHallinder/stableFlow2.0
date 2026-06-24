@@ -20,9 +20,9 @@ import { useAppData } from '@/context/AppDataContext';
 import { supabase } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { authRedirectUrl } from '@/lib/authRedirect';
 
 const palette = theme.colors;
-const EMAIL_CONFIRM_REDIRECT = 'stableflow://confirm';
 
 export default function AccountSettingsScreen() {
   const router = useRouter();
@@ -113,7 +113,7 @@ export default function AccountSettingsScreen() {
     setSavingEmail(true);
     const { error } = await supabase.auth.updateUser(
       { email: nextEmail },
-      { emailRedirectTo: EMAIL_CONFIRM_REDIRECT },
+      { emailRedirectTo: authRedirectUrl('confirm') },
     );
     setSavingEmail(false);
     if (error) {

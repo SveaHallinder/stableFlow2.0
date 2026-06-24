@@ -22,12 +22,12 @@ import {
   clearPendingOwnerStable,
 } from '@/lib/pendingAuth';
 import { generateId } from '@/lib/ids';
+import { authRedirectUrl } from '@/lib/authRedirect';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
-const EMAIL_CONFIRM_REDIRECT = 'stableflow://confirm';
 
 type AuthMode = 'login' | 'signup';
 type SignupIntent = 'create' | 'join';
@@ -143,7 +143,7 @@ export default function AuthScreen() {
         email: trimmedEmail,
         password,
         options: {
-          emailRedirectTo: EMAIL_CONFIRM_REDIRECT,
+          emailRedirectTo: authRedirectUrl('confirm'),
           data: {
             username: trimmedName,
             full_name: trimmedName,
@@ -203,7 +203,7 @@ export default function AuthScreen() {
       email: trimmedEmail,
       password,
       options: {
-        emailRedirectTo: EMAIL_CONFIRM_REDIRECT,
+        emailRedirectTo: authRedirectUrl('confirm'),
         data: {
           username: trimmedName,
           full_name: trimmedName,
@@ -287,7 +287,7 @@ export default function AuthScreen() {
     const { error } = await supabase.auth.resend({
       type: 'signup',
       email: pendingConfirmEmail,
-      options: { emailRedirectTo: EMAIL_CONFIRM_REDIRECT },
+      options: { emailRedirectTo: authRedirectUrl('confirm') },
     });
     if (error) {
       toast.showToast('Kunde inte skicka igen. Försök om en stund.', 'error');
