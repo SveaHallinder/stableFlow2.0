@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   Platform,
@@ -27,6 +26,7 @@ import { space } from '@/design/tokens';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { confirmAction } from '@/lib/confirm';
 import { formatTimeAgo } from '@/lib/time';
 import { isQaDemoMode } from '@/lib/qaDemo';
 
@@ -483,72 +483,64 @@ export default function FeedScreen() {
   );
 
   const handleDeletePost = React.useCallback(
-    (postId: string) => {
-      Alert.alert('Ta bort inlägg?', 'Detta går inte att ångra.', [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: async () => {
-            const result = await actions.deletePost(postId);
-            if (result.success) {
-              toast.showToast('Inlägget är borttaget.', 'success');
-            } else {
-              toast.showToast(result.reason, 'error');
-            }
-          },
-        },
-      ]);
+    async (postId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Ta bort inlägg?',
+        message: 'Detta går inte att ångra.',
+        confirmLabel: 'Ta bort',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.deletePost(postId);
+      if (result.success) {
+        toast.showToast('Inlägget är borttaget.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
     },
     [actions, toast],
   );
 
   const handleReportPost = React.useCallback(
-    (postId: string) => {
-      Alert.alert(
-        'Rapportera inlägg?',
-        'Inlägget skickas till stallets administratörer för granskning.',
-        [
-          { text: 'Avbryt', style: 'cancel' },
-          {
-            text: 'Rapportera',
-            style: 'destructive',
-            onPress: async () => {
-              const result = await actions.reportPost(postId);
-              if (result.success) {
-                toast.showToast('Tack, rapporten har skickats.', 'success');
-              } else {
-                toast.showToast(result.reason, 'error');
-              }
-            },
-          },
-        ],
-      );
+    async (postId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Rapportera inlägg?',
+        message: 'Inlägget skickas till stallets administratörer för granskning.',
+        confirmLabel: 'Rapportera',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.reportPost(postId);
+      if (result.success) {
+        toast.showToast('Tack, rapporten har skickats.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
     },
     [actions, toast],
   );
 
   const handleReportComment = React.useCallback(
-    (postId: string, commentId: string) => {
-      Alert.alert(
-        'Rapportera kommentar?',
-        'Kommentaren skickas till stallets administratörer för granskning.',
-        [
-          { text: 'Avbryt', style: 'cancel' },
-          {
-            text: 'Rapportera',
-            style: 'destructive',
-            onPress: async () => {
-              const result = await actions.reportComment(postId, commentId);
-              if (result.success) {
-                toast.showToast('Tack, rapporten har skickats.', 'success');
-              } else {
-                toast.showToast(result.reason, 'error');
-              }
-            },
-          },
-        ],
-      );
+    async (postId: string, commentId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Rapportera kommentar?',
+        message: 'Kommentaren skickas till stallets administratörer för granskning.',
+        confirmLabel: 'Rapportera',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.reportComment(postId, commentId);
+      if (result.success) {
+        toast.showToast('Tack, rapporten har skickats.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
     },
     [actions, toast],
   );

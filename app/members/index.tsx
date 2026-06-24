@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -19,6 +18,7 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
+import { confirmAction } from '@/lib/confirm';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
@@ -219,22 +219,22 @@ export default function MembersScreen() {
   );
 
   const handleRemoveMember = React.useCallback(
-    (userId: string, stableId: string) => {
-      Alert.alert('Ta bort medlem?', 'Medlemmen förlorar åtkomst till stallet.', [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: () => {
-            const result = actions.removeMemberFromStable(userId, stableId);
-            if (!result.success) {
-              toast.showToast(result.reason, 'error');
-            } else {
-              toast.showToast('Medlem borttagen.', 'success');
-            }
-          },
-        },
-      ]);
+    async (userId: string, stableId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Ta bort medlem?',
+        message: 'Medlemmen förlorar åtkomst till stallet.',
+        confirmLabel: 'Ta bort',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = actions.removeMemberFromStable(userId, stableId);
+      if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      } else {
+        toast.showToast('Medlem borttagen.', 'success');
+      }
     },
     [actions, toast],
   );

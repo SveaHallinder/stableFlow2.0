@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -24,6 +23,7 @@ import { HeaderIconButton, Card } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
+import { confirmAction } from '@/lib/confirm';
 import type { Paddock, PaddockImage, UpsertPaddockInput } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { createPaddocksPrintHtml } from '@/lib/paddocksPrint';
@@ -310,7 +310,7 @@ export default function PaddocksScreen() {
     toast,
   ]);
 
-  const handleDelete = React.useCallback(() => {
+  const handleDelete = React.useCallback(async () => {
     if (!canManagePaddocks) {
       toast.showToast('Behörighet saknas för att ta bort hagar.', 'error');
       return;
@@ -318,22 +318,22 @@ export default function PaddocksScreen() {
     if (!draft.id) {
       return;
     }
-    Alert.alert('Ta bort hage?', 'Detta går inte att ångra.', [
-      { text: 'Avbryt', style: 'cancel' },
-      {
-        text: 'Ta bort',
-        style: 'destructive',
-        onPress: () => {
-          const result = actions.deletePaddock(draft.id!);
-          if (result.success) {
-            toast.showToast('Hagen togs bort.', 'success');
-            closeModal();
-          } else {
-            toast.showToast(result.reason, 'error');
-          }
-        },
-      },
-    ]);
+    const confirmed = await confirmAction({
+      title: 'Ta bort hage?',
+      message: 'Detta går inte att ångra.',
+      confirmLabel: 'Ta bort',
+      destructive: true,
+    });
+    if (!confirmed) {
+      return;
+    }
+    const result = actions.deletePaddock(draft.id!);
+    if (result.success) {
+      toast.showToast('Hagen togs bort.', 'success');
+      closeModal();
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
   }, [actions, canManagePaddocks, closeModal, draft.id, toast]);
 
   const handlePrint = React.useCallback(async () => {
