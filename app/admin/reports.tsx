@@ -76,8 +76,17 @@ export default function ModerationReportsScreen() {
         toast.showToast(del.reason ?? 'Kunde inte ta bort inlägget.', 'error');
         return;
       }
-      await actions.resolveContentReport(report.id);
+      // The post is already gone; if resolving the report fails, don't claim the
+      // report was resolved or drop the row — it's still open and will reappear.
+      const resolved = await actions.resolveContentReport(report.id);
       setBusyId(null);
+      if (!resolved.success) {
+        toast.showToast(
+          resolved.reason ?? 'Inlägget togs bort, men rapporten kunde inte lösas. Försök igen.',
+          'error',
+        );
+        return;
+      }
       toast.showToast('Inlägget togs bort och rapporten löstes.', 'success');
       setReports((prev) => prev.filter((r) => r.id !== report.id));
     },
