@@ -796,6 +796,9 @@ alter table public.messages enable row level security;
 alter table public.profiles enable row level security;
 
 drop policy if exists "profiles_select" on public.profiles;
+-- Legacy ad-hoc policy that leaked co-members' full profile row (incl. phone) to any
+-- stablemate; only ever existed on remote, never in source. Drop defensively.
+drop policy if exists "profiles_select_self_or_shared_stable" on public.profiles;
 drop policy if exists "profiles_update_self" on public.profiles;
 drop policy if exists "profiles_insert_self" on public.profiles;
 -- Fas 0B: self-only. Co-member name/avatar served via get_member_directory() (PII-safe).

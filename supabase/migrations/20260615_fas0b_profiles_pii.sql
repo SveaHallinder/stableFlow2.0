@@ -7,6 +7,10 @@
 
 -- 1) Lås bas-tabellen till self-only.
 drop policy if exists "profiles_select" on public.profiles;
+-- Legacy ad-hoc policy (fanns bara på remote, aldrig i källan) som OR:ade in
+-- "self ELLER delar stall" → läckte co-members hela profilrad inkl. phone trots
+-- self-only-policyn ovan. Måste droppas explicit annars är maskeringen verkningslös.
+drop policy if exists "profiles_select_self_or_shared_stable" on public.profiles;
 create policy "profiles_select" on public.profiles
   for select using ((select auth.uid()) = id);
 
