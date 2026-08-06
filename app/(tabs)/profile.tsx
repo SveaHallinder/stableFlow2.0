@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  ActivityIndicator,
   Platform,
   RefreshControl,
   ScrollView,
@@ -71,6 +72,9 @@ export default function ProfileScreen() {
   const [defaultPassAnchor, setDefaultPassAnchor] = React.useState<number | null>(null);
   const [highlightDefaultPass, setHighlightDefaultPass] = React.useState(false);
   const [didScrollToSection, setDidScrollToSection] = React.useState(false);
+  const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   const isDesktopWeb = useIsDesktopWeb();
   const isWeb = Platform.OS === 'web';
   const currentStable = state.stables.find((stable) => stable.id === currentStableId);
@@ -154,15 +158,27 @@ export default function ProfileScreen() {
   }, [router]);
 
   const handleTakeAssignment = React.useCallback(
-    (assignmentId: string) => {
-      const result = actions.claimAssignment(assignmentId);
-      if (result.success && result.data) {
-        toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
+    async (assignmentId: string) => {
+      if (claimingAssignmentIds.has(assignmentId)) {
+        return;
+      }
+      setClaimingAssignmentIds((current) => new Set(current).add(assignmentId));
+      try {
+        const result = await actions.claimAssignment(assignmentId);
+        if (result.success && result.data) {
+          toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+        } else if (!result.success) {
+          toast.showToast(result.reason, 'error');
+        }
+      } finally {
+        setClaimingAssignmentIds((current) => {
+          const next = new Set(current);
+          next.delete(assignmentId);
+          return next;
+        });
       }
     },
-    [actions, toast],
+    [actions, claimingAssignmentIds, toast],
   );
 
   if (!currentUser) {
@@ -411,6 +427,7 @@ export default function ProfileScreen() {
               isCurrentUser={isCurrentUser}
               timeLabel={timeLabel}
               note={note}
+              isPending={claimingAssignmentIds.has(assignment.id)}
               onTakeAssignment={handleTakeAssignment}
             />
           ))
@@ -516,6 +533,7 @@ const AssignmentCard = React.memo(function AssignmentCard({
   isCurrentUser,
   timeLabel,
   note,
+  isPending,
   onTakeAssignment,
 }: {
   assignment: Assignment;
@@ -523,7 +541,8 @@ const AssignmentCard = React.memo(function AssignmentCard({
   isCurrentUser: boolean;
   timeLabel: string;
   note?: string;
-  onTakeAssignment: (assignmentId: string) => void;
+  isPending: boolean;
+  onTakeAssignment: (assignmentId: string) => void | Promise<void>;
 }) {
   const status = assignmentStatusStyles[assignment.status];
 
@@ -546,11 +565,18 @@ const AssignmentCard = React.memo(function AssignmentCard({
       {note ? <Text style={styles.assignmentNote}>{note}</Text> : null}
       {assignment.status === 'open' ? (
         <TouchableOpacity
-          style={styles.assignmentAction}
+          style={[styles.assignmentAction, isPending && styles.assignmentActionDisabled]}
           activeOpacity={0.85}
-          onPress={() => onTakeAssignment(assignment.id)}
+          onPress={() => void onTakeAssignment(assignment.id)}
+          disabled={isPending}
+          accessibilityRole="button"
+          accessibilityLabel={isPending ? 'Tar passet' : `Ta ${formatAssignmentTitle(assignment)}`}
+          accessibilityState={{ disabled: isPending, busy: isPending }}
         >
-          <Text style={styles.assignmentActionLabel}>Ta passet</Text>
+          {isPending ? <ActivityIndicator size="small" color={palette.inverseText} /> : null}
+          <Text style={styles.assignmentActionLabel}>
+            {isPending ? 'Tar pass...' : 'Ta passet'}
+          </Text>
         </TouchableOpacity>
       ) : null}
     </Card>
@@ -951,11 +977,17 @@ const styles = StyleSheet.create({
   },
   assignmentAction: {
     alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginTop: 4,
     backgroundColor: palette.primary,
     borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  assignmentActionDisabled: {
+    opacity: 0.65,
   },
   assignmentActionLabel: {
     fontSize: 13,

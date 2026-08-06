@@ -1182,8 +1182,8 @@ type AppDataContextValue = {
   };
   actions: {
     logNextAssignment: () => ActionResult<Assignment>;
-    claimNextOpenAssignment: () => ActionResult<Assignment>;
-    claimAssignment: (assignmentId: string) => ActionResult<Assignment>;
+    claimNextOpenAssignment: () => Promise<ActionResult<Assignment>>;
+    claimAssignment: (assignmentId: string) => Promise<ActionResult<Assignment>>;
     declineAssignment: (assignmentId: string) => ActionResult<Assignment>;
     completeAssignment: (assignmentId: string) => ActionResult<Assignment>;
     createAssignment: (input: CreateAssignmentInput) => ActionResult<Assignment>;
@@ -3008,6 +3008,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     reportPersistErrorRef.current = reportPersistError;
   }, [reportPersistError]);
   const recurringDurationById = React.useRef(new Map<string, number>());
+  const pendingAssignmentClaimIdsRef = React.useRef(new Set<string>());
 
   React.useEffect(() => {
     stateRef.current = state;
@@ -3064,6 +3065,30 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (error) {
         reportPersistError('Kunde inte uppdatera pass', error);
       }
+    },
+    [user, reportPersistError],
+  );
+
+  const persistAssignmentClaim = React.useCallback(
+    async (assignmentId: string, updates: Partial<Assignment>) => {
+      if (isQaDemoMode) return { claimed: true, error: null };
+      if (!user) {
+        const error = new Error('Missing session');
+        reportPersistError('[assignment claim] Session saknas', error);
+        return { claimed: false, error };
+      }
+
+      const { data, error } = await supabase
+        .from('assignments')
+        .update(buildAssignmentUpdatePayload(updates))
+        .eq('id', assignmentId)
+        .eq('status', 'open')
+        .is('assignee_id', null)
+        .select('id');
+      if (error) {
+        reportPersistError('[assignment claim] Kunde inte ta pass', error);
+      }
+      return { claimed: Boolean(data?.length), error };
     },
     [user, reportPersistError],
   );
@@ -5289,57 +5314,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return { success: true, data: updated };
   }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
 
-  const claimNextOpenAssignment = React.useCallback((): ActionResult<Assignment> => {
-    const current = stateRef.current;
-    const assignment = findNextOpenAssignment(current);
-    if (!assignment) {
-      return { success: false, reason: 'Alla pass är redan bemannade.' };
-    }
-    const accessCheck = ensurePermission(assignment.stableId, (permissions) => permissions.canClaimAssignments);
-    if (!accessCheck.success) {
-      return accessCheck;
-    }
-
-    const declinedByUserIds = assignment.declinedByUserIds?.filter(
-      (id) => id !== current.currentUserId,
-    );
-
-    dispatch({
-      type: 'ASSIGNMENT_UPDATE',
-      payload: {
-        id: assignment.id,
-        updates: {
-          status: 'assigned',
-          assigneeId: current.currentUserId,
-          assignedVia: 'manual',
-          declinedByUserIds,
-        },
-      },
-    });
-
-    const updated: Assignment = {
-      ...assignment,
-      status: 'assigned',
-      assigneeId: current.currentUserId,
-      assignedVia: 'manual',
-      declinedByUserIds,
-    };
-    void persistAssignmentUpdate(assignment.id, {
-      status: 'assigned',
-      assigneeId: current.currentUserId,
-      assignedVia: 'manual',
-      declinedByUserIds,
-    });
-    void persistAssignmentHistory(updated, 'assigned');
-
-    return {
-      success: true,
-      data: updated,
-    };
-  }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
-
   const claimAssignment = React.useCallback(
-    (assignmentId: string): ActionResult<Assignment> => {
+    async (assignmentId: string): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const assignment = current.assignments.find((item) => item.id === assignmentId);
       if (!assignment) {
@@ -5353,24 +5329,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (assignment.status !== 'open') {
         return { success: false, reason: 'Passet är redan bemannat.' };
       }
+      if (pendingAssignmentClaimIdsRef.current.has(assignmentId)) {
+        return { success: false, reason: 'Passet håller redan på att tas.' };
+      }
 
       const declinedByUserIds = assignment.declinedByUserIds?.filter(
         (id) => id !== current.currentUserId,
       );
-
-      dispatch({
-        type: 'ASSIGNMENT_UPDATE',
-        payload: {
-          id: assignment.id,
-          updates: {
-            status: 'assigned',
-            assigneeId: current.currentUserId,
-            assignedVia: 'manual',
-            declinedByUserIds,
-          },
-        },
-      });
-
       const updated: Assignment = {
         ...assignment,
         status: 'assigned',
@@ -5378,21 +5343,57 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         assignedVia: 'manual',
         declinedByUserIds,
       };
-      void persistAssignmentUpdate(assignment.id, {
+      const updates: Partial<Assignment> = {
         status: 'assigned',
         assigneeId: current.currentUserId,
         assignedVia: 'manual',
         declinedByUserIds,
-      });
-      void persistAssignmentHistory(updated, 'assigned');
-
-      return {
-        success: true,
-        data: updated,
       };
+
+      pendingAssignmentClaimIdsRef.current.add(assignmentId);
+      try {
+        const persisted = await persistAssignmentClaim(assignment.id, updates);
+        if (persisted.error) {
+          await refreshData({ reason: 'manual' });
+          return {
+            success: false,
+            reason: 'Det gick inte att ta passet just nu. Försök igen.',
+          };
+        }
+        if (!persisted.claimed) {
+          const refreshed = await refreshData({ reason: 'manual' });
+          return {
+            success: false,
+            reason: refreshed.success
+              ? 'Någon annan hann ta passet. Schemat har uppdaterats.'
+              : 'Någon annan hann ta passet. Ladda om schemat för senaste läget.',
+          };
+        }
+
+        dispatch({
+          type: 'ASSIGNMENT_UPDATE',
+          payload: { id: assignment.id, updates },
+        });
+        void persistAssignmentHistory(updated, 'assigned');
+
+        return {
+          success: true,
+          data: updated,
+        };
+      } finally {
+        pendingAssignmentClaimIdsRef.current.delete(assignmentId);
+      }
     },
-    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
+    [ensurePermission, persistAssignmentClaim, persistAssignmentHistory, refreshData],
   );
+
+  const claimNextOpenAssignment = React.useCallback(async (): Promise<ActionResult<Assignment>> => {
+    const assignment = findNextOpenAssignment(stateRef.current);
+    if (!assignment) {
+      return { success: false, reason: 'Alla pass är redan bemannade.' };
+    }
+    return claimAssignment(assignment.id);
+  }, [claimAssignment]);
 
   const declineAssignment = React.useCallback(
     (assignmentId: string): ActionResult<Assignment> => {

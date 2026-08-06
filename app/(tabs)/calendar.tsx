@@ -41,6 +41,7 @@ import {
   groupAssignmentsByDay,
   formatShortWeekday,
   formatDayNumber,
+  findInitialWeekIndex,
   generateDateOptions,
   type GroupedAssignmentDay,
   toISODate,
@@ -317,6 +318,9 @@ export default function CalendarScreen() {
     note?: string;
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
+  const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
   const toast = useToast();
@@ -631,6 +635,7 @@ export default function CalendarScreen() {
     [activeDayEvents],
   );
 
+  const todayIso = toISODate(new Date());
   const weekGroups = React.useMemo(() => {
     const grouped = new Map<string, { start: Date; end: Date; days: GroupedAssignmentDay[] }>();
 
@@ -651,18 +656,39 @@ export default function CalendarScreen() {
       }
     });
 
+    const todayWeekStart = startOfWeek(new Date(`${todayIso}T00:00:00`));
+    const todayWeekKey = toISODate(todayWeekStart);
+    if (!grouped.has(todayWeekKey)) {
+      const emptyDays = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(todayWeekStart);
+        date.setDate(todayWeekStart.getDate() + index);
+        return { isoDate: toISODate(date), date, assignments: [] };
+      });
+      grouped.set(todayWeekKey, {
+        start: todayWeekStart,
+        end: endOfWeek(todayWeekStart),
+        days: emptyDays,
+      });
+    }
+
     return Array.from(grouped.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [groupedDays]);
+  }, [groupedDays, todayIso]);
 
   const [weekIndex, setWeekIndex] = React.useState(0);
+  const initializedWeekStableIdRef = React.useRef<string>();
 
   React.useEffect(() => {
     if (weekGroups.length === 0) {
       setWeekIndex(0);
       return;
     }
+    if (initializedWeekStableIdRef.current !== currentStableId) {
+      initializedWeekStableIdRef.current = currentStableId;
+      setWeekIndex(findInitialWeekIndex(weekGroups));
+      return;
+    }
     setWeekIndex((prev) => Math.min(prev, weekGroups.length - 1));
-  }, [weekGroups.length]);
+  }, [currentStableId, weekGroups]);
 
   React.useEffect(() => {
     if (!focusDate || weekGroups.length === 0) {
@@ -684,7 +710,6 @@ export default function CalendarScreen() {
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
-  const todayIso = toISODate(new Date());
   const upcomingDayGroups = React.useMemo(
     () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
     [groupedDays, todayIso],
@@ -927,13 +952,25 @@ export default function CalendarScreen() {
   }, []);
 
   const handleClaimAssignment = React.useCallback(
-    (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
+    async (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
       if (assignmentId) {
-        const result = actions.claimAssignment(assignmentId);
-        if (result.success && result.data) {
-          toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-        } else if (!result.success) {
-          toast.showToast(result.reason, 'error');
+        if (claimingAssignmentIds.has(assignmentId)) {
+          return;
+        }
+        setClaimingAssignmentIds((current) => new Set(current).add(assignmentId));
+        try {
+          const result = await actions.claimAssignment(assignmentId);
+          if (result.success && result.data) {
+            toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+          } else if (!result.success) {
+            toast.showToast(result.reason, 'error');
+          }
+        } finally {
+          setClaimingAssignmentIds((current) => {
+            const next = new Set(current);
+            next.delete(assignmentId);
+            return next;
+          });
         }
         return;
       }
@@ -947,7 +984,7 @@ export default function CalendarScreen() {
         });
       }
     },
-    [actions, toast],
+    [actions, claimingAssignmentIds, toast],
   );
 
   const handleEditAssignment = React.useCallback(
@@ -1555,6 +1592,7 @@ export default function CalendarScreen() {
                   openSlots={day.openSlots}
                   mineSlots={day.mineSlots}
                   openAssignments={day.openAssignments}
+                  claimingAssignmentIds={claimingAssignmentIds}
                   events={day.events}
                   mode={passView}
                   onClaimOpenAssignment={canClaimAssignments ? handleClaimAssignment : undefined}
@@ -2609,6 +2647,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots,
   mineSlots,
   openAssignments,
+  claimingAssignmentIds,
   events,
   mode,
   onClaimOpenAssignment,
@@ -2625,6 +2664,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots: number;
   mineSlots: number;
   openAssignments: Assignment[];
+  claimingAssignmentIds: Set<string>;
   events: { id: string; label: string; color: string }[];
   mode: PassView;
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
@@ -2640,12 +2680,17 @@ const RegularDayCard = React.memo(function RegularDayCard({
         ? slots.filter((slot) => slot.status === 'open')
         : slots;
 
+  const footerAssignmentId = openAssignments[0]?.id;
+  const isFooterClaiming = footerAssignmentId
+    ? claimingAssignmentIds.has(footerAssignmentId)
+    : false;
+
   const handleActionPress = () => {
     if (openSlots > 0) {
-      if (!onClaimOpenAssignment) {
+      if (!onClaimOpenAssignment || isFooterClaiming) {
         return;
       }
-      onClaimOpenAssignment(openAssignments[0]?.id, {
+      void onClaimOpenAssignment(footerAssignmentId, {
         date: isoDate,
         slot: openAssignments[0]?.slot,
       });
@@ -2682,6 +2727,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
             <View style={styles.dayStatusPill}>
               <Text style={styles.dayStatusPillText}>{openSlots} ledigt</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2713,6 +2760,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isLast={index === visibleSlots.length - 1}
             status={slot.status}
             isMissed={slot.isMissed}
+            isClaiming={claimingAssignmentIds.has(slot.id)}
             onTake={
               slot.status === 'open'
                 ? () =>
@@ -2743,6 +2791,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
               <Feather name="alert-triangle" size={12} color={palette.warning} />
               <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2754,6 +2804,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
               ]}
               activeOpacity={0.85}
               onPress={handleActionPress}
+              disabled={isFooterClaiming}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isFooterClaiming, busy: isFooterClaiming }}
             >
               <Text
                 style={[
@@ -2761,7 +2814,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
                   openSlots > 0 && styles.dayActionLabelPrimary,
                 ]}
               >
-                {openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
+                {isFooterClaiming ? 'Tar pass...' : openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -2784,6 +2837,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast,
   status,
   isMissed,
+  isClaiming,
   onTake,
   onManage,
   onDecline,
@@ -2801,6 +2855,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast?: boolean;
   status: AssignmentStatus;
   isMissed: boolean;
+  isClaiming: boolean;
   onTake?: () => void;
   onManage?: () => void;
   onDecline?: () => void;
@@ -2906,12 +2961,26 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                 </View>
               ) : onTake ? (
                 <TouchableOpacity
-                  style={[styles.scheduleManageButton, styles.scheduleTakeButton]}
+                  style={[
+                    styles.scheduleManageButton,
+                    styles.scheduleTakeButton,
+                    isClaiming && styles.scheduleManageButtonDisabled,
+                  ]}
                   onPress={onTake}
                   activeOpacity={0.85}
+                  disabled={isClaiming}
+                  accessibilityRole="button"
+                  accessibilityLabel={isClaiming ? `Tar ${label}` : `Ta ${label}`}
+                  accessibilityState={{ disabled: isClaiming, busy: isClaiming }}
                 >
-                  <Feather name="plus" size={14} color={palette.inverseText} />
-                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>Ta pass</Text>
+                  {isClaiming ? (
+                    <ActivityIndicator size="small" color={palette.inverseText} />
+                  ) : (
+                    <Feather name="plus" size={14} color={palette.inverseText} />
+                  )}
+                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
+                    {isClaiming ? 'Tar pass...' : 'Ta pass'}
+                  </Text>
                 </TouchableOpacity>
               ) : onManage ? (
                 <TouchableOpacity style={styles.scheduleManageButton} onPress={onManage} activeOpacity={0.85}>
@@ -3898,6 +3967,9 @@ const styles = StyleSheet.create({
   },
   scheduleTakeButton: {
     backgroundColor: palette.primary,
+  },
+  scheduleManageButtonDisabled: {
+    opacity: 0.65,
   },
   scheduleCompleteButton: {
     backgroundColor: palette.success,
