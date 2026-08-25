@@ -34,3 +34,8 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 supabase/.temp/
+
+# playwright
+test-results/
+playwright-report/
+.gstack/

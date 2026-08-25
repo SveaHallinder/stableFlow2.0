@@ -41,6 +41,8 @@ type PostCardProps = {
   canInteract?: boolean;
   canDelete?: boolean;
   onDelete?: () => void;
+  onReport?: () => void;
+  onReportComment?: (commentId: string) => void;
 };
 
 export const PostCard = React.memo(function PostCard({
@@ -51,15 +53,17 @@ export const PostCard = React.memo(function PostCard({
   canInteract = true,
   canDelete = false,
   onDelete,
+  onReport,
+  onReportComment,
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
   const [imageFailed, setImageFailed] = React.useState(false);
-  const prevImageUrl = React.useRef(data.imageSignedUrl);
-  if (prevImageUrl.current !== data.imageSignedUrl) {
-    prevImageUrl.current = data.imageSignedUrl;
-    if (imageFailed) setImageFailed(false);
-  }
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [data.imageSignedUrl]);
+
   const isLiked = currentUserId ? data.likedByUserIds?.includes(currentUserId) : false;
   const comments = data.commentsData ?? [];
   const visibleComments = comments.slice(-2);
@@ -84,8 +88,25 @@ export const PostCard = React.memo(function PostCard({
           <Text style={styles.author}>{data.author}</Text>
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
+        {onReport ? (
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onReport}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Rapportera inlägg"
+          >
+            <Feather name="flag" size={16} color={palette.secondaryText} />
+          </TouchableOpacity>
+        ) : null}
         {canDelete && onDelete ? (
-          <TouchableOpacity style={styles.moreButton} onPress={onDelete} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onDelete}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Ta bort inlägg"
+          >
             <Feather name="more-vertical" size={18} color={palette.secondaryText} />
           </TouchableOpacity>
         ) : null}
@@ -116,8 +137,21 @@ export const PostCard = React.memo(function PostCard({
         <View style={styles.commentList}>
           {visibleComments.map((comment) => (
             <View key={comment.id} style={styles.commentRow}>
-              <Text style={styles.commentAuthor}>{comment.authorName}</Text>
-              <Text style={styles.commentText}>{comment.text}</Text>
+              <View style={styles.commentBody}>
+                <Text style={styles.commentAuthor}>{comment.authorName}</Text>
+                <Text style={styles.commentText}>{comment.text}</Text>
+              </View>
+              {onReportComment && comment.authorId && comment.authorId !== currentUserId ? (
+                <TouchableOpacity
+                  onPress={() => onReportComment(comment.id)}
+                  activeOpacity={0.85}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Rapportera kommentar"
+                >
+                  <Feather name="flag" size={13} color={palette.secondaryText} />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))}
         </View>
@@ -264,7 +298,15 @@ const styles = StyleSheet.create({
   },
   commentRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
+  },
+  commentBody: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+    flexWrap: 'wrap',
   },
   commentAuthor: {
     fontSize: 12,

@@ -17,9 +17,9 @@ import { theme } from '@/components/theme';
 import { supabase, supabaseConfig } from '@/lib/supabase';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
+import { authRedirectUrl } from '@/lib/authRedirect';
 
 const palette = theme.colors;
-const RESET_REDIRECT_URL = 'stableflow://reset';
 
 export default function ForgotPasswordScreen() {
   const router = useRouter();
@@ -48,7 +48,7 @@ export default function ForgotPasswordScreen() {
     setSubmitting(true);
     setMessage(null);
     const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: RESET_REDIRECT_URL,
+      redirectTo: authRedirectUrl('reset'),
     });
     if (error) {
       toast.showToast(error.message || 'Kunde inte skicka återställningslänken.', 'error');

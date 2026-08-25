@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   Platform,
@@ -15,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Asset } from 'expo-asset';
 import * as ImagePicker from 'expo-image-picker';
 import { PostCard, PostData } from '@/components/Post';
 import { theme } from '@/components/theme';
@@ -26,7 +26,9 @@ import { space } from '@/design/tokens';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { confirmAction } from '@/lib/confirm';
 import { formatTimeAgo } from '@/lib/time';
+import { isQaDemoMode } from '@/lib/qaDemo';
 
 const palette = theme.colors;
 const gradients = theme.gradients;
@@ -59,6 +61,8 @@ export default function FeedScreen() {
       users,
       currentUserId,
       groups,
+      stableAlerts,
+      blockedUserIds,
     },
     derived,
     actions,
@@ -80,6 +84,24 @@ export default function FeedScreen() {
   const canPublishPost = permissions.canCreatePost;
   const canEditGroups = permissions.canManageGroups;
   const canInteract = permissions.canLikePost && permissions.canCommentPost;
+  const importantAlerts = React.useMemo(
+    () =>
+      stableAlerts
+        .filter(
+          (alert) =>
+            alert.stableId === currentStableId &&
+            !alert.resolvedAt &&
+            alert.severity !== 'info',
+        )
+        .sort((a, b) => {
+          if (a.severity !== b.severity) {
+            return a.severity === 'urgent' ? -1 : 1;
+          }
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        })
+        .slice(0, 2),
+    [currentStableId, stableAlerts],
+  );
 
   const groupsById = React.useMemo(
     () => new Map(groups.map((group) => [group.id, group])),
@@ -165,13 +187,16 @@ export default function FeedScreen() {
       stableGroupIdValue,
     ]);
     return posts.filter((post) => {
+      if (post.authorId && blockedUserIds.includes(post.authorId)) {
+        return false;
+      }
       const groups = getPostGroups(post);
       if (!groups.length) {
         return !post.stableId || post.stableId === currentStableId;
       }
       return groups.some((groupId) => accessibleGroups.has(groupId));
     });
-  }, [currentFarmId, currentStableId, getPostGroups, groups, posts, stableGroupIdValue]);
+  }, [blockedUserIds, currentFarmId, currentStableId, getPostGroups, groups, posts, stableGroupIdValue]);
 
   const filteredPosts = React.useMemo(() => {
     if (groupFilter === 'all') {
@@ -218,9 +243,20 @@ export default function FeedScreen() {
         .filter((label): label is string => Boolean(label));
       const groupLabels = Array.from(new Set(labels));
       const timeAgo = post.createdAt ? formatTimeAgo(post.createdAt) : post.timeAgo;
-      return { ...post, groupLabels, timeAgo };
+      // Hide comments from blocked users and keep the visible count honest.
+      const visibleComments = post.commentsData?.filter(
+        (comment) => !blockedUserIds.includes(comment.authorId),
+      );
+      const hiddenComments = (post.commentsData?.length ?? 0) - (visibleComments?.length ?? 0);
+      return {
+        ...post,
+        commentsData: visibleComments ?? post.commentsData,
+        comments: Math.max(0, post.comments - hiddenComments),
+        groupLabels,
+        timeAgo,
+      };
     });
-  }, [filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
+  }, [blockedUserIds, filteredPosts, getPostGroups, groupsById, stableGroupIdValue]);
 
   const canDeletePost = React.useCallback(
     (post: PostData) => {
@@ -337,8 +373,14 @@ export default function FeedScreen() {
   );
 
   const handlePickImage = React.useCallback(() => {
+    if (isQaDemoMode) {
+      setPostImage(Asset.fromModule(require('@/assets/images/logo-splash.png')).uri);
+      setIsComposerOpen(true);
+      toast.showToast('QA-bild vald.', 'success');
+      return;
+    }
     void openImagePicker('library');
-  }, [openImagePicker]);
+  }, [openImagePicker, toast]);
 
   const handleTakePhoto = React.useCallback(() => {
     void openImagePicker('camera');
@@ -441,22 +483,64 @@ export default function FeedScreen() {
   );
 
   const handleDeletePost = React.useCallback(
-    (postId: string) => {
-      Alert.alert('Ta bort inlägg?', 'Detta går inte att ångra.', [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: async () => {
-            const result = await actions.deletePost(postId);
-            if (result.success) {
-              toast.showToast('Inlägget är borttaget.', 'success');
-            } else {
-              toast.showToast(result.reason, 'error');
-            }
-          },
-        },
-      ]);
+    async (postId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Ta bort inlägg?',
+        message: 'Detta går inte att ångra.',
+        confirmLabel: 'Ta bort',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.deletePost(postId);
+      if (result.success) {
+        toast.showToast('Inlägget är borttaget.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
+  const handleReportPost = React.useCallback(
+    async (postId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Rapportera inlägg?',
+        message: 'Inlägget skickas till stallets administratörer för granskning.',
+        confirmLabel: 'Rapportera',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.reportPost(postId);
+      if (result.success) {
+        toast.showToast('Tack, rapporten har skickats.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
+
+  const handleReportComment = React.useCallback(
+    async (postId: string, commentId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Rapportera kommentar?',
+        message: 'Kommentaren skickas till stallets administratörer för granskning.',
+        confirmLabel: 'Rapportera',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = await actions.reportComment(postId, commentId);
+      if (result.success) {
+        toast.showToast('Tack, rapporten har skickats.', 'success');
+      } else {
+        toast.showToast(result.reason, 'error');
+      }
     },
     [actions, toast],
   );
@@ -734,6 +818,37 @@ export default function FeedScreen() {
     </Card>
   ) : null;
 
+  const importantAlertsStrip = importantAlerts.length ? (
+    <Card tone="muted" style={styles.importantAlertsCard}>
+      <View style={styles.importantAlertsHeader}>
+        <Text style={styles.importantAlertsTitle}>Viktigt i stallet</Text>
+        <Text style={styles.importantAlertsMeta}>{`${importantAlerts.length} aktiva`}</Text>
+      </View>
+      <View style={styles.importantAlertsList}>
+        {importantAlerts.map((alert) => (
+          <View key={alert.id} style={styles.importantAlertRow}>
+            <View
+              style={[
+                styles.importantAlertDot,
+                { backgroundColor: alert.severity === 'urgent' ? palette.error : palette.warning },
+              ]}
+            />
+            <View style={styles.importantAlertBody}>
+              <Text style={styles.importantAlertTitle} numberOfLines={1}>
+                {alert.title}
+              </Text>
+              {alert.body ? (
+                <Text style={styles.importantAlertText} numberOfLines={1}>
+                  {alert.body}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        ))}
+      </View>
+    </Card>
+  ) : null;
+
   const hasActiveFilter = groupFilter !== 'all' || Boolean(customFilterId);
   type EmptyStateAction = {
     label: string;
@@ -924,6 +1039,7 @@ export default function FeedScreen() {
                 <View style={styles.desktopFeed}>
                   <View style={[styles.postList, styles.postListDesktop]}>
                     {readOnlyCard}
+                    {importantAlertsStrip}
                     {composerClosedCard}
                     {composerCard}
                     {postCards.length === 0 ? (
@@ -940,6 +1056,16 @@ export default function FeedScreen() {
                             canInteract={canInteract}
                             canDelete={canDeletePost(post)}
                             onDelete={() => handleDeletePost(post.id)}
+                            onReport={
+                              currentUserId && post.authorId && post.authorId !== currentUserId
+                                ? () => handleReportPost(post.id)
+                                : undefined
+                            }
+                            onReportComment={
+                              currentUserId
+                                ? (commentId) => handleReportComment(post.id, commentId)
+                                : undefined
+                            }
                           />
                         ))}
                         {renderLoadMoreFooter()}
@@ -971,6 +1097,16 @@ export default function FeedScreen() {
                   canInteract={canInteract}
                   canDelete={canDeletePost(post)}
                   onDelete={() => handleDeletePost(post.id)}
+                  onReport={
+                    currentUserId && post.authorId && post.authorId !== currentUserId
+                      ? () => handleReportPost(post.id)
+                      : undefined
+                  }
+                  onReportComment={
+                    currentUserId
+                      ? (commentId) => handleReportComment(post.id, commentId)
+                      : undefined
+                  }
                 />
               </View>
             )}
@@ -990,6 +1126,7 @@ export default function FeedScreen() {
                   </View>
                 ) : null}
                 {readOnlyCard}
+                {importantAlertsStrip}
                 {composerClosedCard}
                 {composerCard}
               </View>
@@ -1210,6 +1347,55 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: palette.secondaryText,
   },
+  importantAlertsCard: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 0,
+    gap: 12,
+  },
+  importantAlertsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+  },
+  importantAlertsTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.primaryText,
+  },
+  importantAlertsMeta: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.secondaryText,
+  },
+  importantAlertsList: {
+    gap: 8,
+  },
+  importantAlertRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  importantAlertDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 999,
+  },
+  importantAlertBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  importantAlertTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  importantAlertText: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
   groupPicker: {
     gap: 12,
   },
@@ -1232,8 +1418,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   groupChipLocked: {
-    backgroundColor: 'rgba(45, 108, 246, 0.12)',
-    borderColor: 'rgba(45, 108, 246, 0.3)',
+    backgroundColor: 'rgba(62, 155, 95, 0.12)',
+    borderColor: 'rgba(62, 155, 95, 0.3)',
   },
   groupChipText: {
     fontSize: 12,

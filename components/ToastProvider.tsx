@@ -21,10 +21,14 @@ const DEFAULT_DURATION = 2400;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
-  const dismissingRef = React.useRef(new Set<string>());
+  const [dismissingIds, setDismissingIds] = React.useState<Set<string>>(() => new Set());
 
   const removeToast = React.useCallback((id: string) => {
-    dismissingRef.current.delete(id);
+    setDismissingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     setToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
@@ -35,9 +39,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       setToasts((prev) => [...prev, toast]);
 
       setTimeout(() => {
-        dismissingRef.current.add(id);
-        setToasts((prev) => [...prev]); // trigger re-render so ToastItem sees dismissing state
-        // Actual removal after exit animation
+        setDismissingIds((prev) => new Set(prev).add(id));
         setTimeout(() => removeToast(id), 200);
       }, durationMs);
     },
@@ -47,7 +49,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <ToastViewport toasts={toasts} dismissing={dismissingRef.current} />
+      <ToastViewport toasts={toasts} dismissing={dismissingIds} />
     </ToastContext.Provider>
   );
 }

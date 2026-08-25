@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -19,6 +18,7 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { useAppData } from '@/context/AppDataContext';
+import { confirmAction } from '@/lib/confirm';
 import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
@@ -219,22 +219,22 @@ export default function MembersScreen() {
   );
 
   const handleRemoveMember = React.useCallback(
-    (userId: string, stableId: string) => {
-      Alert.alert('Ta bort medlem?', 'Medlemmen förlorar åtkomst till stallet.', [
-        { text: 'Avbryt', style: 'cancel' },
-        {
-          text: 'Ta bort',
-          style: 'destructive',
-          onPress: () => {
-            const result = actions.removeMemberFromStable(userId, stableId);
-            if (!result.success) {
-              toast.showToast(result.reason, 'error');
-            } else {
-              toast.showToast('Medlem borttagen.', 'success');
-            }
-          },
-        },
-      ]);
+    async (userId: string, stableId: string) => {
+      const confirmed = await confirmAction({
+        title: 'Ta bort medlem?',
+        message: 'Medlemmen förlorar åtkomst till stallet.',
+        confirmLabel: 'Ta bort',
+        destructive: true,
+      });
+      if (!confirmed) {
+        return;
+      }
+      const result = actions.removeMemberFromStable(userId, stableId);
+      if (!result.success) {
+        toast.showToast(result.reason, 'error');
+      } else {
+        toast.showToast('Medlem borttagen.', 'success');
+      }
     },
     [actions, toast],
   );
@@ -419,6 +419,70 @@ export default function MembersScreen() {
                     </View>
                     {memberRows.length === 0 ? (
                       <Text style={styles.emptyText}>Inga medlemmar matchar filtret.</Text>
+                    ) : isDesktopWeb ? (
+                      <View style={styles.table}>
+                        <View style={styles.tableHeaderRow}>
+                          <Text style={[styles.tableHeaderCell, styles.colName]}>Namn</Text>
+                          <Text style={[styles.tableHeaderCell, styles.colRole]}>Roll</Text>
+                          <Text style={[styles.tableHeaderCell, styles.colHorses]}>Hästar</Text>
+                          <Text style={[styles.tableHeaderCell, styles.colContact]}>Kontakt</Text>
+                          <Text style={[styles.tableHeaderCell, styles.colActions]}>Åtgärder</Text>
+                        </View>
+                        {memberRows.map((row) => {
+                          const canManageMembers = canManageMembersStable(row.stableId);
+                          const roleLabel = row.customRole?.trim() || roleLabels[row.role];
+                          const stableLabel = stableFilter === 'all' ? stableNameById[row.stableId] : undefined;
+                          return (
+                            <TouchableOpacity
+                              key={`${row.userId}-${row.stableId}`}
+                              style={styles.tableRow}
+                              onPress={() => handleOpenMember(row.userId, row.stableId)}
+                              activeOpacity={0.85}
+                            >
+                              <View style={styles.colName}>
+                                <Text style={styles.tableCellName}>{row.name}</Text>
+                                {stableLabel ? <Text style={styles.tableCellSub}>{stableLabel}</Text> : null}
+                              </View>
+                              <View style={styles.colRole}>
+                                <Text style={styles.tableCellRole}>{roleLabel}</Text>
+                                {row.access ? <Text style={styles.tableCellSub}>{accessLabels[row.access]}</Text> : null}
+                              </View>
+                              <View style={styles.colHorses}>
+                                <Text style={styles.tableCellText} numberOfLines={2}>
+                                  {row.horseNames.length ? row.horseNames.join(', ') : '–'}
+                                </Text>
+                              </View>
+                              <View style={styles.colContact}>
+                                {row.email ? <Text style={styles.tableCellSub} numberOfLines={1}>{row.email}</Text> : null}
+                                {row.phone ? <Text style={styles.tableCellSub} numberOfLines={1}>{row.phone}</Text> : null}
+                                {!row.email && !row.phone ? <Text style={styles.tableCellSub}>–</Text> : null}
+                              </View>
+                              <View style={[styles.colActions, styles.tableActionsCell]}>
+                                {canManageMembers ? (
+                                  <>
+                                    <TouchableOpacity
+                                      style={styles.roleButton}
+                                      onPress={() => handleRoleCycle(row.userId, row.stableId, row.role)}
+                                      activeOpacity={0.85}
+                                    >
+                                      <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
+                                    </TouchableOpacity>
+                                    {row.userId !== state.currentUserId ? (
+                                      <TouchableOpacity
+                                        style={styles.removeButton}
+                                        onPress={() => handleRemoveMember(row.userId, row.stableId)}
+                                        activeOpacity={0.85}
+                                      >
+                                        <Feather name="x" size={14} color={palette.error} />
+                                      </TouchableOpacity>
+                                    ) : null}
+                                  </>
+                                ) : null}
+                              </View>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
                     ) : (
                       <View style={styles.memberList}>
                         {memberRows.map((row) => {
@@ -460,15 +524,13 @@ export default function MembersScreen() {
                               </TouchableOpacity>
                               {canManageMembers ? (
                                 <View style={styles.memberActions}>
-                                  {canManageMembers ? (
-                                    <TouchableOpacity
-                                      style={styles.roleButton}
-                                      onPress={() => handleRoleCycle(row.userId, row.stableId, row.role)}
-                                      activeOpacity={0.85}
-                                    >
-                                      <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
-                                    </TouchableOpacity>
-                                  ) : null}
+                                  <TouchableOpacity
+                                    style={styles.roleButton}
+                                    onPress={() => handleRoleCycle(row.userId, row.stableId, row.role)}
+                                    activeOpacity={0.85}
+                                  >
+                                    <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
+                                  </TouchableOpacity>
                                   {row.userId !== state.currentUserId ? (
                                     <TouchableOpacity
                                       style={styles.removeButton}
@@ -618,4 +680,62 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(249, 95, 95, 0.22)',
   },
   emptyText: { fontSize: 13, color: palette.secondaryText },
+
+  // Desktop table styles
+  table: { gap: 0 },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+    borderRadius: 6,
+    marginBottom: 2,
+  },
+  tableHeaderCell: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.secondaryText,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  tableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  tableCellName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.primaryText,
+  },
+  tableCellRole: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: palette.primaryText,
+  },
+  tableCellText: {
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  tableCellSub: {
+    fontSize: 12,
+    color: palette.secondaryText,
+  },
+  tableActionsCell: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+  },
+  colName: { flex: 2.5, minWidth: 0, gap: 2 },
+  colRole: { flex: 1.5, minWidth: 0, gap: 2 },
+  colHorses: { flex: 2, minWidth: 0 },
+  colContact: { flex: 2, minWidth: 0, gap: 1 },
+  colActions: { flex: 1.5, minWidth: 0, alignItems: 'flex-end' },
 });

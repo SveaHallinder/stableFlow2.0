@@ -41,6 +41,7 @@ import {
   groupAssignmentsByDay,
   formatShortWeekday,
   formatDayNumber,
+  findInitialWeekIndex,
   generateDateOptions,
   type GroupedAssignmentDay,
   toISODate,
@@ -53,8 +54,17 @@ const palette = theme.colors;
 const statusColors = theme.status;
 const gradients = theme.gradients;
 
-const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling'] as const;
+const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling', 'Vård'] as const;
 type Filter = (typeof filters)[number];
+
+const careEventTypeLabels = {
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  vaccination: 'Vaccination',
+  dental: 'Tandvård',
+  treatment: 'Behandling',
+  other: 'Annat',
+} as const;
 
 type PassView = 'all' | 'mine' | 'open';
 
@@ -77,6 +87,7 @@ const filterLabels: Record<Filter, string> = {
   Riddagar: 'Ridschema',
   Ridhus: 'Ridhus',
   Tävling: 'Tävling',
+  Vård: 'Vård',
 };
 
 const passViewOptions: { id: PassView; label: string }[] = [
@@ -199,6 +210,9 @@ function resolveFilterFromSection(raw?: string | string[]): Filter | undefined {
   if (value === 'pass') {
     return 'Pass';
   }
+  if (value === 'care') {
+    return 'Vård';
+  }
   return undefined;
 }
 
@@ -267,7 +281,6 @@ export default function CalendarScreen() {
     fromOnboarding?: string | string[];
     returnTo?: string | string[];
   }>();
-  const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
   const { permissions } = derived;
   const canManageOnboarding = permissions.canManageOnboarding;
@@ -305,6 +318,9 @@ export default function CalendarScreen() {
     note?: string;
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
+  const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
   const toast = useToast();
@@ -619,6 +635,7 @@ export default function CalendarScreen() {
     [activeDayEvents],
   );
 
+  const todayIso = toISODate(new Date());
   const weekGroups = React.useMemo(() => {
     const grouped = new Map<string, { start: Date; end: Date; days: GroupedAssignmentDay[] }>();
 
@@ -639,18 +656,39 @@ export default function CalendarScreen() {
       }
     });
 
+    const todayWeekStart = startOfWeek(new Date(`${todayIso}T00:00:00`));
+    const todayWeekKey = toISODate(todayWeekStart);
+    if (!grouped.has(todayWeekKey)) {
+      const emptyDays = Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(todayWeekStart);
+        date.setDate(todayWeekStart.getDate() + index);
+        return { isoDate: toISODate(date), date, assignments: [] };
+      });
+      grouped.set(todayWeekKey, {
+        start: todayWeekStart,
+        end: endOfWeek(todayWeekStart),
+        days: emptyDays,
+      });
+    }
+
     return Array.from(grouped.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [groupedDays]);
+  }, [groupedDays, todayIso]);
 
   const [weekIndex, setWeekIndex] = React.useState(0);
+  const initializedWeekStableIdRef = React.useRef<string>();
 
   React.useEffect(() => {
     if (weekGroups.length === 0) {
       setWeekIndex(0);
       return;
     }
+    if (initializedWeekStableIdRef.current !== currentStableId) {
+      initializedWeekStableIdRef.current = currentStableId;
+      setWeekIndex(findInitialWeekIndex(weekGroups));
+      return;
+    }
     setWeekIndex((prev) => Math.min(prev, weekGroups.length - 1));
-  }, [weekGroups.length]);
+  }, [currentStableId, weekGroups]);
 
   React.useEffect(() => {
     if (!focusDate || weekGroups.length === 0) {
@@ -672,7 +710,6 @@ export default function CalendarScreen() {
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
-  const todayIso = toISODate(new Date());
   const upcomingDayGroups = React.useMemo(
     () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
     [groupedDays, todayIso],
@@ -869,7 +906,8 @@ export default function CalendarScreen() {
     });
   }, []);
 
-  const handleCreateRecurringAssignments = React.useCallback(async () => {
+  const handleCreateRecurringAssignments = React.useCallback(() => {
+    const submittedForm = recurringForm;
     const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
     const slotsCount =
       Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
@@ -886,16 +924,19 @@ export default function CalendarScreen() {
       slotsCount,
       assignToCurrentUser: recurringForm.assignToMe,
     };
-    const result = await actions.createRecurringAssignments(payload);
-    if (result.success) {
-      const created = result.data?.createdCount ?? 0;
-      const skipped = result.data?.skippedCount ?? 0;
-      const skippedLabel = skipped ? `, hoppade över ${skipped}` : '';
-      toast.showToast(`Skapade ${created} pass${skippedLabel}.`, 'success');
-      setRecurringModalVisible(false);
-    } else {
+    setRecurringModalVisible(false);
+    void actions.createRecurringAssignments(payload).then((result) => {
+      if (result.success) {
+        const created = result.data?.createdCount ?? 0;
+        const skipped = result.data?.skippedCount ?? 0;
+        const skippedLabel = skipped ? `, hoppade över ${skipped}` : '';
+        toast.showToast(`Skapade ${created} pass${skippedLabel}.`, 'success');
+        return;
+      }
+      setRecurringForm(submittedForm);
+      setRecurringModalVisible(true);
       toast.showToast(result.reason, 'error');
-    }
+    });
   }, [actions, recurringForm, toast]);
 
   const handleOpenProfile = React.useCallback(() => {
@@ -911,13 +952,25 @@ export default function CalendarScreen() {
   }, []);
 
   const handleClaimAssignment = React.useCallback(
-    (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
+    async (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
       if (assignmentId) {
-        const result = actions.claimAssignment(assignmentId);
-        if (result.success && result.data) {
-          toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-        } else if (!result.success) {
-          toast.showToast(result.reason, 'error');
+        if (claimingAssignmentIds.has(assignmentId)) {
+          return;
+        }
+        setClaimingAssignmentIds((current) => new Set(current).add(assignmentId));
+        try {
+          const result = await actions.claimAssignment(assignmentId);
+          if (result.success && result.data) {
+            toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+          } else if (!result.success) {
+            toast.showToast(result.reason, 'error');
+          }
+        } finally {
+          setClaimingAssignmentIds((current) => {
+            const next = new Set(current);
+            next.delete(assignmentId);
+            return next;
+          });
         }
         return;
       }
@@ -931,7 +984,7 @@ export default function CalendarScreen() {
         });
       }
     },
-    [actions, toast],
+    [actions, claimingAssignmentIds, toast],
   );
 
   const handleEditAssignment = React.useCallback(
@@ -1539,6 +1592,7 @@ export default function CalendarScreen() {
                   openSlots={day.openSlots}
                   mineSlots={day.mineSlots}
                   openAssignments={day.openAssignments}
+                  claimingAssignmentIds={claimingAssignmentIds}
                   events={day.events}
                   mode={passView}
                   onClaimOpenAssignment={canClaimAssignments ? handleClaimAssignment : undefined}
@@ -2026,6 +2080,8 @@ export default function CalendarScreen() {
               </View>
             </View>
           )}
+
+          {activeFilter === 'Vård' && <CareEventsSection />}
         </ScrollView>
       </SafeAreaView>
       <Modal
@@ -2357,164 +2413,166 @@ export default function CalendarScreen() {
         </View>
       </Modal>
 
-      <Modal
-        transparent
-        animationType="fade"
-        visible={recurringModalVisible}
-        onRequestClose={() => setRecurringModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalKeyboard}
-          >
-            <Card tone="muted" style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
-              <View style={styles.modalRow}>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Startdatum</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="ÅÅÅÅ-MM-DD"
-                    placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.dateFrom}
-                    onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, dateFrom: value }))
-                    }
-                    autoCapitalize="none"
-                  />
+      {recurringModalVisible ? (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={recurringModalVisible}
+          onRequestClose={() => setRecurringModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.modalKeyboard}
+            >
+              <Card tone="muted" style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+                <View style={styles.modalRow}>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Startdatum</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="ÅÅÅÅ-MM-DD"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.dateFrom}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, dateFrom: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Slutdatum</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="ÅÅÅÅ-MM-DD"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.dateTo}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, dateTo: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
                 </View>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Slutdatum</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="ÅÅÅÅ-MM-DD"
-                    placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.dateTo}
-                    onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, dateTo: value }))
-                    }
-                    autoCapitalize="none"
-                  />
-                </View>
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Veckodagar</Text>
-                <View style={styles.weekdayRow}>
-                  {WEEKDAY_LABELS.map((label, index) => {
-                    const weekday = index as WeekdayIndex;
-                    const active = recurringForm.weekdays.includes(weekday);
-                    return (
-                      <TouchableOpacity
-                        key={label}
-                        onPress={() => toggleRecurringWeekday(weekday)}
-                      >
-                        <Pill
-                          active={active}
-                          style={[styles.weekdayChip, active && styles.weekdayChipActive]}
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Veckodagar</Text>
+                  <View style={styles.weekdayRow}>
+                    {WEEKDAY_LABELS.map((label, index) => {
+                      const weekday = index as WeekdayIndex;
+                      const active = recurringForm.weekdays.includes(weekday);
+                      return (
+                        <TouchableOpacity
+                          key={label}
+                          onPress={() => toggleRecurringWeekday(weekday)}
                         >
-                          <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
-                            {label}
-                          </Text>
-                        </Pill>
-                      </TouchableOpacity>
-                    );
-                  })}
+                          <Pill
+                            active={active}
+                            style={[styles.weekdayChip, active && styles.weekdayChipActive]}
+                          >
+                            <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
+                              {label}
+                            </Text>
+                          </Pill>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
-              <View style={styles.modalRow}>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Start</Text>
+                <View style={styles.modalRow}>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Start</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="07:00"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.startTime}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, startTime: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Slut</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="08:00"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.endTime}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, endTime: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Benämning</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="07:00"
+                    placeholder="Mockning"
                     placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.startTime}
+                    value={recurringForm.title}
                     onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, startTime: value }))
+                      setRecurringForm((prev) => ({ ...prev, title: value }))
                     }
-                    autoCapitalize="none"
                   />
                 </View>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Slut</Text>
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Antal pass</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="08:00"
+                    placeholder="1"
                     placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.endTime}
+                    keyboardType="number-pad"
+                    value={recurringForm.slotsCount}
                     onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, endTime: value }))
+                      setRecurringForm((prev) => ({ ...prev, slotsCount: value }))
                     }
-                    autoCapitalize="none"
                   />
                 </View>
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Benämning</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Mockning"
-                  placeholderTextColor={palette.secondaryText}
-                  value={recurringForm.title}
-                  onChangeText={(value) =>
-                    setRecurringForm((prev) => ({ ...prev, title: value }))
-                  }
-                />
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Antal pass</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="1"
-                  placeholderTextColor={palette.secondaryText}
-                  keyboardType="number-pad"
-                  value={recurringForm.slotsCount}
-                  onChangeText={(value) =>
-                    setRecurringForm((prev) => ({ ...prev, slotsCount: value }))
-                  }
-                />
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.recurringAssignToggle,
-                  recurringForm.assignToMe && styles.recurringAssignToggleActive,
-                ]}
-                onPress={() =>
-                  setRecurringForm((prev) => ({ ...prev, assignToMe: !prev.assignToMe }))
-                }
-              >
-                <Text
+                <TouchableOpacity
                   style={[
-                    styles.recurringAssignText,
-                    recurringForm.assignToMe && styles.recurringAssignTextActive,
+                    styles.recurringAssignToggle,
+                    recurringForm.assignToMe && styles.recurringAssignToggleActive,
                   ]}
+                  onPress={() =>
+                    setRecurringForm((prev) => ({ ...prev, assignToMe: !prev.assignToMe }))
+                  }
                 >
-                  {recurringForm.assignToMe ? 'Tilldelas mig direkt' : 'Låt passen vara öppna'}
-                </Text>
-              </TouchableOpacity>
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.modalGhostButton}
-                  onPress={() => setRecurringModalVisible(false)}
-                >
-                  <Text style={styles.modalGhostText}>Avbryt</Text>
+                  <Text
+                    style={[
+                      styles.recurringAssignText,
+                      recurringForm.assignToMe && styles.recurringAssignTextActive,
+                    ]}
+                  >
+                    {recurringForm.assignToMe ? 'Tilldelas mig direkt' : 'Låt passen vara öppna'}
+                  </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.modalPrimaryButton}
-                  onPress={handleCreateRecurringAssignments}
-                >
-                  <Text style={styles.modalPrimaryText}>Skapa</Text>
-                </TouchableOpacity>
-              </View>
-            </Card>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.modalGhostButton}
+                    onPress={() => setRecurringModalVisible(false)}
+                  >
+                    <Text style={styles.modalGhostText}>Avbryt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.modalPrimaryButton}
+                    onPress={handleCreateRecurringAssignments}
+                  >
+                    <Text style={styles.modalPrimaryText}>Skapa</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            </KeyboardAvoidingView>
+          </View>
+        </Modal>
+      ) : null}
 
       <NewAssignmentModal
         visible={assignmentModal.visible}
@@ -2589,6 +2647,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots,
   mineSlots,
   openAssignments,
+  claimingAssignmentIds,
   events,
   mode,
   onClaimOpenAssignment,
@@ -2605,6 +2664,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots: number;
   mineSlots: number;
   openAssignments: Assignment[];
+  claimingAssignmentIds: Set<string>;
   events: { id: string; label: string; color: string }[];
   mode: PassView;
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
@@ -2620,12 +2680,17 @@ const RegularDayCard = React.memo(function RegularDayCard({
         ? slots.filter((slot) => slot.status === 'open')
         : slots;
 
+  const footerAssignmentId = openAssignments[0]?.id;
+  const isFooterClaiming = footerAssignmentId
+    ? claimingAssignmentIds.has(footerAssignmentId)
+    : false;
+
   const handleActionPress = () => {
     if (openSlots > 0) {
-      if (!onClaimOpenAssignment) {
+      if (!onClaimOpenAssignment || isFooterClaiming) {
         return;
       }
-      onClaimOpenAssignment(openAssignments[0]?.id, {
+      void onClaimOpenAssignment(footerAssignmentId, {
         date: isoDate,
         slot: openAssignments[0]?.slot,
       });
@@ -2662,6 +2727,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
             <View style={styles.dayStatusPill}>
               <Text style={styles.dayStatusPillText}>{openSlots} ledigt</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2693,6 +2760,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isLast={index === visibleSlots.length - 1}
             status={slot.status}
             isMissed={slot.isMissed}
+            isClaiming={claimingAssignmentIds.has(slot.id)}
             onTake={
               slot.status === 'open'
                 ? () =>
@@ -2723,6 +2791,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
               <Feather name="alert-triangle" size={12} color={palette.warning} />
               <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2734,6 +2804,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
               ]}
               activeOpacity={0.85}
               onPress={handleActionPress}
+              disabled={isFooterClaiming}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isFooterClaiming, busy: isFooterClaiming }}
             >
               <Text
                 style={[
@@ -2741,7 +2814,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
                   openSlots > 0 && styles.dayActionLabelPrimary,
                 ]}
               >
-                {openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
+                {isFooterClaiming ? 'Tar pass...' : openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -2764,6 +2837,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast,
   status,
   isMissed,
+  isClaiming,
   onTake,
   onManage,
   onDecline,
@@ -2781,6 +2855,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast?: boolean;
   status: AssignmentStatus;
   isMissed: boolean;
+  isClaiming: boolean;
   onTake?: () => void;
   onManage?: () => void;
   onDecline?: () => void;
@@ -2886,12 +2961,26 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                 </View>
               ) : onTake ? (
                 <TouchableOpacity
-                  style={[styles.scheduleManageButton, styles.scheduleTakeButton]}
+                  style={[
+                    styles.scheduleManageButton,
+                    styles.scheduleTakeButton,
+                    isClaiming && styles.scheduleManageButtonDisabled,
+                  ]}
                   onPress={onTake}
                   activeOpacity={0.85}
+                  disabled={isClaiming}
+                  accessibilityRole="button"
+                  accessibilityLabel={isClaiming ? `Tar ${label}` : `Ta ${label}`}
+                  accessibilityState={{ disabled: isClaiming, busy: isClaiming }}
                 >
-                  <Feather name="plus" size={14} color={palette.inverseText} />
-                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>Ta pass</Text>
+                  {isClaiming ? (
+                    <ActivityIndicator size="small" color={palette.inverseText} />
+                  ) : (
+                    <Feather name="plus" size={14} color={palette.inverseText} />
+                  )}
+                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
+                    {isClaiming ? 'Tar pass...' : 'Ta pass'}
+                  </Text>
                 </TouchableOpacity>
               ) : onManage ? (
                 <TouchableOpacity style={styles.scheduleManageButton} onPress={onManage} activeOpacity={0.85}>
@@ -2935,6 +3024,81 @@ const RidingDayRow = React.memo(function RidingDayRow({
     </Card>
   );
 });
+
+function CareEventsSection() {
+  const { state } = useAppData();
+  const router = useRouter();
+  const stableId = state.currentStableId;
+  const events = state.careEvents
+    .filter((event) => event.stableId === stableId)
+    .sort((a, b) => `${a.date} ${a.time ?? ''}`.localeCompare(`${b.date} ${b.time ?? ''}`));
+  const upcoming = events.filter((event) => event.status === 'planned');
+  const past = events.filter((event) => event.status !== 'planned').reverse();
+  const horseNameById = (id: string) =>
+    state.horses.find((horse) => horse.id === id)?.name ?? 'Okänd häst';
+  const contactNameById = (id?: string) =>
+    id ? state.externalContacts.find((contact) => contact.id === id)?.name : undefined;
+
+  if (!events.length) {
+    return (
+      <View style={{ gap: 12 }}>
+        <EmptyStateCard
+          title="Inga vårdhändelser"
+          body="Lägg till vårdhändelser från en hästprofil så syns de här."
+        />
+      </View>
+    );
+  }
+
+  const renderRow = (event: typeof events[number]) => (
+    <Card key={event.id} tone="muted" style={styles.careEventCard}>
+      <View style={styles.careEventHeader}>
+        <Text style={styles.careEventDate}>
+          {`${event.date}${event.time ? ` · ${event.time}` : ''}`}
+        </Text>
+        <Text style={styles.careEventStatus}>
+          {event.status === 'done' ? 'Klart' : event.status === 'cancelled' ? 'Avbokat' : careEventTypeLabels[event.type]}
+        </Text>
+      </View>
+      <Text style={styles.careEventTitle}>{event.title}</Text>
+      <Text style={styles.careEventMeta}>
+        {[
+          event.horseIds.map(horseNameById).join(', '),
+          contactNameById(event.contactId),
+          event.note,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      {event.horseIds.length === 1 ? (
+        <TouchableOpacity
+          onPress={() => router.push(`/horses/${event.horseIds[0]}`)}
+          style={styles.careEventLink}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.careEventLinkText}>Öppna hästprofil →</Text>
+        </TouchableOpacity>
+      ) : null}
+    </Card>
+  );
+
+  return (
+    <View style={{ gap: 14 }}>
+      {upcoming.length ? (
+        <View style={{ gap: 10 }}>
+          <Text style={styles.careEventSectionTitle}>Kommande vård</Text>
+          {upcoming.map(renderRow)}
+        </View>
+      ) : null}
+      {past.length ? (
+        <View style={{ gap: 10 }}>
+          <Text style={styles.careEventSectionTitle}>Vårdhistorik</Text>
+          {past.map(renderRow)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 const CompetitionCard = React.memo(function CompetitionCard({ event }: { event: CompetitionEvent }) {
   const statusLabel = event.status === 'open' ? 'ÖPPEN' : 'STÄNGD';
@@ -3425,7 +3589,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.12)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
   },
   todayPillText: {
     fontSize: 10,
@@ -3803,6 +3967,9 @@ const styles = StyleSheet.create({
   },
   scheduleTakeButton: {
     backgroundColor: palette.primary,
+  },
+  scheduleManageButtonDisabled: {
+    opacity: 0.65,
   },
   scheduleCompleteButton: {
     backgroundColor: palette.success,
@@ -4285,6 +4452,55 @@ const styles = StyleSheet.create({
     gap: space.md,
     padding: space.lg,
     flexWrap: 'wrap',
+  },
+  careEventSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.secondaryText,
+    textTransform: 'uppercase',
+  },
+  careEventCard: {
+    padding: space.md,
+    gap: 6,
+  },
+  careEventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  careEventDate: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primaryText,
+    textTransform: 'uppercase',
+  },
+  careEventStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.primary,
+    textTransform: 'uppercase',
+  },
+  careEventTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  careEventMeta: {
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  careEventLink: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: palette.surface,
+  },
+  careEventLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primary,
   },
   competitionDate: {
     width: 88,

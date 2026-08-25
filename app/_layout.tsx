@@ -12,7 +12,7 @@ export default function RootLayout() {
 
   return (
     <ErrorBoundary>
-      <StatusBar barStyle="dark-content" backgroundColor="#F8FAFD" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
       <ToastProvider>
         <AuthProvider>
           <AuthGate>
@@ -74,7 +74,7 @@ const errorStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 32,
-    backgroundColor: '#F8FAFD',
+    backgroundColor: '#FFFFFF',
   },
   title: {
     fontSize: 20,
@@ -93,7 +93,7 @@ const errorStyles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: '#2D6CF6',
+    backgroundColor: '#3E9B5F',
   },
   buttonText: {
     fontSize: 14,
@@ -132,7 +132,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <View style={loadingStyles.container}>
-        <ActivityIndicator size="large" color="#2D6CF6" />
+        <ActivityIndicator size="large" color="#3E9B5F" />
         <Text style={loadingStyles.text}>Laddar...</Text>
       </View>
     );
@@ -146,7 +146,7 @@ const loadingStyles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F8FAFD',
+    backgroundColor: '#FFFFFF',
     gap: 12,
   },
   text: {

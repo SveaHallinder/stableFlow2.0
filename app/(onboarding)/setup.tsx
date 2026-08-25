@@ -239,7 +239,7 @@ export default function OnboardingSetup() {
           </Text>
           <TouchableOpacity
             style={styles.secondaryButton}
-            onPress={() => router.push({ pathname: '/(onboarding)/members', params: { returnTo } })}
+            onPress={() => router.push({ pathname: '/(onboarding)/invite-members', params: { returnTo } })}
             activeOpacity={0.85}
           >
             <Text style={styles.secondaryLabel}>Bjud in medlemmar</Text>

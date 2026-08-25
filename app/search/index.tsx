@@ -18,7 +18,6 @@ import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { roleLabels } from '@/lib/roleLabels';
-import type { UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 const MAX_RESULTS = 5;

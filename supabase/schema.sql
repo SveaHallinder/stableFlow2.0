@@ -13,7 +13,13 @@ as $$
   select upper(substr(encode(gen_random_bytes(4), 'hex'), 1, 6));
 $$;
 
--- Profiles (extend existing)
+-- Profiles
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text,
+  avatar_url text,
+  created_at timestamptz default now()
+);
 alter table public.profiles add column if not exists full_name text;
 alter table public.profiles add column if not exists phone text;
 alter table public.profiles add column if not exists location text;
@@ -296,6 +302,38 @@ as $$
   );
 $$;
 
+-- Fas 0A #4: chatt-helpers (security definer, row_security off → ingen RLS-rekursion).
+create or replace function public.is_conversation_member(p_conversation_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.conversation_members cm
+    where cm.conversation_id = p_conversation_id
+      and cm.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.shares_stable_with(p_other uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stable_members a
+    join public.stable_members b on a.stable_id = b.stable_id
+    where a.user_id = auth.uid()
+      and b.user_id = p_other
+  );
+$$;
+
 create or replace function public.storage_stable_id(path text)
 returns uuid
 language sql
@@ -354,29 +392,44 @@ declare
   v_email text;
   v_has_email boolean := false;
   v_has_code boolean := false;
+  v_code text;
 begin
   v_email := lower(trim(p_email));
-  if v_email is null or length(v_email) = 0 then
-    return false;
-  end if;
+  v_code := upper(trim(p_code));
 
-  select exists(
-    select 1
-    from public.stable_invites i
-    where lower(i.email) = v_email
-      and i.accepted_at is null
-      and (i.expires_at is null or i.expires_at > now())
-  ) into v_has_email;
-
-  if p_code is not null and length(trim(p_code)) > 0 then
+  if v_email is not null and length(v_email) > 0 then
     select exists(
       select 1
-      from public.stables s
-      where s.join_code = upper(trim(p_code))
-    ) into v_has_code;
+      from public.stable_invites i
+      where lower(i.email) = v_email
+        and i.accepted_at is null
+        and (i.expires_at is null or i.expires_at > now())
+    ) into v_has_email;
   end if;
 
-  return v_has_email or v_has_code;
+  if v_code is not null and length(v_code) > 0 then
+    select exists(
+      select 1
+      from public.stable_invites i
+      where upper(i.code) = v_code
+        and i.accepted_at is null
+        and (i.expires_at is null or i.expires_at > now())
+    ) into v_has_code;
+
+    if not v_has_code then
+      select exists(
+        select 1
+        from public.stables s
+        where s.join_code = v_code
+      ) into v_has_code;
+    end if;
+  end if;
+
+  if v_code is not null and length(v_code) > 0 then
+    return v_has_code;
+  end if;
+
+  return v_has_email;
 end;
 $$;
 
@@ -450,6 +503,37 @@ create table if not exists public.horse_day_statuses (
 );
 alter table public.horse_day_statuses enable row level security;
 
+-- Feed plans (stable defaults + per-horse overrides)
+create table if not exists public.feed_plans (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade,
+  slot text not null,
+  label text not null,
+  amount text,
+  note text,
+  is_stable_default boolean not null default false,
+  active boolean not null default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.feed_plans enable row level security;
+
+-- Feed checks (per horse + day + slot)
+create table if not exists public.feed_checks (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade not null,
+  date date not null,
+  slot text not null,
+  checked_by_user_id uuid references public.profiles(id) on delete set null,
+  checked_at timestamptz,
+  deviation_note text,
+  created_at timestamptz default now(),
+  unique (horse_id, date, slot)
+);
+alter table public.feed_checks enable row level security;
+
 -- Assignments
 create table if not exists public.assignments (
   id uuid primary key default gen_random_uuid(),
@@ -489,6 +573,23 @@ create table if not exists public.alerts (
   created_at timestamptz default now()
 );
 alter table public.alerts enable row level security;
+
+-- Stable alerts (important/urgent)
+create table if not exists public.stable_alerts (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  title text not null,
+  body text,
+  severity text not null default 'info',
+  horse_id uuid references public.horses(id) on delete set null,
+  paddock_id uuid references public.paddocks(id) on delete set null,
+  assignment_id uuid references public.assignments(id) on delete set null,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  resolved_at timestamptz,
+  constraint stable_alerts_severity_check check (severity in ('info', 'important', 'urgent'))
+);
+alter table public.stable_alerts enable row level security;
 
 -- Day events
 create table if not exists public.day_events (
@@ -539,6 +640,56 @@ create table if not exists public.ride_logs (
 );
 alter table public.ride_logs enable row level security;
 
+-- Planned rides
+create table if not exists public.planned_rides (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade not null,
+  rider_user_id uuid references public.profiles(id) on delete set null,
+  date date not null,
+  time text,
+  ride_type_id text,
+  note text,
+  status text not null default 'planned',
+  completed_ride_log_id uuid references public.ride_logs(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.planned_rides enable row level security;
+
+-- External contacts (farrier/vet/etc)
+create table if not exists public.external_contacts (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  name text not null,
+  type text not null,
+  phone text,
+  email text,
+  note text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.external_contacts enable row level security;
+
+-- Care events (vård/hovslagare/vet etc)
+create table if not exists public.care_events (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_ids uuid[] not null default '{}'::uuid[],
+  type text not null,
+  title text not null,
+  date date not null,
+  time text,
+  contact_id uuid references public.external_contacts(id) on delete set null,
+  responsible_user_id uuid references public.profiles(id) on delete set null,
+  status text not null default 'planned',
+  note text,
+  completed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.care_events enable row level security;
+
 -- Riding schedule + competitions
 create table if not exists public.riding_days (
   id uuid primary key default gen_random_uuid(),
@@ -574,7 +725,14 @@ create table if not exists public.groups (
 );
 alter table public.groups enable row level security;
 
--- Posts (extend existing)
+-- Posts
+create table if not exists public.posts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  caption text,
+  image_url text,
+  created_at timestamptz default now()
+);
 alter table public.posts add column if not exists stable_id uuid references public.stables(id) on delete set null;
 alter table public.posts add column if not exists group_ids text[] default '{}'::text[];
 alter table public.posts alter column group_ids type text[] using group_ids::text[];
@@ -582,9 +740,23 @@ alter table public.posts alter column group_ids set default '{}'::text[];
 alter table public.posts add column if not exists content text;
 alter table public.posts enable row level security;
 
--- Likes/comments tables already exist; ensure RLS enabled
+-- Likes/comments
+create table if not exists public.likes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  post_id uuid references public.posts(id) on delete cascade,
+  created_at timestamptz default now()
+);
 alter table public.likes enable row level security;
 create unique index if not exists likes_unique on public.likes(user_id, post_id);
+
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  post_id uuid references public.posts(id) on delete cascade,
+  content text not null,
+  created_at timestamptz default now()
+);
 alter table public.comments enable row level security;
 
 -- Conversations/messages
@@ -624,26 +796,71 @@ alter table public.messages enable row level security;
 alter table public.profiles enable row level security;
 
 drop policy if exists "profiles_select" on public.profiles;
+-- Legacy ad-hoc policy that leaked co-members' full profile row (incl. phone) to any
+-- stablemate; only ever existed on remote, never in source. Drop defensively.
+drop policy if exists "profiles_select_self_or_shared_stable" on public.profiles;
 drop policy if exists "profiles_update_self" on public.profiles;
 drop policy if exists "profiles_insert_self" on public.profiles;
+-- Fas 0B: self-only. Co-member name/avatar served via get_member_directory() (PII-safe).
 create policy "profiles_select" on public.profiles
-  for select using (
-    (select auth.role()) = 'authenticated'
-    and (
-      (select auth.uid()) = id
-      or exists (
-        select 1
-        from public.stable_members m_self
-        join public.stable_members m_other on m_self.stable_id = m_other.stable_id
-        where m_self.user_id = (select auth.uid())
-          and m_other.user_id = profiles.id
-      )
-    )
-  );
+  for select using ((select auth.uid()) = id);
 create policy "profiles_update_self" on public.profiles
   for update using ((select auth.uid()) = id);
 create policy "profiles_insert_self" on public.profiles
   for insert with check ((select auth.uid()) = id);
+
+-- PII-safe co-member directory. Definer bypasses profiles-RLS but only exposes
+-- non-PII columns; phone is returned only for self or admins of a shared stable.
+create or replace function public.get_member_directory()
+returns table (
+  id uuid,
+  username text,
+  full_name text,
+  avatar_url text,
+  location text,
+  responsibilities text[],
+  onboarding_dismissed boolean,
+  phone text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    p.id,
+    p.username,
+    p.full_name,
+    p.avatar_url,
+    p.location,
+    p.responsibilities,
+    p.onboarding_dismissed,
+    case
+      when p.id = (select auth.uid()) then p.phone
+      when exists (
+        select 1
+        from public.stable_members m_self
+        join public.stable_members m_other
+          on m_self.stable_id = m_other.stable_id
+        where m_self.user_id = (select auth.uid())
+          and m_other.user_id = p.id
+          and m_self.role = 'admin'
+      ) then p.phone
+      else null
+    end as phone
+  from public.profiles p
+  where p.id = (select auth.uid())
+     or exists (
+       select 1
+       from public.stable_members m_self
+       join public.stable_members m_other
+         on m_self.stable_id = m_other.stable_id
+       where m_self.user_id = (select auth.uid())
+         and m_other.user_id = p.id
+     );
+$$;
+revoke all on function public.get_member_directory() from public;
+grant execute on function public.get_member_directory() to authenticated;
 
 drop policy if exists "farms_select" on public.farms;
 create policy "farms_select" on public.farms
@@ -669,16 +886,12 @@ create policy "stables_select" on public.stables
 drop policy if exists "stables_insert" on public.stables;
 create policy "stables_insert" on public.stables for insert with check (created_by = auth.uid());
 drop policy if exists "stables_update" on public.stables;
+-- Fas 0A #1: owner-only (behåll creator-fallback mot lockout). join_code ligger på
+-- samma rad, så edit-access får inte UPDATE:a stallet.
 create policy "stables_update" on public.stables
-  for update using (
-    created_by = auth.uid()
-    or exists (
-      select 1
-      from public.stable_members m
-      where m.stable_id = stables.id
-        and m.user_id = auth.uid()
-    )
-  );
+  for update
+  using (created_by = auth.uid() or public.is_stable_owner(id))
+  with check (created_by = auth.uid() or public.is_stable_owner(id));
 drop policy if exists "stables_delete" on public.stables;
 create policy "stables_delete" on public.stables for delete using (created_by = auth.uid());
 
@@ -765,6 +978,65 @@ create policy "horse_day_statuses_update" on public.horse_day_statuses for updat
 drop policy if exists "horse_day_statuses_delete" on public.horse_day_statuses;
 create policy "horse_day_statuses_delete" on public.horse_day_statuses for delete using (public.can_update_horse_status(stable_id));
 
+drop policy if exists "feed_plans_select" on public.feed_plans;
+create policy "feed_plans_select" on public.feed_plans
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "feed_plans_insert" on public.feed_plans;
+create policy "feed_plans_insert" on public.feed_plans
+  for insert with check (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+drop policy if exists "feed_plans_update" on public.feed_plans;
+create policy "feed_plans_update" on public.feed_plans
+  for update using (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+drop policy if exists "feed_plans_delete" on public.feed_plans;
+create policy "feed_plans_delete" on public.feed_plans
+  for delete using (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+
+drop policy if exists "feed_checks_select" on public.feed_checks;
+create policy "feed_checks_select" on public.feed_checks
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "feed_checks_insert" on public.feed_checks;
+create policy "feed_checks_insert" on public.feed_checks
+  for insert with check (public.can_update_horse_status(stable_id));
+drop policy if exists "feed_checks_update" on public.feed_checks;
+create policy "feed_checks_update" on public.feed_checks
+  for update using (public.can_update_horse_status(stable_id));
+drop policy if exists "feed_checks_delete" on public.feed_checks;
+create policy "feed_checks_delete" on public.feed_checks
+  for delete using (public.can_update_horse_status(stable_id));
+
 drop policy if exists "assignments_select" on public.assignments;
 create policy "assignments_select" on public.assignments for select using (public.is_stable_member(stable_id));
 drop policy if exists "assignments_insert" on public.assignments;
@@ -787,6 +1059,19 @@ drop policy if exists "alerts_insert" on public.alerts;
 create policy "alerts_insert" on public.alerts for insert with check (public.can_manage_day_events(stable_id));
 drop policy if exists "alerts_delete" on public.alerts;
 create policy "alerts_delete" on public.alerts for delete using (public.can_manage_day_events(stable_id));
+
+drop policy if exists "stable_alerts_select" on public.stable_alerts;
+create policy "stable_alerts_select" on public.stable_alerts
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "stable_alerts_insert" on public.stable_alerts;
+create policy "stable_alerts_insert" on public.stable_alerts
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "stable_alerts_update" on public.stable_alerts;
+create policy "stable_alerts_update" on public.stable_alerts
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "stable_alerts_delete" on public.stable_alerts;
+create policy "stable_alerts_delete" on public.stable_alerts
+  for delete using (public.can_edit_stable(stable_id));
 
 drop policy if exists "day_events_select" on public.day_events;
 create policy "day_events_select" on public.day_events for select using (public.is_stable_member(stable_id));
@@ -817,6 +1102,69 @@ drop policy if exists "ride_logs_insert" on public.ride_logs;
 create policy "ride_logs_insert" on public.ride_logs for insert with check (public.can_manage_ride_logs(stable_id));
 drop policy if exists "ride_logs_delete" on public.ride_logs;
 create policy "ride_logs_delete" on public.ride_logs for delete using (public.can_manage_ride_logs(stable_id));
+
+drop policy if exists "planned_rides_select" on public.planned_rides;
+create policy "planned_rides_select" on public.planned_rides
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "planned_rides_insert" on public.planned_rides;
+create policy "planned_rides_insert" on public.planned_rides
+  for insert with check (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "planned_rides_update" on public.planned_rides;
+create policy "planned_rides_update" on public.planned_rides
+  for update using (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "planned_rides_delete" on public.planned_rides;
+create policy "planned_rides_delete" on public.planned_rides
+  for delete using (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+
+drop policy if exists "external_contacts_select" on public.external_contacts;
+create policy "external_contacts_select" on public.external_contacts
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "external_contacts_insert" on public.external_contacts;
+create policy "external_contacts_insert" on public.external_contacts
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "external_contacts_update" on public.external_contacts;
+create policy "external_contacts_update" on public.external_contacts
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "external_contacts_delete" on public.external_contacts;
+create policy "external_contacts_delete" on public.external_contacts
+  for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "care_events_select" on public.care_events;
+create policy "care_events_select" on public.care_events
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "care_events_insert" on public.care_events;
+create policy "care_events_insert" on public.care_events
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "care_events_update" on public.care_events;
+create policy "care_events_update" on public.care_events
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "care_events_delete" on public.care_events;
+create policy "care_events_delete" on public.care_events
+  for delete using (public.can_edit_stable(stable_id));
 
 drop policy if exists "riding_days_select" on public.riding_days;
 create policy "riding_days_select" on public.riding_days for select using (public.is_stable_member(stable_id));
@@ -855,7 +1203,12 @@ create policy "posts_insert" on public.posts for insert with check (public.is_st
 drop policy if exists "posts_update" on public.posts;
 create policy "posts_update" on public.posts for update using ((select auth.uid()) = user_id);
 drop policy if exists "posts_delete" on public.posts;
-create policy "posts_delete" on public.posts for delete using ((select auth.uid()) = user_id);
+-- Fas 0B #7: författaren eller feed-/gruppansvarig (admin/staff) får radera (moderering).
+create policy "posts_delete" on public.posts
+  for delete using (
+    (select auth.uid()) = user_id
+    or public.can_manage_groups(stable_id)
+  );
 
 drop policy if exists "likes_select" on public.likes;
 drop policy if exists "likes_insert_self" on public.likes;
@@ -937,11 +1290,24 @@ create policy "conversations_update" on public.conversations
   );
 
 drop policy if exists "conversation_members_select" on public.conversation_members;
+-- Fas 0A #4: se medlemsrader för konversationer du tillhör (för namn-rendering).
 create policy "conversation_members_select" on public.conversation_members
-  for select using ((select auth.uid()) = user_id);
+  for select using (public.is_conversation_member(conversation_id));
 drop policy if exists "conversation_members_insert" on public.conversation_members;
+-- Fas 0A #4: bara i konversationer DU skapat, och bara dig själv eller en stallkamrat
+-- (stänger self-insert-i-andras-konversation samt force-chat-på-främling).
 create policy "conversation_members_insert" on public.conversation_members
-  for insert with check ((select auth.uid()) = user_id);
+  for insert with check (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id
+        and c.created_by_user_id = (select auth.uid())
+    )
+    and (
+      user_id = (select auth.uid())
+      or public.shares_stable_with(user_id)
+    )
+  );
 drop policy if exists "conversation_members_delete" on public.conversation_members;
 create policy "conversation_members_delete" on public.conversation_members
   for delete using ((select auth.uid()) = user_id);
@@ -981,9 +1347,85 @@ create policy "messages_insert" on public.messages
         )
     )
   );
+-- Fas 0A #4: moderering. Författaren äger sina meddelanden; stall-owner får radera.
+drop policy if exists "messages_update" on public.messages;
+create policy "messages_update" on public.messages
+  for update using ((select auth.uid()) = author_id);
+drop policy if exists "messages_delete" on public.messages;
+create policy "messages_delete" on public.messages
+  for delete using (
+    (select auth.uid()) = author_id
+    or exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and c.stable_id is not null
+        and public.is_stable_owner(c.stable_id)
+    )
+  );
+
+-- Fas 3: content reports (UGC moderation)
+create table if not exists public.content_reports (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  reporter_user_id uuid references public.profiles(id) on delete set null,
+  target_type text not null check (target_type in ('post', 'comment')),
+  target_id uuid not null,
+  reason text,
+  created_at timestamptz default now(),
+  resolved_at timestamptz,
+  resolved_by_user_id uuid references public.profiles(id) on delete set null
+);
+alter table public.content_reports enable row level security;
+drop policy if exists "content_reports_insert" on public.content_reports;
+create policy "content_reports_insert" on public.content_reports
+  for insert with check (
+    public.is_stable_member(stable_id) and reporter_user_id = (select auth.uid())
+  );
+drop policy if exists "content_reports_select" on public.content_reports;
+create policy "content_reports_select" on public.content_reports
+  for select using (
+    reporter_user_id = (select auth.uid()) or public.can_manage_groups(stable_id)
+  );
+drop policy if exists "content_reports_update" on public.content_reports;
+create policy "content_reports_update" on public.content_reports
+  for update using (public.can_manage_groups(stable_id));
+create index if not exists content_reports_stable_open_idx
+  on public.content_reports(stable_id, created_at desc)
+  where resolved_at is null;
+
+-- Fas 3: blocked users (UGC — block/mute). Each row owned by the blocker.
+create table if not exists public.blocked_users (
+  id uuid primary key default gen_random_uuid(),
+  blocker_user_id uuid not null references public.profiles(id) on delete cascade,
+  blocked_user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (blocker_user_id, blocked_user_id),
+  check (blocker_user_id <> blocked_user_id)
+);
+alter table public.blocked_users enable row level security;
+drop policy if exists "blocked_users_select" on public.blocked_users;
+create policy "blocked_users_select" on public.blocked_users
+  for select using (blocker_user_id = (select auth.uid()));
+drop policy if exists "blocked_users_insert" on public.blocked_users;
+create policy "blocked_users_insert" on public.blocked_users
+  for insert with check (
+    blocker_user_id = (select auth.uid()) and blocked_user_id <> (select auth.uid())
+  );
+drop policy if exists "blocked_users_delete" on public.blocked_users;
+create policy "blocked_users_delete" on public.blocked_users
+  for delete using (blocker_user_id = (select auth.uid()));
+create index if not exists blocked_users_blocker_idx
+  on public.blocked_users(blocker_user_id);
 
 -- Foreign key indexes for performance
 create index if not exists alerts_stable_id_idx on public.alerts(stable_id);
+create index if not exists stable_alerts_stable_id_idx on public.stable_alerts(stable_id);
+create index if not exists stable_alerts_horse_id_idx on public.stable_alerts(horse_id);
+create index if not exists stable_alerts_paddock_id_idx on public.stable_alerts(paddock_id);
+create index if not exists stable_alerts_assignment_id_idx on public.stable_alerts(assignment_id);
+create index if not exists stable_alerts_active_idx
+  on public.stable_alerts(stable_id, severity, created_at desc)
+  where resolved_at is null;
 create index if not exists arena_bookings_booked_by_user_id_idx on public.arena_bookings(booked_by_user_id);
 create index if not exists arena_bookings_stable_id_idx on public.arena_bookings(stable_id);
 create index if not exists arena_statuses_created_by_user_id_idx on public.arena_statuses(created_by_user_id);
@@ -1008,6 +1450,10 @@ create index if not exists groups_farm_id_idx on public.groups(farm_id);
 create index if not exists groups_horse_id_idx on public.groups(horse_id);
 create index if not exists groups_stable_id_idx on public.groups(stable_id);
 create index if not exists horse_day_statuses_horse_id_idx on public.horse_day_statuses(horse_id);
+create index if not exists feed_plans_stable_id_idx on public.feed_plans(stable_id);
+create index if not exists feed_plans_horse_id_idx on public.feed_plans(horse_id);
+create index if not exists feed_checks_stable_id_idx on public.feed_checks(stable_id);
+create index if not exists feed_checks_horse_id_date_idx on public.feed_checks(horse_id, date);
 create index if not exists horses_owner_user_id_idx on public.horses(owner_user_id);
 create index if not exists horses_stable_id_idx on public.horses(stable_id);
 create index if not exists likes_post_id_idx on public.likes(post_id);
@@ -1023,6 +1469,13 @@ create index if not exists ride_logs_horse_id_idx on public.ride_logs(horse_id);
 create index if not exists assignments_stable_id_date_idx on public.assignments(stable_id, date);
 create index if not exists arena_bookings_stable_id_date_idx on public.arena_bookings(stable_id, date);
 create index if not exists ride_logs_stable_id_idx on public.ride_logs(stable_id);
+create index if not exists planned_rides_stable_id_idx on public.planned_rides(stable_id);
+create index if not exists planned_rides_horse_id_idx on public.planned_rides(horse_id);
+create index if not exists planned_rides_stable_id_date_idx on public.planned_rides(stable_id, date);
+create index if not exists external_contacts_stable_id_idx on public.external_contacts(stable_id);
+create index if not exists care_events_stable_id_idx on public.care_events(stable_id);
+create index if not exists care_events_stable_id_date_idx on public.care_events(stable_id, date);
+create index if not exists care_events_horse_ids_gin_idx on public.care_events using gin (horse_ids);
 create index if not exists riding_days_stable_id_idx on public.riding_days(stable_id);
 create index if not exists stable_invites_stable_id_idx on public.stable_invites(stable_id);
 create index if not exists stable_members_user_id_idx on public.stable_members(user_id);

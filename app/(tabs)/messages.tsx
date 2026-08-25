@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   Platform,
   RefreshControl,
   ScrollView,
@@ -101,7 +100,22 @@ const FILTER_OPTIONS: { label: string; value: MessageFilter }[] = [
 export default function MessagesScreen() {
   const router = useRouter();
   const { state, actions, derived, hydrating, refreshing } = useAppData();
-  const { messages, currentStableId } = state;
+  const { messages, currentStableId, conversations, currentUserId, blockedUserIds } = state;
+
+  // A private conversation whose only other participant is blocked is hidden from the list.
+  const isBlockedPrivateConversation = React.useCallback(
+    (item: MessagePreview) => {
+      if (item.group || !blockedUserIds.length) {
+        return false;
+      }
+      const participants = conversations[item.id] ?? [];
+      const others = participants
+        .map((message) => message.authorId)
+        .filter((authorId) => authorId && authorId !== currentUserId);
+      return others.length > 0 && others.every((authorId) => blockedUserIds.includes(authorId));
+    },
+    [blockedUserIds, conversations, currentUserId],
+  );
   const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
@@ -128,12 +142,14 @@ export default function MessagesScreen() {
 
   const activeMessages = React.useMemo(() => {
     const stableFiltered = messages.filter(
-      (item) => !item.stableId || item.stableId === currentStableId,
+      (item) =>
+        (!item.stableId || item.stableId === currentStableId) &&
+        !isBlockedPrivateConversation(item),
     );
     if (filter === 'group') return stableFiltered.filter((item) => item.group);
     if (filter === 'private') return stableFiltered.filter((item) => !item.group);
     return stableFiltered;
-  }, [messages, currentStableId, filter]);
+  }, [messages, currentStableId, filter, isBlockedPrivateConversation]);
 
   const emptyStateActions = [
     { label: 'Hitta medlem', onPress: handleOpenMembers, variant: 'primary' as const },
@@ -287,10 +303,10 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   contentDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
+    paddingHorizontal: 40,
   },
   desktopLayout: {
     flexDirection: 'row',
@@ -298,9 +314,9 @@ const styles = StyleSheet.create({
     gap: 24,
   },
   desktopPanel: {
-    width: 300,
+    width: 240,
     flexShrink: 0,
-    gap: 16,
+    gap: 12,
   },
   desktopList: {
     flex: 1,
@@ -310,11 +326,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   pageHeaderDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
-    marginBottom: 12,
+    paddingHorizontal: 40,
+    marginBottom: 8,
   },
   list: {
     gap: 14,
@@ -338,8 +354,9 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   itemDesktop: {
-    paddingVertical: 20,
-    paddingHorizontal: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: radii.lg,
   },
   panelCard: {
     paddingHorizontal: 16,
@@ -419,8 +436,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   panelChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.12)',
-    borderColor: 'rgba(45,108,246,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: 'rgba(62,155,95,0.3)',
   },
   panelChipText: {
     fontSize: 12,

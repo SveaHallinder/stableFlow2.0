@@ -45,7 +45,7 @@ export default function OnboardingDayLogic() {
 
   React.useEffect(() => {
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!activeStableId && fallbackStableId) {
