@@ -101,6 +101,8 @@ test('today is the default and concurrent claims have exactly one winner', async
     await admin.page.getByText('Nytt pass', { exact: true }).first().click();
     const assignmentTitleInput = admin.page.getByPlaceholder('Ex. Mockning, Harva ridhus');
     await assignmentTitleInput.fill(title);
+    // The QA seed assigns Morning/Evening by default. Lunch remains open for the race.
+    await admin.page.getByText('Lunch', { exact: true }).last().click();
     await expect
       .poll(async () => (await assignmentTitleInput.boundingBox())?.y ?? Number.POSITIVE_INFINITY)
       .toBeLessThan(844);
@@ -116,7 +118,7 @@ test('today is the default and concurrent claims have exactly one winner', async
 
     const createPayload = createdResponse.request().postDataJSON();
     const createdRow = Array.isArray(createPayload) ? createPayload[0] : createPayload;
-    expect(createdRow).toMatchObject({ date: today, label: title, status: 'open' });
+    expect(createdRow).toMatchObject({ date: today, slot: 'Lunch', label: title, status: 'open' });
     expect(createdRow.id).toEqual(expect.any(String));
     assignmentId = createdRow.id;
 

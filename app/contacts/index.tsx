@@ -1,11 +1,13 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { generateId } from '@/lib/ids';
+import { Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Link, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { theme } from '@/components/theme';
 import { useToast } from '@/components/ToastProvider';
@@ -53,14 +55,26 @@ export default function ContactsScreen() {
   const contacts = state.externalContacts.filter((contact) => contact.stableId === stableId);
   const canEdit = derived.permissions.canManageOnboarding || derived.permissions.canManageMembers;
   const [editing, setEditing] = React.useState<Draft | null>(null);
+  const [search, setSearch] = React.useState('');
+  const pending = React.useRef(false);
+  const [pendingId, setPendingId] = React.useState<string | null>(null);
+  const [saveError, setSaveError] = React.useState('');
+  const query = search.trim().toLowerCase();
+  const visibleContacts = contacts.filter((contact) =>
+    [contact.name, contactTypeLabels[contact.type], contact.phone, contact.email]
+      .some((value) => value?.toLowerCase().includes(query)),
+  );
 
-  const handleSave = () => {
-    if (!editing) return;
+  const handleSave = async () => {
+    if (!editing || pending.current) return;
     if (!editing.name.trim()) {
       toast.showToast('Ange ett namn.', 'error');
       return;
     }
-    const result = actions.upsertExternalContact({
+    pending.current = true;
+    setPendingId(editing.id ?? null);
+    setSaveError('');
+    const result = await actions.upsertExternalContact({
       id: editing.id,
       stableId,
       name: editing.name,
@@ -69,17 +83,27 @@ export default function ContactsScreen() {
       email: editing.email,
       note: editing.note,
     });
+    pending.current = false;
+    setPendingId(null);
     if (!result.success) {
+      setSaveError(result.reason);
       toast.showToast(result.reason, 'error');
       return;
     }
-    toast.showToast(editing.id ? 'Kontakt uppdaterad.' : 'Kontakt skapad.', 'success');
+    toast.showToast(contacts.some((contact) => contact.id === editing.id) ? 'Kontakt uppdaterad.' : 'Kontakt skapad.', 'success');
     setEditing(null);
   };
 
-  const handleDelete = (contact: ExternalContact) => {
-    const result = actions.deleteExternalContact(contact.id);
+  const handleDelete = async (contact: ExternalContact) => {
+    if (pending.current) return;
+    pending.current = true;
+    setPendingId(contact.id);
+    setSaveError('');
+    const result = await actions.deleteExternalContact(contact.id);
+    pending.current = false;
+    setPendingId(null);
     if (!result.success) {
+      setSaveError(result.reason);
       toast.showToast(result.reason, 'error');
       return;
     }
@@ -87,8 +111,10 @@ export default function ContactsScreen() {
   };
 
   const beginEdit = (contact?: ExternalContact) => {
+    if (pending.current) return;
+    setSaveError('');
     setEditing({
-      id: contact?.id,
+      id: contact?.id ?? generateId(),
       type: contact?.type ?? 'farrier',
       name: contact?.name ?? '',
       phone: contact?.phone ?? '',
@@ -105,13 +131,13 @@ export default function ContactsScreen() {
           title="Kontakter"
           showSearch={false}
           left={
-            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+            <HeaderIconButton style={styles.iconButton} accessibilityLabel="Tillbaka" onPress={() => router.back()}>
               <Feather name="arrow-left" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }
           primaryAction={
             canEdit ? (
-              <HeaderIconButton accessibilityLabel="Lägg till kontakt" onPress={() => beginEdit()}>
+              <HeaderIconButton style={styles.iconButton} accessibilityLabel="Lägg till kontakt" onPress={() => beginEdit()}>
                 <Feather name="plus" size={18} color={palette.primaryText} />
               </HeaderIconButton>
             ) : undefined
@@ -126,6 +152,8 @@ export default function ContactsScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
+          <DataSyncStatus />
+          {saveError ? <Text style={{ color: palette.error, fontSize: 14 }}>{saveError}</Text> : null}
           <Card elevated style={styles.summaryCard}>
             <Text style={styles.summaryTitle}>
               {contacts.length ? `${contacts.length} kontakter` : 'Inga kontakter ännu'}
@@ -138,15 +166,38 @@ export default function ContactsScreen() {
             ) : null}
           </Card>
 
+          {contacts.length ? (
+            <View style={styles.searchRow}>
+              <Feather name="search" size={18} color={palette.secondaryText} />
+              <TextInput
+                accessibilityLabel="Sök kontakt"
+                placeholder="Sök namn eller kontakttyp"
+                placeholderTextColor={palette.secondaryText}
+                value={search}
+                onChangeText={setSearch}
+                autoCorrect={false}
+                style={styles.searchInput}
+              />
+              {search ? (
+                <HeaderIconButton style={styles.iconButton} accessibilityLabel="Rensa kontaktsökning" onPress={() => setSearch('')}>
+                  <Feather name="x" size={18} color={palette.primaryText} />
+                </HeaderIconButton>
+              ) : null}
+            </View>
+          ) : null}
+
           {editing ? (
             <Card elevated style={styles.formCard}>
-              <Text style={styles.formTitle}>{editing.id ? 'Redigera kontakt' : 'Ny kontakt'}</Text>
+              <Text style={styles.formTitle}>{contacts.some((contact) => contact.id === editing.id) ? 'Redigera kontakt' : 'Ny kontakt'}</Text>
               <View style={styles.typeRow}>
                 {contactTypeOrder.map((type) => {
                   const active = editing.type === type;
                   return (
                     <TouchableOpacity
                       key={type}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                       onPress={() => setEditing((prev) => (prev ? { ...prev, type } : prev))}
                       style={[styles.chip, active && styles.chipActive]}
                       activeOpacity={0.85}
@@ -159,6 +210,8 @@ export default function ContactsScreen() {
                 })}
               </View>
               <TextInput
+                accessibilityLabel="Namn"
+                editable={pendingId === null}
                 value={editing.name}
                 onChangeText={(text) => setEditing((prev) => (prev ? { ...prev, name: text } : prev))}
                 placeholder="Namn"
@@ -166,6 +219,9 @@ export default function ContactsScreen() {
                 style={styles.input}
               />
               <TextInput
+                accessibilityLabel="Telefon (frivilligt)"
+                keyboardType="phone-pad"
+                editable={pendingId === null}
                 value={editing.phone}
                 onChangeText={(text) => setEditing((prev) => (prev ? { ...prev, phone: text } : prev))}
                 placeholder="Telefon (frivilligt)"
@@ -173,6 +229,10 @@ export default function ContactsScreen() {
                 style={styles.input}
               />
               <TextInput
+                accessibilityLabel="E-post (frivilligt)"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                editable={pendingId === null}
                 value={editing.email}
                 onChangeText={(text) => setEditing((prev) => (prev ? { ...prev, email: text } : prev))}
                 placeholder="E-post (frivilligt)"
@@ -180,6 +240,8 @@ export default function ContactsScreen() {
                 style={styles.input}
               />
               <TextInput
+                accessibilityLabel="Anteckning (frivilligt)"
+                editable={pendingId === null}
                 value={editing.note}
                 onChangeText={(text) => setEditing((prev) => (prev ? { ...prev, note: text } : prev))}
                 placeholder="Anteckning (frivilligt)"
@@ -188,40 +250,65 @@ export default function ContactsScreen() {
               />
               <View style={styles.formActions}>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[styles.button, styles.buttonSecondary]}
+                  disabled={pendingId !== null}
                   onPress={() => setEditing(null)}
                   activeOpacity={0.85}
                 >
                   <Text style={styles.buttonSecondaryText}>Avbryt</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  accessibilityRole="button"
                   style={[styles.button, styles.buttonPrimary]}
+                  disabled={pendingId !== null}
                   onPress={handleSave}
                   activeOpacity={0.85}
                 >
-                  <Text style={styles.buttonPrimaryText}>Spara kontakt</Text>
+                  <Text style={styles.buttonPrimaryText}>{pendingId ? 'Sparar kontakt…' : 'Spara kontakt'}</Text>
                 </TouchableOpacity>
               </View>
             </Card>
           ) : null}
 
-          {contacts.length ? (
+          {visibleContacts.length ? (
             <View style={{ gap: 10 }}>
-              {contacts.map((contact) => (
+              {visibleContacts.map((contact) => (
                 <Card key={contact.id} elevated style={styles.contactCard}>
-                  <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                  <View style={styles.contactDetails}>
                     <Text style={styles.contactName}>{contact.name}</Text>
-                    <Text style={styles.contactMeta}>
-                      {[
-                        contactTypeLabels[contact.type],
-                        contact.phone,
-                        contact.email,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Text>
+                    <Text style={styles.contactMeta}>{contactTypeLabels[contact.type]}</Text>
+                    {contact.phone ? (
+                      <Link href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`} asChild>
+                        <TouchableOpacity
+                          accessibilityRole="link"
+                          accessibilityLabel={`Ring ${contact.name}: ${contact.phone}`}
+                          style={styles.contactLink}
+                          activeOpacity={0.85}
+                        >
+                          <Feather name="phone" size={16} color={palette.primary} />
+                          <Text style={styles.contactLinkText}>{contact.phone}</Text>
+                        </TouchableOpacity>
+                      </Link>
+                    ) : null}
+                    {contact.email ? (
+                      <Link href={`mailto:${contact.email.trim()}`} asChild>
+                        <TouchableOpacity
+                          accessibilityRole="link"
+                          accessibilityLabel={`Skicka e-post till ${contact.name}: ${contact.email}`}
+                          style={styles.contactLink}
+                          activeOpacity={0.85}
+                        >
+                          <Feather name="mail" size={16} color={palette.primary} />
+                          <Text style={styles.contactLinkText}>{contact.email}</Text>
+                        </TouchableOpacity>
+                      </Link>
+                    ) : null}
+                    {!contact.phone && !contact.email ? (
+                      <Text style={styles.contactMeta}>Telefon och e-post saknas.</Text>
+                    ) : null}
                     {contact.note ? (
-                      <Text style={styles.contactNote} numberOfLines={2}>
+                      <Text style={styles.contactNote}>
                         {contact.note}
                       </Text>
                     ) : null}
@@ -229,6 +316,9 @@ export default function ContactsScreen() {
                   {canEdit ? (
                     <View style={styles.contactActions}>
                       <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Redigera ${contact.name}`}
+                        disabled={pendingId !== null}
                         onPress={() => beginEdit(contact)}
                         style={[styles.button, styles.buttonSecondary]}
                         activeOpacity={0.85}
@@ -237,12 +327,15 @@ export default function ContactsScreen() {
                         <Text style={styles.buttonSecondaryText}>Redigera</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Ta bort ${contact.name}`}
+                        disabled={pendingId !== null}
                         onPress={() => handleDelete(contact)}
-                        style={[styles.button, styles.buttonDanger]}
+                        style={styles.button}
                         activeOpacity={0.85}
                       >
-                        <Feather name="trash-2" size={14} color={palette.inverseText} />
-                        <Text style={styles.buttonPrimaryText}>Ta bort</Text>
+                        <Feather name="trash-2" size={14} color="#B3261E" />
+                        <Text style={styles.buttonDangerText}>{pendingId === contact.id && !editing ? 'Tar bort…' : 'Ta bort'}</Text>
                       </TouchableOpacity>
                     </View>
                   ) : null}
@@ -252,12 +345,33 @@ export default function ContactsScreen() {
           ) : (
             <Card elevated style={styles.emptyCard}>
               <Feather name="phone" size={22} color={palette.primary} />
-              <Text style={styles.emptyTitle}>Inga kontakter ännu</Text>
+              <Text style={styles.emptyTitle}>
+                {contacts.length ? 'Inga kontakter matchar sökningen.' : 'Inga kontakter ännu'}
+              </Text>
               <Text style={styles.emptyText}>
-                {canEdit
+                {contacts.length
+                  ? 'Prova ett annat namn eller en annan kontakttyp.'
+                  : canEdit
                   ? 'Lägg till en hovslagare eller veterinär så kan du koppla dem till vårdhändelser.'
                   : 'Be en admin att lägga till kontakter.'}
               </Text>
+              {contacts.length ? (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={[styles.button, styles.buttonSecondary]}
+                  onPress={() => setSearch('')}
+                >
+                  <Text style={styles.buttonSecondaryText}>Visa alla kontakter</Text>
+                </TouchableOpacity>
+              ) : canEdit ? (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={[styles.button, styles.buttonPrimary]}
+                  onPress={() => beginEdit()}
+                >
+                  <Text style={styles.buttonPrimaryText}>Lägg till kontakt</Text>
+                </TouchableOpacity>
+              ) : null}
             </Card>
           )}
         </ScrollView>
@@ -270,6 +384,7 @@ const styles = StyleSheet.create({
   background: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: color.bg },
   pageHeader: { marginBottom: 8 },
+  iconButton: { width: 44, height: 44 },
   pageHeaderDesktop: {
     maxWidth: 1100,
     width: '100%',
@@ -319,6 +434,23 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: radius.xl,
   },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    backgroundColor: palette.surface,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    fontSize: 14,
+    color: palette.primaryText,
+  },
   formTitle: {
     fontSize: 16,
     fontWeight: '800',
@@ -330,6 +462,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   chip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.full,
@@ -343,6 +477,7 @@ const styles = StyleSheet.create({
   },
   chipTextActive: { color: palette.inverseText },
   input: {
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: radius.md,
@@ -356,6 +491,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   button: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
@@ -365,7 +501,7 @@ const styles = StyleSheet.create({
   },
   buttonPrimary: { backgroundColor: palette.primary },
   buttonSecondary: { backgroundColor: palette.surfaceTint },
-  buttonDanger: { backgroundColor: '#B3261E' },
+  buttonDangerText: { color: '#B3261E', fontSize: 12, fontWeight: '700' },
   buttonPrimaryText: {
     fontSize: 12,
     fontWeight: '700',
@@ -377,18 +513,35 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   contactCard: {
-    flexDirection: 'row',
     padding: 16,
     gap: 12,
     borderRadius: radius.xl,
-    alignItems: 'flex-start',
+  },
+  contactDetails: {
+    minWidth: 0,
+    gap: 4,
+  },
+  contactLink: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  contactLinkText: {
+    flexShrink: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.primary,
+    textDecorationLine: 'underline',
   },
   contactName: {
+    lineHeight: 22,
     fontSize: 16,
     fontWeight: '800',
     color: palette.primaryText,
   },
   contactMeta: {
+    lineHeight: 18,
     fontSize: 13,
     color: palette.secondaryText,
   },
@@ -401,7 +554,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
   },
   emptyCard: {
     alignItems: 'center',

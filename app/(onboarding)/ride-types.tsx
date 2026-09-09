@@ -1,3 +1,4 @@
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -17,10 +18,13 @@ export default function OnboardingRideTypes() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
   const activeStable = React.useMemo(
     () => stables.find((stable) => stable.id === activeStableId),
@@ -28,9 +32,11 @@ export default function OnboardingRideTypes() {
   );
   const rideTypes = React.useMemo(() => activeStable?.rideTypes ?? [], [activeStable]);
 
+  const newTypeIdRef = React.useRef<string | null>(null);
   const [draft, setDraft] = React.useState({ code: '', label: '', description: '' });
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
       router.replace('/(onboarding)/create-stable');
       return;
@@ -41,7 +47,7 @@ export default function OnboardingRideTypes() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -51,50 +57,66 @@ export default function OnboardingRideTypes() {
     [actions],
   );
 
-  const handleAddRideType = React.useCallback(() => {
-    if (!activeStableId) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return;
-    }
-    const code = draft.code.trim();
-    const label = draft.label.trim();
-    if (!code || !label) {
-      toast.showToast('Kod och namn krävs.', 'error');
-      return;
-    }
-    const newType: RideType = {
-      id: generateId(),
-      code,
-      label,
-      description: draft.description.trim() || undefined,
-    };
-    const result = actions.updateStable({
-      id: activeStableId,
-      updates: { rideTypes: [...rideTypes, newType] },
-    });
-    if (result.success) {
-      toast.showToast('Ridpass-typ sparad.', 'success');
-      setDraft({ code: '', label: '', description: '' });
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+  const handleAddRideType = React.useCallback(async () => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (!activeStableId) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return;
+      }
+      const code = draft.code.trim();
+      const label = draft.label.trim();
+      if (!code || !label) {
+        toast.showToast('Kod och namn krävs.', 'error');
+        return;
+      }
+      newTypeIdRef.current ??= generateId();
+      const newType: RideType = {
+        id: newTypeIdRef.current,
+        code,
+        label,
+        description: draft.description.trim() || undefined,
+      };
+      const result = await actions.updateStable({
+        id: activeStableId,
+        updates: { rideTypes: [...rideTypes.filter(type => type.id !== newType.id), newType] },
+      });
+      if (result.success) {
+        toast.showToast('Ridpass-typ sparad.', 'success');
+        newTypeIdRef.current = null;
+        setDraft({ code: '', label: '', description: '' });
+      } else {
+        setSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally { savingRef.current = false; setSaving(false); }
   }, [actions, activeStableId, draft.code, draft.description, draft.label, rideTypes, toast]);
 
   const handleDeleteRideType = React.useCallback(
-    (typeId: string) => {
-      if (!activeStableId) {
-        return;
-      }
-      const nextTypes = rideTypes.filter((type) => type.id !== typeId);
-      const result = actions.updateStable({
-        id: activeStableId,
-        updates: { rideTypes: nextTypes },
-      });
-      if (result.success) {
-        toast.showToast('Ridpass-typ borttagen.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
+    async (typeId: string) => {
+      if (savingRef.current) return false;
+      savingRef.current = true;
+      setSaving(true);
+      setSaveError(null);
+      try {
+          if (!activeStableId) {
+            return;
+          }
+          const nextTypes = rideTypes.filter((type) => type.id !== typeId);
+          const result = await actions.updateStable({
+            id: activeStableId,
+            updates: { rideTypes: nextTypes },
+          });
+          if (result.success) {
+            toast.showToast('Ridpass-typ borttagen.', 'success');
+          } else {
+            setSaveError(result.reason);
+            toast.showToast(result.reason, 'error');
+          }
+      } finally { savingRef.current = false; setSaving(false); }
     },
     [actions, activeStableId, rideTypes, toast],
   );
@@ -114,9 +136,12 @@ export default function OnboardingRideTypes() {
       step={9}
       total={10}
       onNext={handleBack}
+      disableNext={saving}
       nextLabel="Klar"
       showProgress={false}
     >
+      <DataSyncStatus />
+      {saveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text>}
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
           <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -124,7 +149,7 @@ export default function OnboardingRideTypes() {
             {stables.map((stable) => {
               const active = stable.id === activeStableId;
               return (
-                <TouchableOpacity
+                <TouchableOpacity disabled={saving}
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => handleSelectStable(stable.id)}
@@ -141,14 +166,14 @@ export default function OnboardingRideTypes() {
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Ny ridpass-typ</Text>
         <View style={styles.inputRow}>
-          <TextInput
+          <TextInput editable={!saving}
             placeholder="Kod (K, M...)"
             placeholderTextColor={palette.mutedText}
             value={draft.code}
             onChangeText={(text) => setDraft((prev) => ({ ...prev, code: text }))}
             style={[styles.input, styles.inputShort]}
           />
-          <TextInput
+          <TextInput editable={!saving}
             placeholder="Namn"
             placeholderTextColor={palette.mutedText}
             value={draft.label}
@@ -156,14 +181,14 @@ export default function OnboardingRideTypes() {
             style={[styles.input, styles.inputLong]}
           />
         </View>
-        <TextInput
+        <TextInput editable={!saving}
           placeholder="Beskrivning (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.description}
           onChangeText={(text) => setDraft((prev) => ({ ...prev, description: text }))}
           style={styles.input}
         />
-        <TouchableOpacity style={styles.primaryButton} onPress={handleAddRideType} activeOpacity={0.9}>
+        <TouchableOpacity disabled={saving} style={styles.primaryButton} onPress={handleAddRideType} activeOpacity={0.9}>
           <Text style={styles.primaryLabel}>Lägg till</Text>
         </TouchableOpacity>
       </Card>
@@ -181,7 +206,7 @@ export default function OnboardingRideTypes() {
                   <Text style={styles.listMeta}>{type.description}</Text>
                 ) : null}
               </View>
-              <TouchableOpacity
+              <TouchableOpacity disabled={saving}
                 style={styles.iconButton}
                 onPress={() => handleDeleteRideType(type.id)}
                 activeOpacity={0.85}

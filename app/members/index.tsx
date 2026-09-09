@@ -23,7 +23,7 @@ import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import { roleLabels, roleOrder, accessLabels } from '@/lib/roleLabels';
-import type { UserRole } from '@/context/AppDataContext';
+import type { ActionResult, UserRole } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 
@@ -33,6 +33,26 @@ export default function MembersScreen() {
   const toast = useToast();
   const router = useRouter();
   const { state, actions } = useAppData();
+  const [memberSaving, setMemberSaving] = React.useState(false);
+  const memberSavingRef = React.useRef(false);
+  const [memberError, setMemberError] = React.useState<string | null>(null);
+  const runMemberChange = React.useCallback(async (operation: () => Promise<ActionResult<unknown>>) => {
+    if (memberSavingRef.current) return false;
+    memberSavingRef.current = true;
+    setMemberSaving(true);
+    setMemberError(null);
+    try {
+      const result = await operation();
+      if (!result.success) setMemberError(result.reason);
+      return result.success;
+    } catch {
+      setMemberError('Medlemsändringen kunde inte sparas. Försök igen.');
+      return false;
+    } finally {
+      memberSavingRef.current = false;
+      setMemberSaving(false);
+    }
+  }, []);
   const isDesktopWeb = useIsDesktopWeb();
   const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const handleExit = React.useCallback(() => {
@@ -210,12 +230,9 @@ export default function MembersScreen() {
     (userId: string, stableId: string, role: UserRole) => {
       const index = roleOrder.indexOf(role);
       const nextRole = roleOrder[(index + 1) % roleOrder.length];
-      const result = actions.updateMemberRole({ userId, stableId, role: nextRole });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
+      void runMemberChange(() => actions.updateMemberRole({ userId, stableId, role: nextRole }));
     },
-    [actions, toast],
+    [actions, runMemberChange],
   );
 
   const handleRemoveMember = React.useCallback(
@@ -229,14 +246,11 @@ export default function MembersScreen() {
       if (!confirmed) {
         return;
       }
-      const result = actions.removeMemberFromStable(userId, stableId);
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      } else {
+      if (await runMemberChange(() => actions.removeMemberFromStable(userId, stableId))) {
         toast.showToast('Medlem borttagen.', 'success');
       }
     },
-    [actions, toast],
+    [actions, toast, runMemberChange],
   );
 
   const handleOpenMember = React.useCallback(
@@ -417,6 +431,8 @@ export default function MembersScreen() {
                       <Text style={styles.listTitle}>Medlemmar</Text>
                       <Text style={styles.listCount}>{memberRows.length}</Text>
                     </View>
+                    {memberSaving && <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Sparar medlemsändring…</Text>}
+                    {memberError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{memberError}</Text>}
                     {memberRows.length === 0 ? (
                       <Text style={styles.emptyText}>Inga medlemmar matchar filtret.</Text>
                     ) : isDesktopWeb ? (
@@ -464,6 +480,9 @@ export default function MembersScreen() {
                                       style={styles.roleButton}
                                       onPress={() => handleRoleCycle(row.userId, row.stableId, row.role)}
                                       activeOpacity={0.85}
+                                      disabled={memberSaving}
+                                      accessibilityRole="button"
+                                      accessibilityState={{ disabled: memberSaving }}
                                     >
                                       <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
                                     </TouchableOpacity>
@@ -472,6 +491,10 @@ export default function MembersScreen() {
                                         style={styles.removeButton}
                                         onPress={() => handleRemoveMember(row.userId, row.stableId)}
                                         activeOpacity={0.85}
+                                        disabled={memberSaving}
+                                        accessibilityRole="button"
+                                        accessibilityLabel={`Ta bort ${row.name} från stallet`}
+                                        accessibilityState={{ disabled: memberSaving }}
                                       >
                                         <Feather name="x" size={14} color={palette.error} />
                                       </TouchableOpacity>
@@ -528,6 +551,9 @@ export default function MembersScreen() {
                                     style={styles.roleButton}
                                     onPress={() => handleRoleCycle(row.userId, row.stableId, row.role)}
                                     activeOpacity={0.85}
+                                    disabled={memberSaving}
+                                    accessibilityRole="button"
+                                    accessibilityState={{ disabled: memberSaving }}
                                   >
                                     <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
                                   </TouchableOpacity>
@@ -536,6 +562,10 @@ export default function MembersScreen() {
                                       style={styles.removeButton}
                                       onPress={() => handleRemoveMember(row.userId, row.stableId)}
                                       activeOpacity={0.85}
+                                      disabled={memberSaving}
+                                      accessibilityRole="button"
+                                      accessibilityLabel={`Ta bort ${row.name} från stallet`}
+                                      accessibilityState={{ disabled: memberSaving }}
                                     >
                                       <Feather name="x" size={14} color={palette.error} />
                                     </TouchableOpacity>

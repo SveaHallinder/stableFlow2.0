@@ -23,6 +23,7 @@ import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { useToast } from '@/components/ToastProvider';
+import { generateId } from '@/lib/ids';
 
 const palette = theme.colors;
 
@@ -48,6 +49,11 @@ export default function ChatScreen() {
     [conversationMessages, state.blockedUserIds],
   );
   const [composerText, setComposerText] = React.useState('');
+  const [sending, setSending] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+  const sendingRef = React.useRef(false);
+  const requestIdRef = React.useRef<string | null>(null);
+  const attemptedTextRef = React.useRef('');
   const toast = useToast();
   const scrollViewRef = React.useRef<ScrollView>(null);
 
@@ -65,16 +71,29 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [messages.length]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const trimmed = composerText.trim();
-    if (!conversationId || !trimmed) {
+    if (!conversationId || !trimmed || sendingRef.current) {
       return;
     }
-    const result = sendConversationMessage(conversationId, composerText);
-    if (result.success) {
-      setComposerText('');
-    } else if (!result.success) {
-      toast.showToast(result.reason, 'error');
+    sendingRef.current = true;
+    setSending(true);
+    setSendError(null);
+    if (attemptedTextRef.current !== trimmed) requestIdRef.current = null;
+    requestIdRef.current ??= generateId();
+    attemptedTextRef.current = trimmed;
+    try {
+      const result = await sendConversationMessage(conversationId, trimmed, requestIdRef.current);
+      if (result.success) {
+        setComposerText('');
+        requestIdRef.current = null;
+      } else {
+        setSendError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
     }
   };
 
@@ -162,6 +181,9 @@ export default function ChatScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {!messages.length && (
+                <Text style={styles.emptyText}>Här är det tomt än. Skriv ett meddelande för att börja prata.</Text>
+              )}
               {messages.map((message, index) => {
                 const isMe = message.authorId === state.currentUserId;
                 const isLast = index === messages.length - 1;
@@ -206,7 +228,7 @@ export default function ChatScreen() {
                           isMe ? styles.statusTextMe : styles.statusTextOther,
                         ]}
                       >
-                        {message.status}
+                        {{ sent: 'Skickat', delivered: 'Levererat', seen: 'Läst' }[message.status]}
                       </Text>
                     ) : null}
                   </View>
@@ -216,32 +238,28 @@ export default function ChatScreen() {
               <View style={styles.bottomSpacer} />
             </ScrollView>
 
+            {sendError && <Text accessibilityRole="alert" style={styles.errorText}>{sendError}</Text>}
+            {sending && <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Skickar…</Text>}
             <View style={[styles.composerContainer, isDesktopWeb && styles.composerContainerDesktop]}>
               <View style={[styles.composer, isDesktopWeb && styles.composerDesktop]}>
-                <TouchableOpacity
-                  style={styles.composerAction}
-                  onPress={() => toast.showToast('Bilagor kommer snart.', 'info')}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Bifoga fil"
-                >
-                  <Text style={styles.composerActionIcon}>+</Text>
-                </TouchableOpacity>
-
                 <TextInput
                   placeholder="Skriv ditt meddelande..."
                   placeholderTextColor={palette.mutedText}
                   style={styles.composerInput}
                   value={composerText}
                   onChangeText={setComposerText}
+                  editable={!sending}
+                  accessibilityLabel="Meddelande"
                   onSubmitEditing={handleSend}
                   returnKeyType="send"
                 />
               </View>
 
               <TouchableOpacity
-                style={styles.sendButton}
+                style={[styles.sendButton, (sending || !composerText.trim()) && { opacity: 0.5 }]}
                 onPress={handleSend}
+                disabled={sending || !composerText.trim() || !conversationPreview}
+                accessibilityState={{ disabled: sending || !composerText.trim() || !conversationPreview, busy: sending }}
                 accessibilityRole="button"
                 accessibilityLabel="Skicka meddelande"
               >
@@ -257,6 +275,8 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
+  emptyText: { color: palette.mutedText, fontSize: 14, lineHeight: 21, paddingHorizontal: 20, paddingVertical: 12 },
+  errorText: { color: palette.error, fontSize: 14, lineHeight: 21, paddingHorizontal: 20, paddingVertical: 12 },
   background: {
     flex: 1,
   },
@@ -461,8 +481,8 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   sendButton: {
-    width: 42,
-    height: 42,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     backgroundColor: palette.primary,
     alignItems: 'center',

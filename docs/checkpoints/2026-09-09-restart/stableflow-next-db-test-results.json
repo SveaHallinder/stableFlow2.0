@@ -1,0 +1,357 @@
+[
+  {
+    "test": "arena-rc-insert waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "arena-rc-insert exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  exec_stmt_raise, pl_exec.c:3885"
+  },
+  {
+    "test": "arena-rc-insert expected conflict",
+    "result": "PASS",
+    "detail": "252e4150-b18b-61a2-1d9c-fe85ca18dad8\n0\n4\nSNAPSHOT\nERROR:  23P01: [arena overlap] Tiden är redan bokad. Välj en annan tid.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 42 at RAISE\nLOCATION:  exec_stmt_raise, pl_exec.c:3885\n"
+  },
+  {
+    "test": "arena-rc-insert no committed overlap",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "arena-rc-update waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "arena-rc-update exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  exec_stmt_raise, pl_exec.c:3885"
+  },
+  {
+    "test": "arena-rc-update expected conflict",
+    "result": "PASS",
+    "detail": "7e022b28-affd-fa8e-56d3-79d87271f72f\n2\n4\nSNAPSHOT\nERROR:  23P01: [arena overlap] Tiden är redan bokad. Välj en annan tid.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 42 at RAISE\nLOCATION:  exec_stmt_raise, pl_exec.c:3885\n"
+  },
+  {
+    "test": "arena-rc-update no committed overlap",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "owner-rc-delete waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "owner-rc-delete exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  exec_stmt_raise, pl_exec.c:3885"
+  },
+  {
+    "test": "owner-rc-delete expected conflict",
+    "result": "PASS",
+    "detail": "bf3ade60-7f0f-2a0c-6e44-d57b081b893a\n0\n4\nSNAPSHOT\nERROR:  23514: [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE\nLOCATION:  exec_stmt_raise, pl_exec.c:3885\n"
+  },
+  {
+    "test": "owner-rc-delete owner remains",
+    "result": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "owner-rc-demote waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "owner-rc-demote exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  exec_stmt_raise, pl_exec.c:3885"
+  },
+  {
+    "test": "owner-rc-demote expected conflict",
+    "result": "PASS",
+    "detail": "2aa1ef45-4099-e8c9-68e5-9efc3f7ca193\n0\n4\nSNAPSHOT\nERROR:  23514: [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE\nLOCATION:  exec_stmt_raise, pl_exec.c:3885\n"
+  },
+  {
+    "test": "owner-rc-demote owner remains",
+    "result": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "arena-rr-insert waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "arena-rr-insert exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  ExecUpdate, nodeModifyTable.c:2006"
+  },
+  {
+    "test": "arena-rr-insert expected conflict",
+    "result": "PASS",
+    "detail": "b5ec100c-8ddd-1f3d-e765-7c787d0d398f\n0\n4\nSNAPSHOT\nERROR:  40001: could not serialize access due to concurrent update\nCONTEXT:  SQL statement \"update public.stables set created_at = created_at where id = parent_id\"\nPL/pgSQL function public.guard_arena_booking_overlap() line 28 at SQL statement\nLOCATION:  ExecUpdate, nodeModifyTable.c:2006\n"
+  },
+  {
+    "test": "arena-rr-insert no committed overlap",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "arena-rr-update waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "arena-rr-update exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  ExecUpdate, nodeModifyTable.c:2006"
+  },
+  {
+    "test": "arena-rr-update expected conflict",
+    "result": "PASS",
+    "detail": "6f9f146d-2458-38c0-1265-9ff1a931f779\n2\n4\nSNAPSHOT\nERROR:  40001: could not serialize access due to concurrent update\nCONTEXT:  SQL statement \"update public.stables set created_at = created_at where id = parent_id\"\nPL/pgSQL function public.guard_arena_booking_overlap() line 28 at SQL statement\nLOCATION:  ExecUpdate, nodeModifyTable.c:2006\n"
+  },
+  {
+    "test": "arena-rr-update no committed overlap",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "owner-rr-delete waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "owner-rr-delete exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  ExecUpdate, nodeModifyTable.c:2006"
+  },
+  {
+    "test": "owner-rr-delete expected conflict",
+    "result": "PASS",
+    "detail": "95a2bcb9-e634-77af-87ef-ffaeefdd9149\n0\n4\nSNAPSHOT\nERROR:  40001: could not serialize access due to concurrent update\nCONTEXT:  SQL statement \"update public.stables set created_at = created_at where id = old.stable_id\"\nPL/pgSQL function public.guard_last_stable_owner() line 14 at SQL statement\nLOCATION:  ExecUpdate, nodeModifyTable.c:2006\n"
+  },
+  {
+    "test": "owner-rr-delete owner remains",
+    "result": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "owner-rr-demote waiter blocks",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "owner-rr-demote exactly one commit",
+    "result": "PASS",
+    "detail": "LOCATION:  ExecUpdate, nodeModifyTable.c:2006"
+  },
+  {
+    "test": "owner-rr-demote expected conflict",
+    "result": "PASS",
+    "detail": "da8c56a5-2a7b-cd22-00d3-b5eaea394744\n0\n4\nSNAPSHOT\nERROR:  40001: could not serialize access due to concurrent update\nCONTEXT:  SQL statement \"update public.stables set created_at = created_at where id = old.stable_id\"\nPL/pgSQL function public.guard_last_stable_owner() line 14 at SQL statement\nLOCATION:  ExecUpdate, nodeModifyTable.c:2006\n"
+  },
+  {
+    "test": "owner-rr-demote owner remains",
+    "result": "PASS",
+    "detail": "1"
+  },
+  {
+    "test": "staff with view access may book adjacent and different dates",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "same time other stable allowed",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "guest insert denied",
+    "result": "PASS",
+    "detail": "ERROR:  new row violates row-level security policy for table \"arena_bookings\""
+  },
+  {
+    "test": "anon cannot insert",
+    "result": "PASS",
+    "detail": "ERROR:  permission denied for table arena_bookings"
+  },
+  {
+    "test": "authenticated trigger function execute denied",
+    "result": "PASS",
+    "detail": "ERROR:  permission denied for function guard_last_stable_owner"
+  },
+  {
+    "test": "null stable denied",
+    "result": "PASS",
+    "detail": "ERROR:  [arena overlap] Ange stall och giltiga klockslag.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 12 at RAISE"
+  },
+  {
+    "test": "invalid clock denied",
+    "result": "PASS",
+    "detail": "ERROR:  [arena overlap] Ange stall och giltiga klockslag.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 12 at RAISE"
+  },
+  {
+    "test": "overnight interval denied",
+    "result": "PASS",
+    "detail": "ERROR:  [arena overlap] Sluttiden måste vara efter starttiden samma dag.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 17 at RAISE"
+  },
+  {
+    "test": "hidden fixture invisible to caller",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "security definer rejects invisible conflict",
+    "result": "PASS",
+    "detail": "ERROR:  [arena overlap] Tiden är redan bokad. Välj en annan tid.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 42 at RAISE"
+  },
+  {
+    "test": "bulk owner delete rejected",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE"
+  },
+  {
+    "test": "bulk rejection preserves both owners",
+    "result": "PASS",
+    "detail": "2"
+  },
+  {
+    "test": "last owner null access denied",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE"
+  },
+  {
+    "test": "last owner moved to another stable denied",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE"
+  },
+  {
+    "test": "last owner profile cascade denied",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE\nSQL statement \"DELETE FROM ONLY \"public\".\"stable_members\" WHERE $1 OPERATOR(pg_catalog.=) \"user_id\"\""
+  },
+  {
+    "test": "promote then demote transfer allowed",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "creator stable delete cascade allowed",
+    "result": "PASS",
+    "detail": "0"
+  },
+  {
+    "test": "first owner bootstrap still allowed",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "join generator volatile",
+    "result": "PASS",
+    "detail": "v"
+  },
+  {
+    "test": "join generator evaluated per input row in sample",
+    "result": "PASS",
+    "detail": "32 distinct samples / 32"
+  },
+  {
+    "test": "extra-rc-rollback waits for parent",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "extra-rc-rollback succeeds after correct visibility",
+    "result": "PASS",
+    "detail": "dc7bd453-e18a-4d87-f045-256ca4dcb58a\n0\nSNAPSHOT\n"
+  },
+  {
+    "test": "extra-rc-nonoverlap waits for parent",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "extra-rc-nonoverlap succeeds after correct visibility",
+    "result": "PASS",
+    "detail": "d24a1d86-afb6-7d56-262e-e7a623d2e191\n0\nSNAPSHOT\n"
+  },
+  {
+    "test": "extra-rr-rollback waits for parent",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "extra-rr-rollback succeeds after correct visibility",
+    "result": "PASS",
+    "detail": "f1281b8c-8f85-c313-ed3e-ebb3479871ff\n0\nSNAPSHOT\n"
+  },
+  {
+    "test": "extra-rr-nonoverlap waits for parent",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "extra-rr-nonoverlap conservative RR retry",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "extra-rr-nonoverlap fresh retry allowed",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "multirow overlapping arena insert rejected",
+    "result": "PASS",
+    "detail": "ERROR:  [arena overlap] Tiden är redan bokad. Välj en annan tid.\nCONTEXT:  PL/pgSQL function public.guard_arena_booking_overlap() line 42 at RAISE\n"
+  },
+  {
+    "test": "multirow rejection leaves no booking",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "bulk owner demotion rejected",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 28 at RAISE\n"
+  },
+  {
+    "test": "bulk demotion rolls back both",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "revised proposal applies with historical ownerless stable",
+    "result": "PASS",
+    "detail": "psql:/tmp/stableflow-next-db-proposal.sql:41: NOTICE:  [last owner] 1 befintliga stall saknar ägare. Historiska rader lämnas orörda; triggern skyddar endast mot förlust av etablerad ägare.\n"
+  },
+  {
+    "test": "preflight emits ownerless notice",
+    "result": "PASS",
+    "detail": "psql:/tmp/stableflow-next-db-proposal.sql:41: NOTICE:  [last owner] 1 befintliga stall saknar ägare. Historiska rader lämnas orörda; triggern skyddar endast mot förlust av etablerad ägare.\n"
+  },
+  {
+    "test": "historical ownerless row unchanged",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "both direct trigger EXECUTE grants denied",
+    "result": "PASS",
+    "detail": ""
+  },
+  {
+    "test": "suppressed parent mutex fails closed",
+    "result": "PASS",
+    "detail": "ERROR:  [last owner] Stallåset kunde inte tas. Försök igen.\nCONTEXT:  PL/pgSQL function public.guard_last_stable_owner() line 17 at RAISE\n"
+  },
+  {
+    "test": "join codes in actual multirow insert",
+    "result": "PASS",
+    "detail": ""
+  }
+]

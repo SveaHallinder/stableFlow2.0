@@ -1,11 +1,12 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { theme } from '@/components/theme';
 import {
@@ -24,6 +25,7 @@ import {
   type HorseListFilter,
 } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
+import { deriveFeedFocus } from '@/lib/today';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
@@ -75,6 +77,7 @@ export default function HorsesScreen() {
   const isDesktopWeb = useIsDesktopWeb();
   const todayIso = toISODate(new Date());
   const [filter, setFilter] = React.useState<HorseListFilter>('all');
+  const [search, setSearch] = React.useState('');
   const { currentStableId, currentUserId } = state;
   const stableHorses = React.useMemo(
     () => state.horses.filter((horse) => horse.stableId === currentStableId),
@@ -96,8 +99,9 @@ export default function HorsesScreen() {
     [state.rideLogs, currentStableId],
   );
   const visibleHorses = React.useMemo(
-    () => getVisibleHorsesForUser(state, currentStableId, currentUserId, filter),
-    [state, currentStableId, currentUserId, filter],
+    () => getVisibleHorsesForUser(state, currentStableId, currentUserId, filter)
+      .filter((horse) => normalizeName(horse.name).includes(normalizeName(search))),
+    [state, currentStableId, currentUserId, filter, search],
   );
   const myHorseCount = React.useMemo(
     () => getVisibleHorsesForUser(state, currentStableId, currentUserId, 'mine').length,
@@ -109,6 +113,12 @@ export default function HorsesScreen() {
   );
   const canEditHorses = derived.permissions.canManageHorses;
   const canUpdateStatus = derived.permissions.canUpdateHorseStatus;
+  const dailyFeeds = React.useMemo(
+    () => (['morning', 'lunch', 'evening'] as const).map((slot) =>
+      deriveFeedFocus({ state, currentStableId, todayIso, slot }),
+    ),
+    [state, currentStableId, todayIso],
+  );
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -131,12 +141,15 @@ export default function HorsesScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
+          <DataSyncStatus />
           <Card elevated tone={isDesktopWeb ? 'default' : 'muted'} style={styles.summaryCard}>
             <View style={styles.summaryHeader}>
               <View style={styles.summaryTitleBlock}>
                 <Text style={styles.summaryEyebrow}>Stallets hästar</Text>
                 <Text style={styles.summaryTitle}>
-                  {stableHorses.length ? `${stableHorses.length} hästar` : 'Inga hästar ännu'}
+                  {stableHorses.length
+                    ? `${stableHorses.length} ${stableHorses.length === 1 ? 'häst' : 'hästar'}`
+                    : 'Inga hästar ännu'}
                 </Text>
                 <Text style={styles.summaryText}>
                   {stableHorses.length
@@ -153,6 +166,17 @@ export default function HorsesScreen() {
                 </View>
               ) : null}
             </View>
+            {canEditHorses ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Hantera hästar"
+                style={styles.manageButton}
+                onPress={() => router.push('/stables?section=horses')}
+              >
+                <Feather name="edit-2" size={14} color={palette.primaryText} />
+                <Text style={styles.secondaryButtonText}>Hantera hästar</Text>
+              </TouchableOpacity>
+            ) : null}
             {!canEditHorses ? (
               <View style={styles.notice}>
                 <Text style={styles.noticeText}>Du kan läsa detta, men inte ändra.</Text>
@@ -161,12 +185,35 @@ export default function HorsesScreen() {
           </Card>
 
           {stableHorses.length ? (
+            <View style={styles.searchRow}>
+              <Feather name="search" size={18} color={palette.secondaryText} />
+              <TextInput
+                accessibilityLabel="Sök häst efter namn"
+                placeholder="Sök häst efter namn"
+                placeholderTextColor={palette.secondaryText}
+                value={search}
+                onChangeText={setSearch}
+                autoCorrect={false}
+                style={styles.searchInput}
+              />
+              {search ? (
+                <HeaderIconButton style={styles.iconButton} accessibilityLabel="Rensa hästsökning" onPress={() => setSearch('')}>
+                  <Feather name="x" size={18} color={palette.primaryText} />
+                </HeaderIconButton>
+              ) : null}
+            </View>
+          ) : null}
+
+          {stableHorses.length ? (
             <View style={styles.filterRow}>
               {filterOptions.map((option) => {
                 const active = option.id === filter;
                 return (
                   <TouchableOpacity
                     key={option.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                     style={[styles.filterChip, active && styles.filterChipActive]}
                     onPress={() => setFilter(option.id)}
                     activeOpacity={0.85}
@@ -189,6 +236,10 @@ export default function HorsesScreen() {
                 const responsibleUsers = getResponsibleUsersForHorse(state, horse.id);
                 const isMine = isHorseOwner(state, horse.id, currentUserId);
                 const isResponsible = isHorseResponsible(state, horse.id, currentUserId, derived.membership);
+                const plannedFeeds = dailyFeeds
+                  .map((feed) => feed.items.find((item) => item.horse.id === horse.id))
+                  .filter((item) => item?.plan);
+                const checkedFeeds = plannedFeeds.filter((item) => item?.check?.checkedAt);
                 return (
                   <Card key={horse.id} elevated tone="default" style={styles.horseCard}>
                     <View style={styles.horseTopRow}>
@@ -233,7 +284,9 @@ export default function HorsesScreen() {
                       <View style={styles.statusItem}>
                         <Text style={styles.statusLabel}>Foder</Text>
                         <Text style={styles.statusValue}>
-                          {status?.hay ? 'Hö markerat klart idag' : 'Foderplan ej satt ännu'}
+                          {plannedFeeds.length
+                            ? `${checkedFeeds.length} av ${plannedFeeds.length} fodringar klara`
+                            : 'Ingen foderplan satt'}
                         </Text>
                       </View>
                       <View style={styles.statusItem}>
@@ -257,10 +310,13 @@ export default function HorsesScreen() {
                         <Text style={styles.primaryButtonText}>Profil</Text>
                       </TouchableOpacity>
                       {canEditHorses || canUpdateStatus ? (
-                        <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/stables')}>
-                          <Text style={styles.secondaryButtonText}>
-                            {canEditHorses ? 'Redigera' : 'Status'}
-                          </Text>
+                        <TouchableOpacity
+                          accessibilityRole="button"
+                          accessibilityLabel={`Status för ${horse.name}`}
+                          style={styles.secondaryButton}
+                          onPress={() => router.push(`/horses/${horse.id}`)}
+                        >
+                          <Text style={styles.secondaryButtonText}>Status</Text>
                         </TouchableOpacity>
                       ) : null}
                     </View>
@@ -272,15 +328,33 @@ export default function HorsesScreen() {
             <Card elevated tone="default" style={styles.emptyCard}>
               <Feather name="activity" size={22} color={palette.primary} />
               <Text style={styles.emptyTitle}>
-                {stableHorses.length ? 'Inga hästar i filtret.' : 'Du har ingen häst kopplad ännu.'}
+                {stableHorses.length
+                  ? normalizeName(search)
+                    ? 'Inga hästar matchar sökningen.'
+                    : 'Inga hästar i filtret.'
+                  : 'Du har ingen häst kopplad ännu.'}
               </Text>
               <Text style={styles.emptyText}>
                 {stableHorses.length
-                  ? `Mina: ${myHorseCount}. Ansvar: ${responsibleHorseCount}.`
+                  ? normalizeName(search)
+                    ? 'Prova ett annat namn eller visa alla hästar i stallet.'
+                    : `Mina: ${myHorseCount}. Ansvar: ${responsibleHorseCount}.`
                   : 'När en häst skapas eller kopplas till dig visas hage, box och dagens status här.'}
               </Text>
-              {canEditHorses ? (
-                <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/stables')}>
+              {stableHorses.length ? (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Visa alla hästar"
+                  style={styles.manageButton}
+                  onPress={() => {
+                    setSearch('');
+                    setFilter('all');
+                  }}
+                >
+                  <Text style={styles.secondaryButtonText}>Visa alla hästar</Text>
+                </TouchableOpacity>
+              ) : canEditHorses ? (
+                <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/stables?section=horses')}>
                   <Text style={styles.primaryButtonText}>Lägg till häst</Text>
                 </TouchableOpacity>
               ) : null}
@@ -316,7 +390,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 50,
+    paddingBottom: 120,
     gap: 16,
   },
   scrollContentDesktop: {
@@ -390,7 +464,27 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    backgroundColor: palette.surface,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  iconButton: { width: 44, height: 44 },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    fontSize: 14,
+    color: palette.primaryText,
+  },
   filterChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radius.full,
@@ -491,9 +585,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  manageButton: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: 14,
+    borderRadius: radius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: palette.surfaceTint,
+  },
   secondaryButton: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -508,7 +612,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',

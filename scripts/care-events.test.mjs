@@ -44,12 +44,12 @@ test('Phase 5 — Reducer cases + cleanup on stable/horse delete', async () => {
 test('Phase 5 — Actions exposed on AppDataContextValue', async () => {
   const context = await readProjectFile('context/AppDataContext.tsx');
 
-  assert.match(context, /upsertExternalContact: \(input: UpsertExternalContactInput\) => ActionResult<ExternalContact>;/);
-  assert.match(context, /deleteExternalContact: \(contactId: string\) => ActionResult;/);
-  assert.match(context, /createCareEvent: \(input: CreateCareEventInput\) => ActionResult<CareEvent>;/);
-  assert.match(context, /updateCareEvent: \(input: UpdateCareEventInput\) => ActionResult<CareEvent>;/);
-  assert.match(context, /deleteCareEvent: \(careEventId: string\) => ActionResult;/);
-  assert.match(context, /completeCareEvent: \(input: CompleteCareEventInput\) => ActionResult<CareEvent>;/);
+  assert.match(context, /upsertExternalContact: \(input: UpsertExternalContactInput\) => Promise<ActionResult<ExternalContact>>;/);
+  assert.match(context, /deleteExternalContact: \(contactId: string\) => Promise<ActionResult>;/);
+  assert.match(context, /createCareEvent: \(input: CreateCareEventInput\) => Promise<ActionResult<CareEvent>>;/);
+  assert.match(context, /updateCareEvent: \(input: UpdateCareEventInput\) => Promise<ActionResult<CareEvent>>;/);
+  assert.match(context, /deleteCareEvent: \(careEventId: string\) => Promise<ActionResult>;/);
+  assert.match(context, /completeCareEvent: \(input: CompleteCareEventInput\) => Promise<ActionResult<CareEvent>>;/);
   // completeCareEvent flips status + sets completedAt
   assert.match(context, /status: 'done',\s+completedAt: new Date\(\)\.toISOString\(\),/);
 });
@@ -60,8 +60,8 @@ test('Phase 5 — Supabase load and persist for contacts + care events', async (
   assert.match(context, /supabase\.from\('external_contacts'\)\.select\('\*'\)\.in\('stable_id', stableIds\)/);
   assert.match(context, /supabase\.from\('care_events'\)\.select\('\*'\)\.in\('stable_id', stableIds\)/);
   assert.match(context, /from\('external_contacts'\)\.upsert/);
-  assert.match(context, /from\('care_events'\)\.upsert/);
-  assert.match(context, /from\('care_events'\)\.delete\(\)\.eq\('id', eventId\)/);
+  assert.match(context, /from\('care_events'\)\.insert/);
+  assert.match(context, /from\('care_events'\)\.delete\(\)\.eq\('id', event\.id\)/);
 });
 
 test('Phase 5 — Migration + schema mirror care_events_contacts', async () => {

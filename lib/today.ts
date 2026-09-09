@@ -159,9 +159,9 @@ function getHorseGaps(status: HorseDayStatus | undefined, paddock: Paddock | und
   const gaps: string[] = [];
   if (!status) {
     gaps.push('dagstatus');
-    gaps.push('foder');
+    gaps.push('hö');
   } else {
-    if (!status.hay) gaps.push('foder');
+    if (!status.hay) gaps.push('hö');
     if (!status.water) gaps.push('vatten');
     if (!status.checked) gaps.push('koll');
   }
@@ -231,11 +231,13 @@ export function deriveTodayOverview({
     (assignment) => assignment.date < todayIso && assignment.status !== 'completed',
   );
   const incompleteToday = todayAssignments.filter((assignment) => assignment.status !== 'completed');
-  const stableAlerts = state.alerts.filter((alert) => alert.stableId === currentStableId);
-  const importantAlerts = stableAlerts
-    .filter((alert) => alert.type === 'critical')
-    .concat(stableAlerts.filter((alert) => alert.type !== 'critical'))
-    .slice(0, 3);
+  const importantAlerts: AlertMessage[] = state.stableAlerts
+    .filter((alert) => alert.stableId === currentStableId && !alert.resolvedAt && alert.severity !== 'info')
+    .sort((a, b) => Number(b.severity === 'urgent') - Number(a.severity === 'urgent') || b.createdAt.localeCompare(a.createdAt))
+    .map((alert) => ({
+      id: alert.id, stableId: alert.stableId, message: alert.title,
+      type: alert.severity === 'urgent' ? 'critical' : 'info', createdAt: alert.createdAt,
+    }));
   const stableHorses = state.horses.filter((horse) => horse.stableId === currentStableId);
   const stablePaddocks = state.paddocks.filter((paddock) => paddock.stableId === currentStableId);
   const todayStatuses = state.horseDayStatuses.filter(
@@ -275,7 +277,7 @@ export function deriveTodayOverview({
     return {
       mode,
       headline: 'Stallstatus först',
-      subheadline: 'Fokus på luckor, ej klart och saker som behöver ansvar.',
+      subheadline: 'Dagens pass och det som behöver din uppmärksamhet.',
       noStableData,
       permissionNote,
       myTasksToday,
@@ -287,7 +289,7 @@ export function deriveTodayOverview({
       insights: [
         {
           id: 'stable-status',
-          label: 'Stallstatus',
+          label: 'Klara pass',
           value: `${todayAssignments.length - incompleteToday.length}/${todayAssignments.length}`,
           meta: todayAssignments.length ? 'Pass klara idag' : 'Slutför setup för att se dagens stallstatus.',
           tone: todayAssignments.length && incompleteToday.length === 0 ? 'success' : 'default',
@@ -301,23 +303,23 @@ export function deriveTodayOverview({
         },
         {
           id: 'incomplete',
-          label: 'Ej klart',
+          label: 'Återstår',
           value: `${incompleteToday.length + overdueTasks.length}`,
           meta: overdueTasks.length ? `${overdueTasks.length} försenade` : 'Inget försenat just nu.',
           tone: incompleteToday.length || overdueTasks.length ? 'warning' : 'success',
         },
         {
           id: 'horse-gaps',
-          label: 'Foder/hage saknas',
+          label: 'Daglig tillsyn',
           value: `${horseStatusGaps.length}`,
           meta: horseStatusGaps.length ? 'Hästar med luckor idag' : 'Häststatus ser komplett ut.',
           tone: horseStatusGaps.length ? 'warning' : 'success',
         },
         {
           id: 'alerts',
-          label: 'Alerts',
+          label: 'Viktigt',
           value: `${importantAlerts.length}`,
-          meta: importantAlerts[0]?.message ?? 'Inga viktiga alerts.',
+          meta: importantAlerts[0]?.message ?? 'Inga viktiga meddelanden.',
           tone: importantAlerts.length ? 'warning' : 'success',
         },
       ],
@@ -347,7 +349,7 @@ export function deriveTodayOverview({
         },
         {
           id: 'my-horse-gaps',
-          label: 'Foder/status/hage',
+          label: 'Daglig tillsyn',
           value: `${myHorseGaps.length}`,
           meta: myHorseGaps.length ? 'Saker att kontrollera idag' : 'Allt ser ifyllt ut idag.',
           tone: myHorseGaps.length ? 'warning' : 'success',
@@ -360,9 +362,9 @@ export function deriveTodayOverview({
         },
         {
           id: 'alerts',
-          label: 'Alerts',
+          label: 'Viktigt',
           value: `${importantAlerts.length}`,
-          meta: importantAlerts[0]?.message ?? 'Inga viktiga alerts.',
+          meta: importantAlerts[0]?.message ?? 'Inga viktiga meddelanden.',
           tone: importantAlerts.length ? 'warning' : 'success',
         },
       ],
@@ -376,7 +378,7 @@ export function deriveTodayOverview({
     return {
       mode,
       headline: 'Dina uppgifter först',
-      subheadline: 'Fokus på vad du ska göra nu, vad som är ledigt och viktiga alerts.',
+      subheadline: 'Fokus på vad du ska göra nu, vad som är ledigt och viktiga meddelanden.',
       noStableData,
       permissionNote,
       myTasksToday,
@@ -407,9 +409,9 @@ export function deriveTodayOverview({
         },
         {
           id: 'alerts',
-          label: 'Alerts',
+          label: 'Viktigt',
           value: `${importantAlerts.length}`,
-          meta: importantAlerts[0]?.message ?? 'Inga viktiga alerts.',
+          meta: importantAlerts[0]?.message ?? 'Inga viktiga meddelanden.',
           tone: importantAlerts.length ? 'warning' : 'success',
         },
       ],
@@ -443,9 +445,9 @@ export function deriveTodayOverview({
       },
       {
         id: 'alerts',
-        label: 'Alerts',
+        label: 'Viktigt',
         value: `${importantAlerts.length}`,
-        meta: importantAlerts[0]?.message ?? 'Inga viktiga alerts.',
+        meta: importantAlerts[0]?.message ?? 'Inga viktiga meddelanden.',
       },
     ],
   };

@@ -38,7 +38,7 @@ function TaskRow({ title, description, done }: TaskRowProps) {
 
 export default function OnboardingSetup() {
   const router = useRouter();
-  const { state, actions, derived } = useAppData();
+  const { state, actions, derived, hydrating } = useAppData();
   const { farms, stables, currentStableId, horses, users, assignments } = state;
   const returnTo = '/(onboarding)/setup';
 
@@ -54,6 +54,7 @@ export default function OnboardingSetup() {
   );
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
       if (activeStableId) {
         setActiveStableId('');
@@ -66,7 +67,7 @@ export default function OnboardingSetup() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, stables]);
+  }, [activeStableId, fallbackStableId, stables, hydrating]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {

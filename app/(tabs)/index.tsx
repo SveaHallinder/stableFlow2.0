@@ -1,3 +1,4 @@
+import { generateId } from '@/lib/ids';
 import React from 'react';
 import {
   KeyboardAvoidingView,
@@ -26,6 +27,7 @@ import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
@@ -35,7 +37,7 @@ import {
   groupAssignmentsByDay,
   toISODate,
 } from '@/lib/schedule';
-import { deriveFeedFocus, deriveTodayOverview, feedSlotLabels, getCurrentFeedSlot } from '@/lib/today';
+import { deriveFeedFocus, deriveTodayOverview, getCurrentFeedSlot } from '@/lib/today';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useWeather } from '@/hooks/useWeather';
@@ -113,6 +115,13 @@ export default function OverviewScreen() {
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
   const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
+  const [eventSaving, setEventSaving] = React.useState(false);
+  const eventSavingRef = React.useRef(false);
+  const eventIdRef = React.useRef<string | null>(null);
+  const [eventSaveError, setEventSaveError] = React.useState<string | null>(null);
+  const [resolvingAlertId, setResolvingAlertId] = React.useState<string | null>(null);
+  const resolvingAlertRef = React.useRef(false);
+  const [alertResolveError, setAlertResolveError] = React.useState<string | null>(null);
   const [eventText, setEventText] = React.useState('');
   const [eventKind, setEventKind] = React.useState<'event' | 'important' | 'urgent'>('event');
   const [tourVisible, setTourVisible] = React.useState(tour === 'intro');
@@ -120,6 +129,8 @@ export default function OverviewScreen() {
 
   React.useEffect(() => {
     if (eventsModalVisible) {
+      eventIdRef.current = generateId();
+      setEventSaveError(null);
       setEventText('');
       setEventKind('event');
     }
@@ -199,8 +210,7 @@ export default function OverviewScreen() {
           return severityDiff;
         }
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      })
-      .slice(0, 3);
+      });
   }, [currentStableId, stableAlerts]);
 
   const closeTour = React.useCallback(() => {
@@ -416,9 +426,16 @@ export default function OverviewScreen() {
   );
   const canCheckFeed = permissions.canUpdateHorseStatus || ownsHorseInFocus;
   const [feedDeviation, setFeedDeviation] = React.useState<{ horseId: string; text: string } | null>(null);
+  const feedSavePending = React.useRef(false);
+  const [feedSavingHorseId, setFeedSavingHorseId] = React.useState<string | null>(null);
+  const [feedSaveError, setFeedSaveError] = React.useState<{ horseId: string; message: string } | null>(null);
   const handleFeedCheck = React.useCallback(
-    (horseId: string, deviationNote?: string) => {
-      const result = actions.upsertFeedCheck({
+    async (horseId: string, deviationNote?: string) => {
+      if (feedSavePending.current) return false;
+      feedSavePending.current = true;
+      setFeedSavingHorseId(horseId);
+      setFeedSaveError(null);
+      const result = await actions.upsertFeedCheck({
         stableId: currentStableId,
         horseId,
         date: todayIso,
@@ -426,7 +443,10 @@ export default function OverviewScreen() {
         checked: true,
         deviationNote,
       });
+      feedSavePending.current = false;
+      setFeedSavingHorseId(null);
       if (!result.success) {
+        setFeedSaveError({ horseId, message: result.reason });
         toast.showToast(result.reason, 'error');
         return false;
       }
@@ -446,9 +466,9 @@ export default function OverviewScreen() {
     },
     [],
   );
-  const handleFeedDeviationSave = React.useCallback(() => {
+  const handleFeedDeviationSave = React.useCallback(async () => {
     if (!feedDeviation) return;
-    const ok = handleFeedCheck(feedDeviation.horseId, feedDeviation.text.trim() || undefined);
+    const ok = await handleFeedCheck(feedDeviation.horseId, feedDeviation.text.trim() || undefined);
     if (ok) {
       setFeedDeviation(null);
     }
@@ -506,7 +526,8 @@ export default function OverviewScreen() {
     router.push('/calendar?view=all');
   }, [router]);
 
-  const handleSubmitEvent = React.useCallback(() => {
+  const handleSubmitEvent = React.useCallback(async () => {
+    if (eventSavingRef.current) return;
     if (!canManageDayEvents) {
       toast.showToast('Behörighet saknas för att lägga till händelser.', 'error');
       return;
@@ -516,27 +537,41 @@ export default function OverviewScreen() {
       toast.showToast('Skriv en kort uppdatering.', 'error');
       return;
     }
+    eventSavingRef.current = true;
+    setEventSaving(true);
+    setEventSaveError(null);
     const result =
       eventKind === 'event'
-        ? actions.addEvent(details, 'info')
-        : actions.createStableAlert({
+        ? await actions.addEvent(details, 'info', eventIdRef.current ?? undefined)
+        : await actions.createStableAlert({
+            requestId: eventIdRef.current ?? undefined,
             title: details,
             severity: eventKind,
           });
+    eventSavingRef.current = false;
+    setEventSaving(false);
     if (result.success) {
       toast.showToast(eventKind === 'event' ? 'Händelsen lades till.' : 'Viktig notis lades till.', 'success');
       setEventsModalVisible(false);
     } else {
+      setEventSaveError(result.reason);
       toast.showToast(result.reason, 'error');
     }
   }, [actions, canManageDayEvents, eventKind, eventText, toast]);
 
   const handleResolveStableAlert = React.useCallback(
-    (alertId: string) => {
-      const result = actions.resolveStableAlert(alertId);
+    async (alertId: string) => {
+      if (resolvingAlertRef.current) return;
+      resolvingAlertRef.current = true;
+      setResolvingAlertId(alertId);
+      setAlertResolveError(null);
+      const result = await actions.resolveStableAlert(alertId);
+      resolvingAlertRef.current = false;
+      setResolvingAlertId(null);
       if (result.success) {
         toast.showToast('Notisen är löst.', 'success');
       } else {
+        setAlertResolveError(result.reason);
         toast.showToast(result.reason, 'error');
       }
     },
@@ -617,20 +652,21 @@ export default function OverviewScreen() {
       ) : null}
 
       <View style={[styles.priorityGrid, isDesktopWeb && styles.priorityGridDesktop]}>
-        {todayOverview.insights.map((item) => (
+        {(isDesktopWeb ? todayOverview.insights : todayOverview.insights.slice(0, 3)).map((item) => (
           <View
             key={item.id}
             style={[
               styles.priorityItem,
+              !isDesktopWeb && styles.priorityItemMobile,
               item.tone === 'warning' && styles.priorityItemWarning,
               item.tone === 'success' && styles.priorityItemSuccess,
             ]}
           >
-            <Text style={styles.priorityValue}>{item.value}</Text>
+            <Text style={[styles.priorityValue, !isDesktopWeb && styles.priorityValueMobile]}>{item.value}</Text>
             <Text style={styles.priorityLabel}>{item.label}</Text>
-            <Text style={styles.priorityMeta} numberOfLines={2}>
+            {isDesktopWeb ? <Text style={styles.priorityMeta} numberOfLines={2}>
               {item.meta}
-            </Text>
+            </Text> : null}
           </View>
         ))}
       </View>
@@ -676,35 +712,41 @@ export default function OverviewScreen() {
           const deviationActive = feedDeviation?.horseId === item.horse.id;
           return (
             <View key={item.horse.id} style={{ gap: 8 }}>
-              <View style={styles.priorityNotice}>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.priorityNoticeText} numberOfLines={1}>
+              <View style={[styles.priorityNotice, !isDesktopWeb && { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={isDesktopWeb ? { flex: 1, minWidth: 0 } : undefined}>
+                  <Text style={styles.priorityNoticeText}>
                     {`${item.horse.name} · ${planLabel}`}
                   </Text>
                   {amountLabel ? (
-                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]} numberOfLines={1}>
+                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]}>
                       {amountLabel}
                     </Text>
                   ) : null}
                   {hasDeviation && !deviationActive ? (
-                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]} numberOfLines={2}>
+                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]}>
                       {`Avvikelse: ${item.check?.deviationNote}`}
                     </Text>
                   ) : null}
                 </View>
-                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: isDesktopWeb ? 'flex-end' : 'flex-start' }}>
                   <TouchableOpacity
                     onPress={() => router.push(`/horses/${item.horse.id}`)}
+                    accessibilityRole="button"
                     activeOpacity={0.85}
-                    style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
+                    style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                   >
                     <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Profil</Text>
                   </TouchableOpacity>
                   {canCheckFeed ? (
                     <TouchableOpacity
                       onPress={() => handleFeedCheck(item.horse.id)}
+                      disabled={feedSavingHorseId !== null}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: feedSavingHorseId !== null, busy: feedSavingHorseId === item.horse.id }}
                       activeOpacity={0.85}
                       style={{
+                        minHeight: 44,
+                        justifyContent: 'center',
                         paddingHorizontal: 10,
                         paddingVertical: 6,
                         borderRadius: 999,
@@ -718,25 +760,34 @@ export default function OverviewScreen() {
                           color: isChecked ? palette.secondaryText : palette.inverseText,
                         }}
                       >
-                        {isChecked ? 'Klart' : 'Markera klart'}
+                        {feedSavingHorseId === item.horse.id ? 'Sparar…' : isChecked ? 'Klart' : 'Markera klart'}
                       </Text>
                     </TouchableOpacity>
                   ) : null}
                   {canCheckFeed ? (
                     <TouchableOpacity
                       onPress={() => handleFeedDeviationOpen(item.horse.id, item.check?.deviationNote ?? '')}
+                      accessibilityRole="button"
+                      disabled={feedSavingHorseId !== null}
                       activeOpacity={0.85}
-                      style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avvikelse</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
               </View>
+              {feedSaveError?.horseId === item.horse.id ? (
+                <Text style={{ color: palette.error, fontSize: 14 }}>
+                  {feedSaveError.message}
+                </Text>
+              ) : null}
               {deviationActive ? (
                 <View style={{ padding: 10, gap: 8, borderRadius: radius.md, backgroundColor: palette.surfaceTint }}>
                   <TextInput
+                    multiline
                     value={feedDeviation?.text ?? ''}
+                    editable={feedSavingHorseId === null}
                     onChangeText={(text) =>
                       setFeedDeviation((prev) => (prev ? { ...prev, text } : prev))
                     }
@@ -754,17 +805,22 @@ export default function OverviewScreen() {
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
                     <TouchableOpacity
                       onPress={() => setFeedDeviation(null)}
+                      disabled={feedSavingHorseId !== null}
                       activeOpacity={0.85}
-                      style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface }}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface }}
                     >
                       <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avbryt</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={handleFeedDeviationSave}
+                      disabled={feedSavingHorseId !== null}
+                      accessibilityRole="button"
                       activeOpacity={0.85}
-                      style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.inverseText }}>Spara avvikelse</Text>
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.inverseText }}>
+                        {feedSavingHorseId === item.horse.id ? 'Sparar…' : 'Spara avvikelse'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -773,9 +829,11 @@ export default function OverviewScreen() {
           );
         })}
       </View>
-      <Text style={[styles.priorityNoticeText, { color: palette.secondaryText, marginTop: 8 }]}>
-        {`Slot: ${feedSlotLabels[feedFocus.slot]}`}
-      </Text>
+      {feedFocus.totalCount > 5 ? (
+        <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/stable-horses')} style={styles.feedAllHorses}>
+          <Text style={styles.priorityNoticeText}>{`Visa alla ${feedFocus.totalCount} hästar`}</Text>
+        </TouchableOpacity>
+      ) : null}
     </Card>
   ) : null;
 
@@ -790,7 +848,7 @@ export default function OverviewScreen() {
           Viktigt
         </Text>
         <Text style={[styles.eventsMeta, !isDesktopWeb && styles.eventsMetaMobile]}>
-          {`${activeStableAlerts.length} aktiva`}
+          {`${activeStableAlerts.length} ${activeStableAlerts.length === 1 ? 'aktivt' : 'aktiva'}`}
         </Text>
       </View>
       <View style={styles.eventsList}>
@@ -805,12 +863,11 @@ export default function OverviewScreen() {
             <View style={styles.eventBody}>
               <Text
                 style={[styles.eventMessage, !isDesktopWeb && styles.eventMessageMobile]}
-                numberOfLines={1}
               >
                 {alert.title}
               </Text>
               {alert.body ? (
-                <Text style={styles.eventTime} numberOfLines={1}>
+                <Text style={styles.eventTime}>
                   {alert.body}
                 </Text>
               ) : (
@@ -819,16 +876,20 @@ export default function OverviewScreen() {
             </View>
             {canResolveStableAlerts ? (
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`Markera ${alert.title} som löst`}
+                disabled={Boolean(resolvingAlertId)}
                 style={styles.alertResolveButton}
                 onPress={() => handleResolveStableAlert(alert.id)}
                 activeOpacity={0.85}
               >
-                <Text style={styles.alertResolveText}>Löst</Text>
+                <Text style={styles.alertResolveText}>{resolvingAlertId === alert.id ? 'Sparar…' : 'Löst'}</Text>
               </TouchableOpacity>
             ) : null}
           </View>
         ))}
       </View>
+      {alertResolveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{alertResolveError}</Text>}
     </Card>
   ) : null;
 
@@ -1117,6 +1178,7 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <DataSyncStatus />
           {isDesktopWeb ? (
             <>
               {startHereSection}
@@ -1150,10 +1212,10 @@ export default function OverviewScreen() {
             <>
               {startHereSection}
               {prioritySection}
-              {feedSection}
               {stableAlertsSection}
-              {eventsSection}
+              {feedSection}
               {quickActionsSection}
+              {eventsSection}
               {summarySection}
               {missedSection}
               <WeatherPanel stableLocation={stableLocation} />
@@ -1167,9 +1229,9 @@ export default function OverviewScreen() {
         visible={eventsModalVisible}
         title="Händelser"
         description="Skriv en kort uppdatering till stallet (t.ex. tappskor, hagbyte, parkering)."
-        onClose={() => setEventsModalVisible(false)}
-        primaryLabel="Skicka"
-        primaryDisabled={!isEventValid}
+        onClose={() => { if (!eventSavingRef.current) setEventsModalVisible(false); }}
+        primaryLabel={eventSaving ? 'Sparar…' : 'Skicka'}
+        primaryDisabled={!isEventValid || eventSaving}
         onPrimary={isEventValid ? handleSubmitEvent : undefined}
       >
         <View style={styles.eventKindRow}>
@@ -1183,6 +1245,7 @@ export default function OverviewScreen() {
               <TouchableOpacity
                 key={option.id}
                 style={[styles.eventKindChip, active && styles.eventKindChipActive]}
+                disabled={eventSaving}
                 onPress={() => setEventKind(option.id as typeof eventKind)}
                 activeOpacity={0.85}
               >
@@ -1194,12 +1257,15 @@ export default function OverviewScreen() {
           })}
         </View>
         <TextInput
+          editable={!eventSaving}
+          multiline
           value={eventText}
           onChangeText={setEventText}
           placeholder="Ex. Kanel har tappat en sko. / Parkera inte vid containern."
           placeholderTextColor={palette.secondaryText}
           style={[styles.reportInput, styles.reportInputCompact]}
         />
+        {eventSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{eventSaveError}</Text>}
         <Text style={styles.reportHint}>
           {eventKind === 'event'
             ? 'Händelsen hamnar i listan “Händelser” i överblicken.'
@@ -1564,7 +1630,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 50,
+    paddingBottom: 120,
     gap: 18,
   },
   scrollContentDesktop: {
@@ -1702,6 +1768,8 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   alertResolveButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: radius.full,
@@ -1713,6 +1781,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: palette.primaryText,
+  },
+  feedAllHorses: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
   },
   missedCard: {
     paddingHorizontal: 28,
@@ -2076,6 +2150,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(238, 166, 45, 0.38)',
     backgroundColor: 'rgba(255, 246, 230, 0.82)',
   },
+  priorityItemMobile: {
+    flexBasis: 0,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  priorityValueMobile: { fontSize: 20 },
   priorityItemSuccess: {
     borderColor: 'rgba(36, 153, 100, 0.22)',
     backgroundColor: 'rgba(235, 249, 241, 0.8)',

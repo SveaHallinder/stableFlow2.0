@@ -8,10 +8,13 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { color, radius, space } from '@/design/tokens';
 import { systemPalette } from '@/design/system';
-import type { AssignmentSlot } from '@/context/AppDataContext';
+import type { ActionResult, AssignmentSlot } from '@/context/AppDataContext';
+import { generateId } from '@/lib/ids';
+import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 
 type DateOption = {
   label: string;
@@ -19,6 +22,7 @@ type DateOption = {
 };
 
 export type AssignmentModalSubmit = {
+  requestId?: string;
   date?: string;
   slot?: AssignmentSlot;
   note?: string;
@@ -31,7 +35,7 @@ export type AssignmentModalSubmit = {
 type NewAssignmentModalProps = {
   visible: boolean;
   onClose: () => void;
-  onSubmit: (input: AssignmentModalSubmit) => void;
+  onSubmit: (input: AssignmentModalSubmit) => Promise<ActionResult<unknown>>;
   dateOptions: DateOption[];
   initialDate?: string;
   initialSlot?: AssignmentSlot;
@@ -40,7 +44,7 @@ type NewAssignmentModalProps = {
   initialTime?: string;
   initialAssignToMe?: boolean;
   mode?: 'create' | 'edit';
-  onDelete?: () => void;
+  onDelete?: () => Promise<ActionResult>;
 };
 
 const slots: { label: string; value: AssignmentSlot }[] = [
@@ -77,13 +81,24 @@ export function NewAssignmentModal({
   const [assignToMe, setAssignToMe] = React.useState(initialAssignToMe ?? false);
   const [labelTouched, setLabelTouched] = React.useState(false);
   const [timeTouched, setTimeTouched] = React.useState(false);
+  const wasVisible = React.useRef(false);
+  const savingRef = React.useRef(false);
+  const requestId = React.useRef<string | undefined>(undefined);
+  const [pending, setPending] = React.useState<'save' | 'delete' | null>(null);
+  const [error, setError] = React.useState('');
 
   const title = mode === 'edit' ? 'Redigera pass' : 'Nytt pass';
   const primaryLabel = mode === 'edit' ? 'Spara ändringar' : 'Skapa pass';
   const showDelete = mode === 'edit' && !!onDelete;
 
   React.useEffect(() => {
-    if (visible) {
+    if (!visible) {
+      wasVisible.current = false;
+      return;
+    }
+    if (!wasVisible.current) {
+      wasVisible.current = true;
+      requestId.current = generateId();
       const nextDate = initialDate ?? dateOptions[0]?.value ?? '';
       const nextSlot = initialSlot ?? 'Morning';
       const nextNote = initialNote ?? '';
@@ -98,6 +113,7 @@ export function NewAssignmentModal({
       setAssignToMe(initialAssignToMe ?? false);
       setLabelTouched(false);
       setTimeTouched(false);
+      setError('');
     }
   }, [
     visible,
@@ -110,8 +126,41 @@ export function NewAssignmentModal({
     initialTime,
   ]);
 
+  const handleClose = () => {
+    if (!savingRef.current) onClose();
+  };
+
+  const runAction = async (action: 'save' | 'delete', operation: () => Promise<ActionResult<unknown>>) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setPending(action);
+    setError('');
+    try {
+      const result = await operation();
+      if (result.success) onClose();
+      else setError(result.reason);
+    } catch (cause) {
+      console.warn('[assignment modal] Passåtgärden misslyckades', cause);
+      setError(action === 'delete'
+        ? 'Passet kunde inte tas bort. Försök igen.'
+        : 'Passet kunde inte sparas. Försök igen.');
+    } finally {
+      savingRef.current = false;
+      setPending(null);
+    }
+  };
+
   const handleSubmit = () => {
     if (!selectedDate) {
+      setError('Välj ett datum.');
+      return;
+    }
+    if (!isValidISODate(selectedDate)) {
+      setError('Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.');
+      return;
+    }
+    if (time.trim() && !isValidTime(time.trim())) {
+      setError('Ange en giltig tid i formatet HH:MM (00:00–23:59).');
       return;
     }
 
@@ -119,7 +168,8 @@ export function NewAssignmentModal({
     const baselineNote = (initialNote ?? '').trim();
     const noteChanged = mode === 'edit' ? cleanedNote !== baselineNote : cleanedNote.length > 0;
 
-    onSubmit({
+    void runAction('save', () => onSubmit({
+      requestId: mode === 'create' ? requestId.current : undefined,
       date: selectedDate,
       slot: selectedSlot,
       note: cleanedNote,
@@ -127,8 +177,7 @@ export function NewAssignmentModal({
       noteProvided: noteChanged,
       labelOverride: labelTouched ? label.trim() : undefined,
       time: timeTouched ? time.trim() : undefined,
-    });
-    onClose();
+    }));
   };
 
   return (
@@ -136,14 +185,14 @@ export function NewAssignmentModal({
       visible={visible}
       animationType="slide"
       transparent
-      onRequestClose={onClose}
+      onRequestClose={handleClose}
     >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.overlay}
       >
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose} />
-        <View style={styles.sheet}>
+        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={handleClose} disabled={pending !== null} />
+        <ScrollView style={styles.sheetContainer} contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>{title}</Text>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Datum</Text>
@@ -153,6 +202,7 @@ export function NewAssignmentModal({
                 return (
                   <TouchableOpacity
                     key={option.value}
+                    disabled={pending !== null}
                     style={[styles.optionChip, active && styles.optionChipActive]}
                     onPress={() => setSelectedDate(option.value)}
                   >
@@ -173,6 +223,7 @@ export function NewAssignmentModal({
                 return (
                   <TouchableOpacity
                     key={slot.value}
+                    disabled={pending !== null}
                     style={[styles.optionChip, active && styles.optionChipActive]}
                     onPress={() => setSelectedSlot(slot.value)}
                   >
@@ -188,6 +239,7 @@ export function NewAssignmentModal({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Benämning</Text>
             <TextInput
+              editable={pending === null}
               value={label}
               onChangeText={(value) => {
                 setLabel(value);
@@ -202,6 +254,7 @@ export function NewAssignmentModal({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Tid</Text>
             <TextInput
+              editable={pending === null}
               value={time}
               onChangeText={(value) => {
                 setTime(value);
@@ -217,6 +270,7 @@ export function NewAssignmentModal({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Anteckning</Text>
             <TextInput
+              editable={pending === null}
               value={note}
               onChangeText={setNote}
               placeholder="Beskrivning (valfritt)"
@@ -228,6 +282,7 @@ export function NewAssignmentModal({
           </View>
 
           <TouchableOpacity
+            disabled={pending !== null}
             style={[styles.assignToggle, assignToMe && styles.assignToggleActive]}
             onPress={() => setAssignToMe((prev) => !prev)}
           >
@@ -237,20 +292,27 @@ export function NewAssignmentModal({
           </TouchableOpacity>
 
           {showDelete ? (
-            <TouchableOpacity style={styles.deleteButton} onPress={onDelete}>
-              <Text style={styles.deleteButtonLabel}>Ta bort pass</Text>
+            <TouchableOpacity
+              style={styles.deleteButton}
+              accessibilityRole="button"
+              disabled={pending !== null}
+              onPress={() => onDelete && void runAction('delete', onDelete)}
+            >
+              <Text style={styles.deleteButtonLabel}>{pending === 'delete' ? 'Tar bort pass…' : 'Ta bort pass'}</Text>
             </TouchableOpacity>
           ) : null}
 
+          {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
+
           <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.secondaryButton} onPress={onClose}>
+            <TouchableOpacity style={styles.secondaryButton} accessibilityRole="button" disabled={pending !== null} onPress={handleClose}>
               <Text style={styles.secondaryButtonLabel}>Avbryt</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit}>
-              <Text style={styles.primaryButtonLabel}>{primaryLabel}</Text>
+            <TouchableOpacity style={styles.primaryButton} accessibilityRole="button" disabled={pending !== null} onPress={handleSubmit}>
+              <Text style={styles.primaryButtonLabel}>{pending === 'save' ? 'Sparar pass…' : primaryLabel}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -273,6 +335,18 @@ const styles = StyleSheet.create({
     paddingTop: space.lg,
     paddingBottom: space.xl,
     gap: 16,
+  },
+  sheetContainer: {
+    maxHeight: '90%',
+    flexGrow: 0,
+    backgroundColor: color.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+  },
+  errorText: {
+    color: systemPalette.error,
+    fontSize: 14,
+    lineHeight: 20,
   },
   title: {
     fontSize: 20,

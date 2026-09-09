@@ -36,14 +36,23 @@ export default function AccountSettingsScreen() {
     phone: currentUser?.phone ?? '',
     location: currentUser?.location ?? '',
   });
+  const savingProfileRef = React.useRef(false);
+  const dirtyProfileRef = React.useRef(new Set<'name' | 'phone' | 'location'>());
+  const draftUserIdRef = React.useRef(currentUser?.id);
+  const [savingProfile, setSavingProfile] = React.useState(false);
+  const [profileError, setProfileError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    setDraft({
-      name: currentUser?.name ?? '',
-      phone: currentUser?.phone ?? '',
-      location: currentUser?.location ?? '',
-    });
-  }, [currentUser?.location, currentUser?.name, currentUser?.phone]);
+    if (draftUserIdRef.current !== currentUser?.id) {
+      draftUserIdRef.current = currentUser?.id;
+      dirtyProfileRef.current.clear();
+    }
+    setDraft(previous => ({
+      name: dirtyProfileRef.current.has('name') ? previous.name : currentUser?.name ?? '',
+      phone: dirtyProfileRef.current.has('phone') ? previous.phone : currentUser?.phone ?? '',
+      location: dirtyProfileRef.current.has('location') ? previous.location : currentUser?.location ?? '',
+    }));
+  }, [currentUser?.id, currentUser?.location, currentUser?.name, currentUser?.phone]);
 
   const isDirty = Boolean(
     currentUser &&
@@ -51,7 +60,7 @@ export default function AccountSettingsScreen() {
         draft.phone !== (currentUser.phone ?? '') ||
         draft.location !== (currentUser.location ?? '')),
   );
-  const canSave = Boolean(currentUser && draft.name.trim().length > 0 && isDirty);
+  const canSave = Boolean(currentUser && draft.name.trim().length > 0 && isDirty && !savingProfile);
 
   const handleLogout = React.useCallback(() => {
     signOut()
@@ -153,20 +162,31 @@ export default function AccountSettingsScreen() {
     router.replace('/(auth)');
   }, [deleting, confirmingDelete, toast, signOut, router]);
 
-  const handleSave = React.useCallback(() => {
-    if (!currentUser) {
+  const handleSave = React.useCallback(async () => {
+    if (!currentUser || savingProfileRef.current) {
       return;
     }
-    const result = actions.updateProfile({
-      name: draft.name,
-      phone: draft.phone,
-      location: draft.location,
-    });
-    if (result.success) {
-      toast.showToast('Uppgifter sparade.', 'success');
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+    savingProfileRef.current = true;
+    setSavingProfile(true);
+    setProfileError(null);
+    try {
+      const result = await actions.updateProfile({
+        ...(dirtyProfileRef.current.has('name') ? { name: draft.name } : {}),
+        ...(dirtyProfileRef.current.has('phone') ? { phone: draft.phone } : {}),
+        ...(dirtyProfileRef.current.has('location') ? { location: draft.location } : {}),
+      });
+      if (result.success && result.data) {
+        dirtyProfileRef.current.clear();
+        setDraft({ name: result.data.name, phone: result.data.phone ?? '', location: result.data.location ?? '' });
+        toast.showToast('Uppgifter sparade.', 'success');
+      } else if (!result.success) {
+        setProfileError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } catch (error) {
+      console.warn('[profile form] Kunde inte spara profil', error);
+      setProfileError('Profilen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.');
+    } finally { savingProfileRef.current = false; setSavingProfile(false); }
   }, [actions, currentUser, draft.location, draft.name, draft.phone, toast]);
 
   return (
@@ -198,7 +218,8 @@ export default function AccountSettingsScreen() {
                 placeholder="Ditt namn"
                 placeholderTextColor={palette.mutedText}
                 value={draft.name}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
+                editable={!savingProfile}
+                onChangeText={(text) => { dirtyProfileRef.current.add('name'); setDraft((prev) => ({ ...prev, name: text })); }}
                 style={styles.input}
               />
             </View>
@@ -212,7 +233,8 @@ export default function AccountSettingsScreen() {
                 placeholder="Telefon"
                 placeholderTextColor={palette.mutedText}
                 value={draft.phone}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, phone: text }))}
+                editable={!savingProfile}
+                onChangeText={(text) => { dirtyProfileRef.current.add('phone'); setDraft((prev) => ({ ...prev, phone: text })); }}
                 style={styles.input}
                 keyboardType="phone-pad"
               />
@@ -223,10 +245,12 @@ export default function AccountSettingsScreen() {
                 placeholder="Plats"
                 placeholderTextColor={palette.mutedText}
                 value={draft.location}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, location: text }))}
+                editable={!savingProfile}
+                onChangeText={(text) => { dirtyProfileRef.current.add('location'); setDraft((prev) => ({ ...prev, location: text })); }}
                 style={styles.input}
               />
             </View>
+            {profileError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{profileError}</Text> : null}
             <TouchableOpacity
               style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}
               onPress={handleSave}
@@ -234,7 +258,7 @@ export default function AccountSettingsScreen() {
               disabled={!canSave}
             >
               <Text style={[styles.saveButtonText, !canSave && styles.saveButtonTextDisabled]}>
-                Spara ändringar
+                {savingProfile ? 'Sparar profil…' : 'Spara ändringar'}
               </Text>
             </TouchableOpacity>
             <Text style={styles.sectionHint}>E-post och lösenord ändras under Säkerhet nedan.</Text>

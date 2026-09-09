@@ -298,7 +298,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 22,
-    paddingBottom: 40,
+    paddingBottom: 120,
     paddingTop: 10,
     gap: 18,
   },
@@ -307,6 +307,7 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 40,
+    paddingBottom: 40,
   },
   desktopLayout: {
     flexDirection: 'row',

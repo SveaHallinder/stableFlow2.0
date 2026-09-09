@@ -68,6 +68,19 @@ export default function ProfileScreen() {
   const { currentUserId, users, currentStableId } = state;
   const currentUser = users[currentUserId];
   const toast = useToast();
+  const [defaultPassSaving, setDefaultPassSaving] = React.useState(false);
+  const defaultPassSavingRef = React.useRef(false);
+  const [defaultPassError, setDefaultPassError] = React.useState<string | null>(null);
+  const handleToggleDefaultPass = React.useCallback(async (weekday: WeekdayIndex, slot: AssignmentSlot) => {
+    if (defaultPassSavingRef.current) return;
+    defaultPassSavingRef.current = true;
+    setDefaultPassSaving(true);
+    setDefaultPassError(null);
+    try {
+      const result = await actions.toggleDefaultPass(weekday, slot);
+      if (!result.success) setDefaultPassError(result.reason);
+    } finally { defaultPassSavingRef.current = false; setDefaultPassSaving(false); }
+  }, [actions]);
   const scrollRef = React.useRef<ScrollView>(null);
   const [defaultPassAnchor, setDefaultPassAnchor] = React.useState<number | null>(null);
   const [highlightDefaultPass, setHighlightDefaultPass] = React.useState(false);
@@ -354,7 +367,7 @@ export default function ProfileScreen() {
     ) : null;
 
   const defaultPassSubtitle = hasStable
-    ? 'Välj dagar du oftast kan ta pass. De markeras automatiskt som dina i schemat.'
+    ? 'Välj dagar du oftast kan ta pass. Dina val används för att fördela befintliga pass i stallets schema.'
     : 'Välj dagar du brukar kunna ta pass. Sparas lokalt tills du går med i ett stall.';
 
   const defaultPassSection = (
@@ -371,6 +384,8 @@ export default function ProfileScreen() {
           <Text style={styles.defaultPassSubtitle}>{defaultPassSubtitle}</Text>
         </View>
 
+        {defaultPassError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{defaultPassError}</Text>}
+        {defaultPassSaving && <Text style={styles.defaultPassSubtitle}>Sparar standardpass…</Text>}
         <View style={styles.defaultPassGrid}>
           {DEFAULT_SLOTS.map((slot) => (
             <View key={slot.value} style={styles.defaultPassRow}>
@@ -381,7 +396,12 @@ export default function ProfileScreen() {
                   return (
                     <TouchableOpacity
                       key={`${slot.value}-${day.value}`}
-                      onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
+                      style={{ width: isDesktopWeb ? '12%' : '23%' }}
+                      onPress={() => handleToggleDefaultPass(day.value, slot.value)}
+                      disabled={defaultPassSaving || refreshing}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${slot.label}, ${day.label}`}
+                      aria-pressed={active}
                       activeOpacity={0.85}
                     >
                       <Pill active={active} style={styles.defaultPassChip}>
@@ -906,6 +926,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   defaultPassChip: {
+    width: '100%',
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 6,
   },

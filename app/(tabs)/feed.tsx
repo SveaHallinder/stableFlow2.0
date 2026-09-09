@@ -29,6 +29,7 @@ import { useToast } from '@/components/ToastProvider';
 import { confirmAction } from '@/lib/confirm';
 import { formatTimeAgo } from '@/lib/time';
 import { isQaDemoMode } from '@/lib/qaDemo';
+import { generateId } from '@/lib/ids';
 
 const palette = theme.colors;
 const gradients = theme.gradients;
@@ -73,7 +74,17 @@ export default function FeedScreen() {
   const [postContent, setPostContent] = React.useState('');
   const [selectedGroups, setSelectedGroups] = React.useState<string[]>([]);
   const [postImage, setPostImage] = React.useState<string | null>(null);
+  const publishingRef = React.useRef(false);
+  const postRequestIdRef = React.useRef<string | null>(null);
+  const currentStableIdRef = React.useRef(currentStableId);
+  currentStableIdRef.current = currentStableId;
+  const [publishing, setPublishing] = React.useState(false);
+  const [publishError, setPublishError] = React.useState<string | null>(null);
   const [newGroupName, setNewGroupName] = React.useState('');
+  const groupRequestIdRef = React.useRef<string | null>(null);
+  const groupSavingRef = React.useRef(false);
+  const [groupSaving, setGroupSaving] = React.useState(false);
+  const [groupError, setGroupError] = React.useState<string | null>(null);
   const [focusComposerTick, setFocusComposerTick] = React.useState(0);
   const [isComposerOpen, setIsComposerOpen] = React.useState(false);
 
@@ -139,6 +150,9 @@ export default function FeedScreen() {
   React.useEffect(() => {
     setCustomFilterId('');
     setNewGroupName('');
+    groupRequestIdRef.current = null;
+    setGroupError(null);
+    postRequestIdRef.current = null;
   }, [currentStableId]);
 
   const horseIdsForUser = React.useMemo(() => {
@@ -285,7 +299,7 @@ export default function FeedScreen() {
 
   const handleToggleGroup = React.useCallback(
     (groupId: string, locked?: boolean) => {
-      if (locked || groupId === stableGroupIdValue) {
+      if (publishingRef.current || locked || groupId === stableGroupIdValue) {
         return;
       }
       setSelectedGroups((prev) =>
@@ -295,7 +309,8 @@ export default function FeedScreen() {
     [stableGroupIdValue],
   );
 
-  const handlePublish = React.useCallback(() => {
+  const handlePublish = React.useCallback(async () => {
+    if (publishingRef.current || groupSavingRef.current) return;
     if (!canPublishPost) {
       toast.showToast('Du saknar behörighet att publicera i det här stallet.', 'error');
       return;
@@ -305,21 +320,36 @@ export default function FeedScreen() {
       toast.showToast('Skriv en kort uppdatering först.', 'error');
       return;
     }
-    const result = actions.addPost({
-      content: trimmed,
-      stableId: currentStableId,
-      groupIds: selectedGroups.length ? selectedGroups : [stableGroupIdValue],
-      image: postImage ?? undefined,
-    });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-      return;
-    }
-    setPostContent('');
-    setSelectedGroups([stableGroupIdValue]);
-    setPostImage(null);
-    setIsComposerOpen(false);
-    toast.showToast('Inlägget är publicerat.', 'success');
+    publishingRef.current = true;
+    setPublishing(true);
+    setPublishError(null);
+    postRequestIdRef.current ??= generateId();
+    try {
+      const result = await actions.addPost({
+        requestId: postRequestIdRef.current,
+        content: trimmed,
+        stableId: currentStableId,
+        groupIds: selectedGroups.length ? selectedGroups : [stableGroupIdValue],
+        image: postImage ?? undefined,
+      });
+      if (currentStableIdRef.current !== currentStableId) return;
+      if (!result.success) {
+        setPublishError(result.reason);
+        toast.showToast(result.reason, 'error');
+        return;
+      }
+      setPostContent('');
+      postRequestIdRef.current = null;
+      setSelectedGroups([stableGroupIdValue]);
+      setPostImage(null);
+      setIsComposerOpen(false);
+      toast.showToast('Inlägget är publicerat.', 'success');
+    } catch (error) {
+      console.warn('[post publish form] Kunde inte publicera inlägg', error);
+      if (currentStableIdRef.current === currentStableId) {
+        setPublishError('Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.');
+      }
+    } finally { publishingRef.current = false; setPublishing(false); }
   }, [
     actions,
     canPublishPost,
@@ -333,6 +363,7 @@ export default function FeedScreen() {
 
   const openImagePicker = React.useCallback(
     async (source: 'library' | 'camera') => {
+      if (publishingRef.current) return;
       if (source === 'camera' && Platform.OS === 'web') {
         toast.showToast('Kamera stöds inte i webbläsaren.', 'error');
         return;
@@ -367,12 +398,13 @@ export default function FeedScreen() {
       if (result.canceled || result.assets.length === 0) {
         return;
       }
-      setPostImage(result.assets[0].uri);
+      if (!publishingRef.current) setPostImage(result.assets[0].uri);
     },
     [toast],
   );
 
   const handlePickImage = React.useCallback(() => {
+    if (publishingRef.current) return;
     if (isQaDemoMode) {
       setPostImage(Asset.fromModule(require('@/assets/images/logo-splash.png')).uri);
       setIsComposerOpen(true);
@@ -387,6 +419,7 @@ export default function FeedScreen() {
   }, [openImagePicker]);
 
   const handleClearImage = React.useCallback(() => {
+    if (publishingRef.current) return;
     setPostImage(null);
   }, []);
 
@@ -419,65 +452,76 @@ export default function FeedScreen() {
     setCustomFilterId('');
   }, []);
 
-  const handleCreateGroup = React.useCallback(() => {
-    if (!canEditGroups) {
-      toast.showToast('Du saknar behörighet att skapa grupper.', 'error');
-      return;
-    }
+  const handleCreateGroup = React.useCallback(async () => {
+    if (groupSavingRef.current || publishingRef.current) return;
+    if (!canEditGroups) { setGroupError('Du saknar behörighet att skapa grupper.'); return; }
     const name = newGroupName.trim();
-    if (!name) {
-      toast.showToast('Skriv ett gruppnamn.', 'error');
-      return;
-    }
-    const result = actions.createGroup({ name, stableId: currentStableId });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-      return;
-    }
-    setNewGroupName('');
-    if (result.data?.id) {
-      setSelectedGroups((prev) => [...prev, result.data!.id]);
-      setCustomFilterId(result.data.id);
-    }
-    toast.showToast('Gruppen är skapad.', 'success');
+    if (!name) { setGroupError('Skriv ett gruppnamn.'); return; }
+    const stableId = currentStableId;
+    groupRequestIdRef.current ??= generateId();
+    groupSavingRef.current = true;
+    setGroupSaving(true);
+    setGroupError(null);
+    try {
+      const result = await actions.createGroup({ requestId: groupRequestIdRef.current, name, stableId });
+      if (currentStableIdRef.current !== stableId) return;
+      if (!result.success || !result.data) {
+        setGroupError(result.success ? 'Servern bekräftade inte gruppen.' : result.reason);
+        return;
+      }
+      setNewGroupName('');
+      groupRequestIdRef.current = null;
+      const groupId = result.data.id;
+      setSelectedGroups((prev) => prev.includes(groupId) ? prev : [...prev, groupId]);
+      setCustomFilterId(groupId);
+      toast.showToast('Gruppen är skapad.', 'success');
+    } catch {
+      if (currentStableIdRef.current === stableId) setGroupError('Gruppen kunde inte sparas. Namnet finns kvar. Försök igen.');
+    } finally { groupSavingRef.current = false; setGroupSaving(false); }
   }, [actions, canEditGroups, currentStableId, newGroupName, toast]);
 
   const handleDeleteGroup = React.useCallback(
-    (groupId: string) => {
-      if (!canEditGroups) {
-        toast.showToast('Du saknar behörighet att ta bort grupper.', 'error');
-        return;
-      }
-      const result = actions.deleteGroup(groupId);
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-        return;
-      }
-      if (customFilterId === groupId) {
-        setCustomFilterId('');
-      }
-      setSelectedGroups((prev) => prev.filter((id) => id !== groupId));
-      toast.showToast('Gruppen är borttagen.', 'success');
+    async (groupId: string) => {
+      if (groupSavingRef.current || publishingRef.current) return;
+      if (!canEditGroups) { setGroupError('Du saknar behörighet att ta bort grupper.'); return; }
+      const stableId = currentStableId;
+      const confirmed = await confirmAction({ title: 'Ta bort grupp?', message: 'Gruppen tas bort från flödets målgrupper. Inläggen finns kvar.', confirmLabel: 'Ta bort', destructive: true });
+      if (!confirmed || groupSavingRef.current || currentStableIdRef.current !== stableId) return;
+      groupSavingRef.current = true;
+      setGroupSaving(true);
+      setGroupError(null);
+      try {
+        const result = await actions.deleteGroup(groupId);
+        if (currentStableIdRef.current !== stableId) return;
+        if (!result.success) { setGroupError(result.reason); return; }
+        if (customFilterId === groupId) setCustomFilterId('');
+        setSelectedGroups((prev) => prev.filter((id) => id !== groupId));
+        toast.showToast('Gruppen är borttagen.', 'success');
+      } catch {
+        if (currentStableIdRef.current === stableId) setGroupError('Gruppen kunde inte tas bort. Försök igen.');
+      } finally { groupSavingRef.current = false; setGroupSaving(false); }
     },
-    [actions, canEditGroups, customFilterId, toast],
+    [actions, canEditGroups, currentStableId, customFilterId, toast],
   );
 
   const handleToggleLike = React.useCallback(
-    (postId: string) => {
-      const result = actions.togglePostLike(postId);
+    async (postId: string) => {
+      const result = await actions.togglePostLike(postId);
       if (!result.success) {
         toast.showToast(result.reason, 'error');
       }
+      return result;
     },
     [actions, toast],
   );
 
   const handleAddComment = React.useCallback(
-    (postId: string, text: string) => {
-      const result = actions.addPostComment(postId, text);
+    async (postId: string, text: string, requestId: string) => {
+      const result = await actions.addPostComment(postId, text, requestId);
       if (!result.success) {
         toast.showToast(result.reason, 'error');
       }
+      return result;
     },
     [actions, toast],
   );
@@ -617,7 +661,7 @@ export default function FeedScreen() {
     return sections;
   }, [customGroups, farmGroup, horseGroups, stableGroupIdValue]);
 
-  const canPublish = postContent.trim().length > 0;
+  const canPublish = postContent.trim().length > 0 && !publishing && !groupSaving;
   const canUseCamera = Platform.OS !== 'web';
   const shouldShowComposer = canPublishPost && (isDesktopWeb || isComposerOpen);
   const composerCard = shouldShowComposer ? (
@@ -635,6 +679,7 @@ export default function FeedScreen() {
       <TextInput
         ref={composerInputRef}
         value={postContent}
+        editable={!publishing}
         onChangeText={setPostContent}
         placeholder="Vad behöver alla veta idag?"
         placeholderTextColor={palette.mutedText}
@@ -646,6 +691,7 @@ export default function FeedScreen() {
           <TouchableOpacity
             style={styles.composerActionButton}
             onPress={handlePickImage}
+            disabled={publishing}
             activeOpacity={0.85}
             accessibilityRole="button"
             accessibilityLabel={postImage ? 'Byt bild' : 'Välj bild'}
@@ -658,6 +704,7 @@ export default function FeedScreen() {
             <TouchableOpacity
               style={styles.composerActionButton}
               onPress={handleTakePhoto}
+              disabled={publishing}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Ta bild med kamera"
@@ -669,6 +716,7 @@ export default function FeedScreen() {
             <TouchableOpacity
               style={styles.composerActionButton}
               onPress={handleClearImage}
+              disabled={publishing}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel="Ta bort vald bild"
@@ -694,7 +742,7 @@ export default function FeedScreen() {
                     key={option.id}
                     onPress={() => handleToggleGroup(option.id, option.locked)}
                     activeOpacity={0.85}
-                    disabled={option.locked}
+                    disabled={publishing || option.locked}
                   >
                     <Pill
                       active={isSelected}
@@ -721,6 +769,8 @@ export default function FeedScreen() {
       </View>
       {canEditGroups ? (
         <View style={styles.groupManager}>
+          {groupError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{groupError}</Text> : null}
+          {groupSaving ? <Text accessibilityLiveRegion="polite" style={{ color: palette.mutedText }}>Sparar gruppändring…</Text> : null}
           <View style={styles.groupManagerHeader}>
             <Text style={styles.groupManagerTitle}>Egna grupper</Text>
             <Text style={styles.groupManagerHint}>Skapa för flöden och målgrupper.</Text>
@@ -728,6 +778,7 @@ export default function FeedScreen() {
           <View style={styles.groupCreateRow}>
             <TextInput
               value={newGroupName}
+              editable={!groupSaving && !publishing}
               onChangeText={setNewGroupName}
               placeholder="Nytt gruppnamn"
               placeholderTextColor={palette.mutedText}
@@ -740,7 +791,9 @@ export default function FeedScreen() {
               ]}
               onPress={handleCreateGroup}
               activeOpacity={0.85}
-              disabled={!newGroupName.trim()}
+              disabled={!newGroupName.trim() || groupSaving || publishing}
+              accessibilityRole="button"
+              accessibilityLabel="Skapa grupp"
             >
               <Text style={styles.createGroupButtonText}>Skapa</Text>
             </TouchableOpacity>
@@ -754,6 +807,9 @@ export default function FeedScreen() {
                     onPress={() => handleDeleteGroup(group.id)}
                     activeOpacity={0.85}
                     style={styles.groupRowAction}
+                    disabled={groupSaving || publishing}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Ta bort grupp ${group.name}`}
                   >
                     <Text style={styles.groupRowActionText}>Ta bort</Text>
                   </TouchableOpacity>
@@ -765,6 +821,7 @@ export default function FeedScreen() {
           )}
         </View>
       ) : null}
+      {publishError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{publishError}</Text> : null}
       <View style={styles.composerFooter}>
         <Text style={styles.composerHint}>Synlig för valda grupper</Text>
         <TouchableOpacity
@@ -776,7 +833,7 @@ export default function FeedScreen() {
           accessibilityLabel="Publicera inlägg"
           accessibilityState={{ disabled: !canPublish }}
         >
-          <Text style={styles.publishButtonText}>Publicera</Text>
+          <Text style={styles.publishButtonText}>{publishing ? 'Publicerar…' : 'Publicera'}</Text>
         </TouchableOpacity>
       </View>
     </Card>
@@ -1052,7 +1109,7 @@ export default function FeedScreen() {
                             data={post}
                             currentUserId={currentUserId}
                             onToggleLike={() => handleToggleLike(post.id)}
-                            onAddComment={(text) => handleAddComment(post.id, text)}
+                            onAddComment={(text, requestId) => handleAddComment(post.id, text, requestId)}
                             canInteract={canInteract}
                             canDelete={canDeletePost(post)}
                             onDelete={() => handleDeletePost(post.id)}
@@ -1093,7 +1150,7 @@ export default function FeedScreen() {
                   data={post}
                   currentUserId={currentUserId}
                   onToggleLike={() => handleToggleLike(post.id)}
-                  onAddComment={(text) => handleAddComment(post.id, text)}
+                  onAddComment={(text, requestId) => handleAddComment(post.id, text, requestId)}
                   canInteract={canInteract}
                   canDelete={canDeletePost(post)}
                   onDelete={() => handleDeletePost(post.id)}
@@ -1112,7 +1169,7 @@ export default function FeedScreen() {
             )}
             ListHeaderComponent={
               <View style={styles.flatListHeader}>
-                <StableSwitcher />
+                <StableSwitcher disabled={publishing} />
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}

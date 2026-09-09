@@ -13,6 +13,7 @@ type StableSwitcherProps = {
   variant?: 'block' | 'inline';
   showLocation?: boolean;
   showAccess?: boolean;
+  disabled?: boolean;
 };
 
 export function StableSwitcher({
@@ -20,6 +21,7 @@ export function StableSwitcher({
   variant = 'block',
   showLocation = true,
   showAccess = false,
+  disabled = false,
 }: StableSwitcherProps) {
   const { state, actions } = useAppData();
   const { stables, currentStableId, users, currentUserId } = state;
@@ -60,11 +62,12 @@ export function StableSwitcher({
             <TouchableOpacity
               key={stable.id}
               style={[styles.chip, active && styles.chipActive]}
-              onPress={() => actions.setCurrentStable(stable.id)}
+              disabled={disabled}
+              onPress={() => { if (!disabled) actions.setCurrentStable(stable.id); }}
               activeOpacity={0.85}
               accessibilityRole="button"
               accessibilityLabel={`Byt till ${stable.name}`}
-              accessibilityState={{ selected: active }}
+              accessibilityState={{ selected: active, disabled }}
             >
               <Text style={[styles.chipText, active && styles.chipTextActive]}>
                 {stable.name}

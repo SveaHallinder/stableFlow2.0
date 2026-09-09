@@ -95,7 +95,9 @@ test('calendar synthesizes the current week and claim is server-conditional befo
   assert.match(context, /\.eq\('status', 'open'\)/);
   assert.match(context, /\.is\('assignee_id', null\)/);
   assert.match(context, /claimed: Boolean\(data\?\.length\)/);
-  assert.doesNotMatch(context, /\.maybeSingle\(\)/);
+  const claimPersistStart = context.indexOf('const persistAssignmentClaim =');
+  const claimPersistEnd = context.indexOf('const persistOwnAssignmentUpdate =', claimPersistStart);
+  assert.doesNotMatch(context.slice(claimPersistStart, claimPersistEnd), /\.maybeSingle\(\)/);
   assert.match(context, /await persistAssignmentClaim\(assignment\.id/);
   assert.match(context, /pendingAssignmentClaimIdsRef\.current\.has\(assignmentId\)/);
   assert.match(calendar, /disabled=\{isClaiming\}/);
@@ -108,4 +110,18 @@ test('calendar synthesizes the current week and claim is server-conditional befo
     claimSource.indexOf('await persistAssignmentClaim') < claimSource.indexOf("type: 'ASSIGNMENT_UPDATE'"),
     'claim must be persisted atomically before local success is dispatched',
   );
+});
+
+test('partial calendar weeks include every day and keep the existing assignments', async () => {
+  const { fillWeekDays, formatShortWeekday } = await loadScheduleModule();
+  const monday = new Date('2026-09-07T00:00:00');
+  const existing = { ...groupedDay('2026-09-08'), assignments: [{ id: 'lunch' }] };
+  const days = fillWeekDays(monday, [existing]);
+  assert.equal(days.length, 7);
+  assert.deepEqual(days.map((day) => day.isoDate), [
+    '2026-09-07', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11', '2026-09-12', '2026-09-13',
+  ]);
+  assert.equal(days[1], existing);
+  assert.equal(days[0].assignments.length, 0);
+  assert.equal(formatShortWeekday(monday), 'mån');
 });

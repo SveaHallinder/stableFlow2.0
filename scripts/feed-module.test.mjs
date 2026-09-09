@@ -46,9 +46,9 @@ test('AppDataContext has feed reducer cases and clears on stable/horse delete', 
 test('AppDataContext exposes upsertFeedPlan/deleteFeedPlan/upsertFeedCheck actions', async () => {
   const context = await readProjectFile('context/AppDataContext.tsx');
 
-  assert.match(context, /upsertFeedPlan: \(input: UpsertFeedPlanInput\) => ActionResult<FeedPlanItem>;/);
-  assert.match(context, /deleteFeedPlan: \(feedPlanId: string\) => ActionResult;/);
-  assert.match(context, /upsertFeedCheck: \(input: UpsertFeedCheckInput\) => ActionResult<FeedCheck>;/);
+  assert.match(context, /upsertFeedPlan: \(input: UpsertFeedPlanInput\) => Promise<ActionResult<FeedPlanItem>>;/);
+  assert.match(context, /deleteFeedPlan: \(feedPlanId: string\) => Promise<ActionResult>;/);
+  assert.match(context, /upsertFeedCheck: \(input: UpsertFeedCheckInput\) => Promise<ActionResult<FeedCheck>>;/);
   // Owner can edit override OR admin/edit can edit defaults
   assert.match(context, /horse\?\.ownerUserId === current\.currentUserId/);
   // Owner of horse can also mark feed checks even with view access

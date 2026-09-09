@@ -1,4 +1,7 @@
+import { InviteReceipt } from '@/components/InviteReceipt';
+import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
+import { generateId } from '@/lib/ids';
 import {
   Platform,
   ScrollView,
@@ -124,16 +127,32 @@ export default function AdminDashboard() {
   );
   const fallbackQuickStableId = currentStableId || state.stables[0]?.id || '';
   const [quickStableId, setQuickStableId] = React.useState(fallbackQuickStableId);
+  const creatingStableRef = React.useRef(false);
+  const newStableIdRef = React.useRef<string | null>(null);
+  const [creatingStable, setCreatingStable] = React.useState(false);
+  const [stableCreateError, setStableCreateError] = React.useState<string | null>(null);
   const [quickStableDraft, setQuickStableDraft] = React.useState({
     name: '',
     location: '',
     farmId: '',
   });
+  const [savingHorse, setSavingHorse] = React.useState(false);
+  const savingHorseRef = React.useRef(false);
+  const newHorseIdRef = React.useRef<string | null>(null);
+  const [horseSaveError, setHorseSaveError] = React.useState<string | null>(null);
   const [quickHorseDraft, setQuickHorseDraft] = React.useState({ name: '' });
+  const savingPaddockRef = React.useRef(false);
+  const newPaddockIdRef = React.useRef<string | null>(null);
+  const [savingPaddock, setSavingPaddock] = React.useState(false);
+  const [paddockError, setPaddockError] = React.useState<string | null>(null);
   const [quickPaddockDraft, setQuickPaddockDraft] = React.useState({
     name: '',
     horseIds: [] as string[],
   });
+  const [savingInvite, setSavingInvite] = React.useState(false);
+  const savingInviteRef = React.useRef(false);
+  const [inviteReceipt, setInviteReceipt] = React.useState<InviteConfirmation | null>(null);
+  const [inviteError, setInviteError] = React.useState<string | null>(null);
   const [quickMemberDraft, setQuickMemberDraft] = React.useState({
     name: '',
     email: '',
@@ -193,27 +212,39 @@ export default function AdminDashboard() {
 
   const handleSelectQuickStable = React.useCallback(
     (stableId: string) => {
+      if (savingPaddockRef.current) return;
+      newPaddockIdRef.current = null;
+      setPaddockError(null);
       setQuickStableId(stableId);
       actions.setCurrentStable(stableId);
     },
     [actions],
   );
 
-  const handleQuickCreateStable = React.useCallback(() => {
+  const handleQuickCreateStable = React.useCallback(async () => {
+    if (creatingStableRef.current) return;
     const name = quickStableDraft.name.trim();
     if (!name) {
       toast.showToast('Stallnamn krävs.', 'error');
       return;
     }
-    const result = actions.upsertStable({
+    creatingStableRef.current = true;
+    setCreatingStable(true);
+    setStableCreateError(null);
+    newStableIdRef.current ??= generateId();
+    const result = await actions.upsertStable({
+      requestId: newStableIdRef.current,
       name,
       location: quickStableDraft.location.trim() || undefined,
       farmId: quickStableDraft.farmId || undefined,
     });
+    creatingStableRef.current = false;
+    setCreatingStable(false);
     if (!result.success || !result.data) {
-      toast.showToast(result.success ? 'Kunde inte skapa stall.' : result.reason, 'error');
+      setStableCreateError(result.success ? 'Servern bekräftade inte stallet. Försök igen.' : result.reason);
       return;
     }
+    newStableIdRef.current = null;
     actions.setCurrentStable(result.data.id);
     setQuickStableId(result.data.id);
     setQuickStableDraft((prev) => ({
@@ -224,7 +255,8 @@ export default function AdminDashboard() {
     toast.showToast('Stall skapat.', 'success');
   }, [actions, quickStableDraft.farmId, quickStableDraft.location, quickStableDraft.name, toast]);
 
-  const handleQuickAddHorse = React.useCallback(() => {
+  const handleQuickAddHorse = React.useCallback(async () => {
+    if (savingHorseRef.current) return;
     if (!quickStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -234,15 +266,24 @@ export default function AdminDashboard() {
       toast.showToast('Hästens namn krävs.', 'error');
       return;
     }
-    const result = actions.upsertHorse({
+    savingHorseRef.current = true;
+    setSavingHorse(true);
+    setHorseSaveError(null);
+    newHorseIdRef.current ??= generateId();
+    const result = await actions.upsertHorse({
+      id: newHorseIdRef.current,
       name,
       stableId: quickStableId,
       gender: 'unknown',
     });
+    savingHorseRef.current = false;
+    setSavingHorse(false);
     if (!result.success) {
+      setHorseSaveError(result.reason);
       toast.showToast(result.reason, 'error');
       return;
     }
+    newHorseIdRef.current = null;
     setQuickHorseDraft({ name: '' });
     toast.showToast('Häst tillagd.', 'success');
   }, [actions, quickHorseDraft.name, quickStableId, toast]);
@@ -257,7 +298,8 @@ export default function AdminDashboard() {
     });
   }, []);
 
-  const handleQuickAddPaddock = React.useCallback(() => {
+  const handleQuickAddPaddock = React.useCallback(async () => {
+    if (savingPaddockRef.current) return;
     if (!quickStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -270,21 +312,30 @@ export default function AdminDashboard() {
     const horseNames = quickStableHorses
       .filter((horse) => quickPaddockDraft.horseIds.includes(horse.id))
       .map((horse) => horse.name);
-    const result = actions.upsertPaddock({
+    savingPaddockRef.current = true;
+    setSavingPaddock(true);
+    setPaddockError(null);
+    newPaddockIdRef.current ??= generateId();
+    const result = await actions.upsertPaddock({
+      id: newPaddockIdRef.current,
       stableId: quickStableId,
       name,
       horseNames,
       season: 'yearRound',
     });
+    savingPaddockRef.current = false;
+    setSavingPaddock(false);
     if (!result.success) {
-      toast.showToast(result.reason, 'error');
+      setPaddockError(result.reason);
       return;
     }
+    newPaddockIdRef.current = null;
     setQuickPaddockDraft({ name: '', horseIds: [] });
     toast.showToast('Hage skapad.', 'success');
   }, [actions, quickPaddockDraft.horseIds, quickPaddockDraft.name, quickStableHorses, quickStableId, toast]);
 
-  const handleQuickInviteMember = React.useCallback(() => {
+  const handleQuickInviteMember = React.useCallback(async () => {
+    if (savingInviteRef.current) return;
     if (!quickStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -295,7 +346,10 @@ export default function AdminDashboard() {
       toast.showToast('Namn och e-post krävs.', 'error');
       return;
     }
-    const result = actions.addMember({
+    savingInviteRef.current = true;
+    setSavingInvite(true);
+    setInviteError(null);
+    const result = await actions.addMember({
       name,
       email,
       stableId: quickStableId,
@@ -305,12 +359,16 @@ export default function AdminDashboard() {
       access: selectedQuickRole.access,
       riderRole: selectedQuickRole.riderRole,
     });
+    savingInviteRef.current = false;
+    setSavingInvite(false);
     if (!result.success) {
+      setInviteError(result.reason);
       toast.showToast(result.reason, 'error');
       return;
     }
+    setInviteReceipt(result.data ?? null);
     setQuickMemberDraft({ name: '', email: '' });
-    toast.showToast('Inbjudan skickad.', 'success');
+    toast.showToast('Inbjudan skapad.', 'success');
   }, [actions, quickMemberDraft.email, quickMemberDraft.name, quickStableId, selectedQuickRole, toast]);
 
   const wrapDesktop = (content: React.ReactNode) => {
@@ -327,10 +385,11 @@ export default function AdminDashboard() {
     );
   };
 
-  const canQuickCreateStable = quickStableDraft.name.trim().length > 0;
-  const canQuickAddHorse = Boolean(quickStableId && quickHorseDraft.name.trim().length > 0);
-  const canQuickAddPaddock = Boolean(quickStableId && quickPaddockDraft.name.trim().length > 0);
+  const canQuickCreateStable = !creatingStable && quickStableDraft.name.trim().length > 0;
+  const canQuickAddHorse = Boolean(!savingHorse && quickStableId && quickHorseDraft.name.trim().length > 0);
+  const canQuickAddPaddock = Boolean(!savingPaddock && quickStableId && quickPaddockDraft.name.trim().length > 0);
   const canQuickInvite = Boolean(
+    !savingInvite &&
     quickStableId &&
       quickMemberDraft.name.trim().length > 0 &&
       quickMemberDraft.email.trim().length > 0,
@@ -481,7 +540,8 @@ export default function AdminDashboard() {
                         <TouchableOpacity
                           key={stable.id}
                           style={[styles.chip, active && styles.chipActive]}
-                          onPress={() => handleSelectQuickStable(stable.id)}
+                          disabled={savingInvite || savingHorse || savingPaddock}
+                            onPress={() => handleSelectQuickStable(stable.id)}
                           activeOpacity={0.85}
                         >
                           <Text style={[styles.chipText, active && styles.chipTextActive]}>
@@ -496,11 +556,14 @@ export default function AdminDashboard() {
                 )}
 
                 <View style={[styles.quickStack, isDesktopWeb && styles.quickStackDesktop]}>
-                  <View style={styles.quickSection}>
+                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
                     <Text style={styles.quickTitle}>Skapa stall</Text>
+                    {stableCreateError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{stableCreateError}</Text> : null}
+                    {creatingStable ? <Text accessibilityLiveRegion="polite">Skapar stallet…</Text> : null}
                     <TextInput
                       placeholder="Stallnamn"
                       placeholderTextColor={palette.mutedText}
+                      editable={!creatingStable}
                       value={quickStableDraft.name}
                       onChangeText={(text) =>
                         setQuickStableDraft((prev) => ({ ...prev, name: text }))
@@ -510,6 +573,7 @@ export default function AdminDashboard() {
                     <TextInput
                       placeholder="Plats (valfritt)"
                       placeholderTextColor={palette.mutedText}
+                      editable={!creatingStable}
                       value={quickStableDraft.location}
                       onChangeText={(text) =>
                         setQuickStableDraft((prev) => ({ ...prev, location: text }))
@@ -557,7 +621,7 @@ export default function AdminDashboard() {
                     </TouchableOpacity>
                   </View>
 
-                  <View style={styles.quickSection}>
+                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
                     <Text style={styles.quickTitle}>Bjud in medlem</Text>
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
@@ -569,6 +633,7 @@ export default function AdminDashboard() {
                           <TouchableOpacity
                             key={option.id}
                             style={[styles.chip, active && styles.chipActive]}
+                            disabled={savingInvite}
                             onPress={() => setQuickMemberRole(option.id)}
                             activeOpacity={0.85}
                           >
@@ -579,10 +644,13 @@ export default function AdminDashboard() {
                         );
                       })}
                     </View>
+                    <InviteReceipt confirmation={inviteReceipt} />
+                    {inviteError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{inviteError}</Text>}
                     <TextInput
                       placeholder="Namn"
                       placeholderTextColor={palette.mutedText}
                       value={quickMemberDraft.name}
+                      editable={!savingInvite}
                       onChangeText={(text) =>
                         setQuickMemberDraft((prev) => ({ ...prev, name: text }))
                       }
@@ -592,6 +660,7 @@ export default function AdminDashboard() {
                       placeholder="E-post"
                       placeholderTextColor={palette.mutedText}
                       value={quickMemberDraft.email}
+                      editable={!savingInvite}
                       onChangeText={(text) =>
                         setQuickMemberDraft((prev) => ({ ...prev, email: text }))
                       }
@@ -609,19 +678,21 @@ export default function AdminDashboard() {
                       activeOpacity={0.85}
                       disabled={!canQuickInvite}
                     >
-                      <Text style={styles.primaryLabel}>Skicka inbjudan</Text>
+                      <Text style={styles.primaryLabel}>{savingInvite ? 'Skapar inbjudan…' : 'Skapa inbjudan'}</Text>
                     </TouchableOpacity>
                   </View>
 
-                  <View style={styles.quickSection}>
+                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
                     <Text style={styles.quickTitle}>Lägg till häst</Text>
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
                     ) : null}
+                    {horseSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseSaveError}</Text>}
                     <TextInput
                       placeholder="Hästens namn"
                       placeholderTextColor={palette.mutedText}
                       value={quickHorseDraft.name}
+                      editable={!savingHorse}
                       onChangeText={(text) => setQuickHorseDraft({ name: text })}
                       style={styles.input}
                     />
@@ -635,18 +706,21 @@ export default function AdminDashboard() {
                       activeOpacity={0.85}
                       disabled={!canQuickAddHorse}
                     >
-                      <Text style={styles.primaryLabel}>Lägg till häst</Text>
+                      <Text style={styles.primaryLabel}>{savingHorse ? 'Sparar…' : 'Lägg till häst'}</Text>
                     </TouchableOpacity>
                   </View>
 
-                  <View style={styles.quickSection}>
+                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
                     <Text style={styles.quickTitle}>Skapa hage</Text>
+                    {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
+                    {savingPaddock ? <Text accessibilityLiveRegion="polite">Sparar hagen…</Text> : null}
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
                     ) : null}
                     <TextInput
                       placeholder="Namn på hage"
                       placeholderTextColor={palette.mutedText}
+                      editable={!savingPaddock}
                       value={quickPaddockDraft.name}
                       onChangeText={(text) =>
                         setQuickPaddockDraft((prev) => ({ ...prev, name: text }))
@@ -661,6 +735,7 @@ export default function AdminDashboard() {
                           <TouchableOpacity
                             key={horse.id}
                             style={[styles.chip, active && styles.chipActive]}
+                            disabled={savingPaddock}
                             onPress={() => handleToggleQuickHorse(horse.id)}
                             activeOpacity={0.85}
                           >
@@ -895,6 +970,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
     gap: 10,
+  },
+  quickSectionDesktop: {
     flexBasis: '48%',
     flexGrow: 1,
     minWidth: 260,

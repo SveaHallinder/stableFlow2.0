@@ -109,12 +109,12 @@ function NotificationBootstrap() {
 }
 
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { session, loading } = useAuth();
+  const { session, loading, initializationError, retryInitialization } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
   React.useEffect(() => {
-    if (loading) {
+    if (loading || initializationError) {
       return;
     }
     const rootSegment = segments[0];
@@ -127,13 +127,29 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     if (session && (inAuthGroup || isNotFound)) {
       router.replace('/(tabs)');
     }
-  }, [loading, router, segments, session]);
+  }, [loading, initializationError, router, segments, session]);
 
   if (loading) {
     return (
       <View style={loadingStyles.container}>
         <ActivityIndicator size="large" color="#3E9B5F" />
         <Text style={loadingStyles.text}>Laddar...</Text>
+      </View>
+    );
+  }
+
+  if (initializationError) {
+    return (
+      <View style={errorStyles.container}>
+        <Text style={errorStyles.title}>Kunde inte ansluta</Text>
+        <Text style={errorStyles.body}>{initializationError}</Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={errorStyles.button}
+          onPress={retryInitialization}
+        >
+          <Text style={errorStyles.buttonText}>Försök igen</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -158,13 +174,13 @@ const loadingStyles = StyleSheet.create({
 
 function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
-  const { hydrating, derived } = useAppData();
+  const { hydrating, refreshing, derived, refreshError, state, actions } = useAppData();
   const segments = useSegments();
   const searchParams = useGlobalSearchParams();
   const router = useRouter();
 
   React.useEffect(() => {
-    if (loading || hydrating || !session) {
+    if (loading || hydrating || refreshing || refreshError || !session) {
       return;
     }
     const rootSegment = segments[0];
@@ -195,6 +211,8 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
   }, [
     loading,
     hydrating,
+    refreshing,
+    refreshError,
     session,
     segments,
     router,
@@ -203,5 +221,34 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     searchParams.fromOnboarding,
   ]);
 
-  return <>{children}</>;
+  if (session && refreshError && !state.currentStableId) {
+    return (
+      <View style={errorStyles.container}>
+        <Text style={errorStyles.title}>Kunde inte hämta stallet</Text>
+        <Text style={errorStyles.body}>{refreshError}</Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityState={{ disabled: hydrating || refreshing }}
+          disabled={hydrating || refreshing}
+          style={errorStyles.button}
+          onPress={() => { void actions.refreshData(); }}
+        >
+          <Text style={errorStyles.buttonText}>{hydrating || refreshing ? 'Försöker igen…' : 'Försök igen'}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const waitingForStable = Boolean(session && hydrating && !state.currentUserId);
+  return (
+    <View style={{ flex: 1 }}>
+      <View style={{ flex: 1 }} pointerEvents={waitingForStable ? 'none' : 'auto'}>{children}</View>
+      {waitingForStable && (
+        <View style={[StyleSheet.absoluteFillObject, loadingStyles.container]}>
+          <ActivityIndicator size="large" color="#3E9B5F" />
+          <Text style={loadingStyles.text}>Hämtar ditt stall…</Text>
+        </View>
+      )}
+    </View>
+  );
 }

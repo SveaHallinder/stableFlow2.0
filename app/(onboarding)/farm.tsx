@@ -32,6 +32,9 @@ export default function OnboardingFarm() {
     { id: generateId(), name: '', adminType: 'self', adminEmail: '' },
   ]);
   const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const farmIdRef = React.useRef<string | null>(null);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
 
   const handleAddStable = React.useCallback(() => {
     setStablesDraft((prev) => [
@@ -49,7 +52,7 @@ export default function OnboardingFarm() {
   }, []);
 
   const handleSave = React.useCallback(async () => {
-    if (saving) {
+    if (savingRef.current) {
       return;
     }
     const name = farmName.trim();
@@ -71,7 +74,9 @@ export default function OnboardingFarm() {
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
+    setSaveError(null);
     try {
       let userId = state.currentUserId;
       if (!userId) {
@@ -83,7 +88,8 @@ export default function OnboardingFarm() {
         return;
       }
 
-      const farmId = generateId();
+      farmIdRef.current ??= generateId();
+      const farmId = farmIdRef.current;
       const farmPayload = {
         id: farmId,
         name,
@@ -92,21 +98,33 @@ export default function OnboardingFarm() {
         arena_note: null,
         created_by: userId,
       };
-      const farmInsert = isQaDemoMode
-        ? { error: null }
-        : await supabase.from('farms').insert(farmPayload);
-      if (farmInsert.error) {
-        toast.showToast(`Kunde inte skapa gård. ${farmInsert.error.message}`, 'error');
+      let farmInsert = isQaDemoMode
+        ? { error: null, data: farmPayload }
+        : await supabase.from('farms').insert(farmPayload).select('*').single();
+      const recoveringFarm = farmInsert.error?.code === '23505';
+      if (recoveringFarm) {
+        farmInsert = await supabase.from('farms').select('*').eq('id', farmId).single();
+        if (!farmInsert.error && farmInsert.data?.id === farmId && farmInsert.data.created_by === userId
+          && farmInsert.data.name !== name) {
+          farmInsert = await supabase.from('farms').update({ name }).eq('id', farmId).eq('created_by', userId)
+            .select('*').single();
+        }
+      }
+      const expectedFarm = recoveringFarm ? { id: farmId, name, created_by: userId } : farmPayload;
+      if (farmInsert.error || !farmInsert.data
+        || Object.entries(expectedFarm).some(([key, value]) => farmInsert.data[key] !== value)) {
+        console.warn('[farm create] Gården kunde inte bekräftas', farmInsert.error);
+        setSaveError('Gården kunde inte sparas. Dina uppgifter finns kvar. Försök igen.');
         return;
       }
 
-      const farmResult = actions.upsertFarm(
+      const farmResult = await actions.upsertFarm(
         {
           id: farmId,
-          name,
-          location: undefined,
-          hasIndoorArena: false,
-          arenaNote: '',
+          name: farmInsert.data.name,
+          location: farmInsert.data.location ?? undefined,
+          hasIndoorArena: farmInsert.data.has_indoor_arena ?? false,
+          arenaNote: farmInsert.data.arena_note ?? '',
         },
         { skipPersist: true, skipPermission: true },
       );
@@ -117,63 +135,13 @@ export default function OnboardingFarm() {
 
       const createdStableIds: { id: string; adminType: 'self' | 'invite'; adminEmail: string }[] = [];
       for (const item of trimmedStables) {
-        const stableId = generateId();
-        const stablePayload = {
-          id: stableId,
-          name: item.name,
-          description: null,
-          location: null,
-          farm_id: farmId,
-          created_by: userId,
-          ride_types: [],
-          settings: null,
-        };
-        const stableInsert = isQaDemoMode
-          ? { error: null }
-          : await supabase.from('stables').insert(stablePayload);
-        if (stableInsert.error) {
-          toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
-          return;
-        }
-
-        const memberPayload = {
-          stable_id: stableId,
-          user_id: userId,
-          role: 'admin',
-          access: 'owner',
-          rider_role: 'owner',
-        };
-        const memberInsert = isQaDemoMode
-          ? { error: null }
-          : await supabase.from('stable_members').insert(memberPayload);
-        if (memberInsert.error) {
-          toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
-          return;
-        }
-
-        const conversationPayload = {
-          stable_id: stableId,
-          title: item.name,
-          is_group: true,
-          created_by_user_id: userId,
-        };
-        const conversationInsert = isQaDemoMode
-          ? { error: null, code: undefined }
-          : await supabase.from('conversations').insert(conversationPayload);
-        if (conversationInsert.error && conversationInsert.error.code !== '23505') {
-          toast.showToast('Kunde inte skapa stallchatten.', 'error');
-        }
-
-        const stableResult = actions.upsertStable(
-          {
-            id: stableId,
-            name: item.name,
-            farmId,
-          },
-          { skipPersist: true, skipPermission: true },
+        const stableId = item.id;
+        const stableResult = await actions.upsertStable(
+          { requestId: stableId, name: item.name, farmId },
+          { skipPermission: true },
         );
         if (!stableResult.success || !stableResult.data) {
-          toast.showToast('Kunde inte skapa stall.', 'error');
+          setSaveError(stableResult.success ? 'Servern bekräftade inte stallet. Försök igen.' : stableResult.reason);
           return;
         }
         createdStableIds.push({
@@ -185,7 +153,7 @@ export default function OnboardingFarm() {
 
       for (const item of createdStableIds) {
         if (item.adminType === 'invite' && item.adminEmail) {
-          const inviteResult = actions.addMember({
+          const inviteResult = await actions.addMember({
             name: 'Admin',
             email: item.adminEmail,
             stableId: item.id,
@@ -193,7 +161,9 @@ export default function OnboardingFarm() {
             customRole: 'Stallansvarig',
             access: 'owner',
           });
-          if (inviteResult.success && inviteResult.data?.inviteCode) {
+          if (!inviteResult.success) {
+            toast.showToast(`Stallet är skapat. ${inviteResult.reason} Du kan bjuda in ansvarig från Stall.`, 'error');
+          } else if (inviteResult.data?.inviteCode) {
             toast.showToast(`Inbjudningskod ${inviteResult.data.inviteCode}`, 'success');
           }
         }
@@ -208,12 +178,17 @@ export default function OnboardingFarm() {
 
       toast.showToast('Gård och stall sparade.', 'success');
       router.replace(returnTo);
+    } catch (error) {
+      console.warn('[farm create] Kunde inte slutföra gård och stall', error);
+      setSaveError('Gård och stall kunde inte färdigställas. Försök igen med samma uppgifter.');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [actions, farmName, router, returnTo, saving, stablesDraft, state.currentUserId, toast]);
+  }, [actions, farmName, router, returnTo, stablesDraft, state.currentUserId, toast]);
 
   const handleBack = React.useCallback(() => {
+    if (savingRef.current) return;
     router.replace(returnTo);
   }, [router, returnTo]);
 
@@ -230,11 +205,13 @@ export default function OnboardingFarm() {
       disableNext={saving}
       showProgress
     >
+      {saveError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text> : null}
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Gårdnamn</Text>
         <TextInput
           placeholder="Namn på gården"
           placeholderTextColor={palette.mutedText}
+          editable={!saving}
           value={farmName}
           onChangeText={setFarmName}
           style={styles.input}
@@ -244,7 +221,7 @@ export default function OnboardingFarm() {
       <Card tone="muted" style={styles.card}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Stall</Text>
-          <TouchableOpacity onPress={handleAddStable} activeOpacity={0.85}>
+          <TouchableOpacity disabled={saving} onPress={handleAddStable} activeOpacity={0.85}>
             <Text style={styles.linkText}>Lägg till stall</Text>
           </TouchableOpacity>
         </View>
@@ -254,7 +231,7 @@ export default function OnboardingFarm() {
               <View style={styles.stableHeader}>
                 <Text style={styles.stableTitle}>Stall {index + 1}</Text>
                 {stablesDraft.length > 1 ? (
-                  <TouchableOpacity onPress={() => handleRemoveStable(item.id)} activeOpacity={0.85}>
+                  <TouchableOpacity disabled={saving} onPress={() => handleRemoveStable(item.id)} activeOpacity={0.85}>
                     <Text style={styles.removeText}>Ta bort</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -262,12 +239,14 @@ export default function OnboardingFarm() {
               <TextInput
                 placeholder="Stallnamn"
                 placeholderTextColor={palette.mutedText}
+                editable={!saving}
                 value={item.name}
                 onChangeText={(text) => handleUpdateStable(item.id, { name: text })}
                 style={styles.input}
               />
               <View style={styles.toggleRow}>
                 <TouchableOpacity
+                  disabled={saving}
                   onPress={() => handleUpdateStable(item.id, { adminType: 'self' })}
                   style={[styles.toggleChip, item.adminType === 'self' && styles.toggleChipActive]}
                   activeOpacity={0.85}
@@ -277,6 +256,7 @@ export default function OnboardingFarm() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  disabled={saving}
                   onPress={() => handleUpdateStable(item.id, { adminType: 'invite' })}
                   style={[styles.toggleChip, item.adminType === 'invite' && styles.toggleChipActive]}
                   activeOpacity={0.85}
@@ -290,6 +270,7 @@ export default function OnboardingFarm() {
                 <TextInput
                   placeholder="Epost till admin"
                   placeholderTextColor={palette.mutedText}
+                  editable={!saving}
                   value={item.adminEmail}
                   onChangeText={(text) => handleUpdateStable(item.id, { adminEmail: text })}
                   style={styles.input}

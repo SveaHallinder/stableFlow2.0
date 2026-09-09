@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
 import { createClient } from '@supabase/supabase-js';
+import { createTimeoutFetch } from './requestTimeout';
 
 const extra = Constants.expoConfig?.extra ?? {};
 const supabaseUrl =
@@ -37,6 +38,7 @@ const secureStore = {
 };
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  global: { fetch: createTimeoutFetch((input, init) => fetch(input, init)) },
   auth: {
     storage: Platform.OS === 'web' ? undefined : secureStore,
     autoRefreshToken: true,

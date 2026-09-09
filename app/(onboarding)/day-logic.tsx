@@ -1,3 +1,4 @@
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -26,10 +27,11 @@ export default function OnboardingDayLogic() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, horses } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
   const activeStable = React.useMemo(
     () => stables.find((stable) => stable.id === activeStableId),
@@ -40,10 +42,16 @@ export default function OnboardingDayLogic() {
     [activeStableId, horses],
   );
 
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
   const [dayLogic, setDayLogic] = React.useState<StableDayLogic>('box');
   const [horseDrafts, setHorseDrafts] = React.useState<Record<string, HorseDraft>>({});
+  const draftStableRef = React.useRef('');
+  const dirtyHorsesRef = React.useRef(new Map<string, Set<keyof HorseDraft>>());
+  const dirtyDayLogicRef = React.useRef(false);
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
       router.replace('/(onboarding)/create-stable');
       return;
@@ -54,20 +62,28 @@ export default function OnboardingDayLogic() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   React.useEffect(() => {
+    if (draftStableRef.current !== activeStableId) {
+      draftStableRef.current = activeStableId;
+      dirtyHorsesRef.current.clear();
+      dirtyDayLogicRef.current = false;
+    }
     const settings = resolveStableSettings(activeStable);
-    setDayLogic(settings.dayLogic);
-    const drafts: Record<string, HorseDraft> = {};
-    stableHorses.forEach((horse) => {
-      drafts[horse.id] = {
-        boxNumber: horse.boxNumber ?? '',
-        canSleepInside: horse.canSleepInside ?? false,
-      };
+    if (!dirtyDayLogicRef.current) setDayLogic(settings.dayLogic);
+    setHorseDrafts((previous) => {
+      const drafts: Record<string, HorseDraft> = {};
+      stableHorses.forEach((horse) => {
+        const dirty = dirtyHorsesRef.current.get(horse.id);
+        drafts[horse.id] = {
+          boxNumber: dirty?.has('boxNumber') && previous[horse.id] ? previous[horse.id].boxNumber : horse.boxNumber ?? '',
+          canSleepInside: dirty?.has('canSleepInside') && previous[horse.id] ? previous[horse.id].canSleepInside : horse.canSleepInside ?? false,
+        };
+      });
+      return drafts;
     });
-    setHorseDrafts(drafts);
-  }, [activeStable, stableHorses]);
+  }, [activeStable, activeStableId, stableHorses]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -78,68 +94,68 @@ export default function OnboardingDayLogic() {
   );
 
   const handleHorseUpdate = React.useCallback((horseId: string, updates: Partial<HorseDraft>) => {
+    const dirty = dirtyHorsesRef.current.get(horseId) ?? new Set<keyof HorseDraft>();
+    (Object.keys(updates) as (keyof HorseDraft)[]).forEach(key => dirty.add(key));
+    dirtyHorsesRef.current.set(horseId, dirty);
     setHorseDrafts((prev) => ({
       ...prev,
       [horseId]: { ...prev[horseId], ...updates },
     }));
   }, []);
 
-  const handleSave = React.useCallback(() => {
-    if (!activeStableId) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return false;
-    }
-    const stableResult = actions.updateStable({
-      id: activeStableId,
-      updates: { settings: { dayLogic } },
-    });
-    if (!stableResult.success) {
-      toast.showToast(stableResult.reason, 'error');
-      return false;
-    }
-
-    let errors = 0;
-    stableHorses.forEach((horse) => {
-      const draft = horseDrafts[horse.id];
-      if (!draft) {
-        return;
+  const handleSave = React.useCallback(async () => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (!activeStableId) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return false;
       }
-      const nextBox = draft.boxNumber.trim();
-      const nextSleep = dayLogic === 'loose' ? draft.canSleepInside : horse.canSleepInside;
-      const hasChange =
-        nextBox !== (horse.boxNumber ?? '') ||
-        (dayLogic === 'loose' && draft.canSleepInside !== Boolean(horse.canSleepInside));
-      if (!hasChange) {
-        return;
+      const stableResult = dirtyDayLogicRef.current ? await actions.updateStable({
+        id: activeStableId,
+        updates: { settings: { dayLogic } },
+      }) : { success: true as const };
+      if (!stableResult.success) {
+        setSaveError(stableResult.reason);
+        toast.showToast(stableResult.reason, 'error');
+        return false;
       }
-      const updateResult = actions.upsertHorse({
-        id: horse.id,
-        name: horse.name,
-        stableId: horse.stableId,
-        ownerUserId: horse.ownerUserId,
-        gender: horse.gender,
-        age: horse.age,
-        note: horse.note,
-        image: horse.image,
-        boxNumber: nextBox,
-        canSleepInside: nextSleep,
-      });
-      if (!updateResult.success) {
-        errors += 1;
+
+      let errors = 0;
+      for (const horse of stableHorses) {
+        const draft = horseDrafts[horse.id];
+        if (!draft) {
+          continue;
+        }
+        const dirty = dirtyHorsesRef.current.get(horse.id);
+        const updates: Partial<HorseDraft> = {};
+        if (dirty?.has('boxNumber') && draft.boxNumber.trim() !== (horse.boxNumber ?? '')) updates.boxNumber = draft.boxNumber.trim();
+        if (dayLogic === 'loose' && dirty?.has('canSleepInside') && draft.canSleepInside !== Boolean(horse.canSleepInside)) updates.canSleepInside = draft.canSleepInside;
+        if (!Object.keys(updates).length) continue;
+        const updateResult = await actions.upsertHorse({ id: horse.id, stableId: horse.stableId, ...updates });
+        if (!updateResult.success) {
+          errors += 1;
+          setSaveError(updateResult.reason);
+        } else {
+          dirtyHorsesRef.current.delete(horse.id);
+        }
       }
-    });
 
-    if (errors > 0) {
-      toast.showToast('Kunde inte spara alla hästar.', 'error');
-      return false;
-    }
+      if (errors > 0) {
+        toast.showToast('Kunde inte spara alla hästar.', 'error');
+        return false;
+      }
 
-    toast.showToast('Inställningar sparade.', 'success');
-    return true;
+      dirtyDayLogicRef.current = false;
+      toast.showToast('Inställningar sparade.', 'success');
+      return true;
+    } finally { savingRef.current = false; setSaving(false); }
   }, [actions, activeStableId, dayLogic, horseDrafts, stableHorses, toast]);
 
-  const handleNext = React.useCallback(() => {
-    if (handleSave()) {
+  const handleNext = React.useCallback(async () => {
+    if (await handleSave()) {
       if (returnTo) {
         router.replace(returnTo);
       } else {
@@ -164,9 +180,12 @@ export default function OnboardingDayLogic() {
       total={10}
       onBack={handleBack}
       onNext={handleNext}
-      nextLabel="Spara & tillbaka"
+      nextLabel={saving ? 'Sparar…' : 'Spara & tillbaka'}
+      disableNext={saving}
       showProgress={false}
     >
+      <DataSyncStatus />
+      {saveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text>}
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
           <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -174,7 +193,7 @@ export default function OnboardingDayLogic() {
             {stables.map((stable) => {
               const active = stable.id === activeStableId;
               return (
-                <TouchableOpacity
+                <TouchableOpacity disabled={saving}
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => handleSelectStable(stable.id)}
@@ -194,10 +213,10 @@ export default function OnboardingDayLogic() {
           {dayLogicOptions.map((option) => {
             const active = dayLogic === option.id;
             return (
-              <TouchableOpacity
+              <TouchableOpacity disabled={saving}
                 key={option.id}
                 style={[styles.optionCard, active && styles.optionCardActive]}
-                onPress={() => setDayLogic(option.id)}
+                onPress={() => { dirtyDayLogicRef.current = true; setDayLogic(option.id); }}
                 activeOpacity={0.85}
               >
                 <Text style={[styles.optionTitle, active && styles.optionTitleActive]}>{option.title}</Text>
@@ -224,7 +243,7 @@ export default function OnboardingDayLogic() {
                     ].map((option) => {
                       const active = draft.canSleepInside === option.value;
                       return (
-                        <TouchableOpacity
+                        <TouchableOpacity disabled={saving}
                           key={option.label}
                           style={[styles.choiceChip, active && styles.choiceChipActive]}
                           onPress={() =>
@@ -244,7 +263,7 @@ export default function OnboardingDayLogic() {
                   </View>
                 ) : null}
                 {(dayLogic === 'box' || draft.canSleepInside) ? (
-                  <TextInput
+                  <TextInput editable={!saving}
                     placeholder="Boxnummer (valfritt)"
                     placeholderTextColor={palette.mutedText}
                     value={draft.boxNumber}

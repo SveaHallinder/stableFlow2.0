@@ -114,7 +114,7 @@ const headerStyles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   side: {
-    width: 48,
+    minWidth: 48,
     height: 48,
     alignItems: 'center',
     justifyContent: 'center',
@@ -155,10 +155,10 @@ const headerStyles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   actionButton: {
-    width: 40,
-    height: 40,
+    minWidth: 44,
+    minHeight: 44,
     borderRadius: radius.full,
-    paddingHorizontal: 0,
+    paddingHorizontal: 14,
     paddingVertical: 0,
     alignItems: 'center',
     justifyContent: 'center',
@@ -205,6 +205,7 @@ type HeaderIconButtonProps = PropsWithChildren<
 
 export const HeaderIconButton = ({ style, ...props }: HeaderIconButtonProps) => (
   <TouchableOpacity
+    accessibilityRole="button"
     style={[headerStyles.iconButton, style]}
     activeOpacity={0.85}
     {...props}
@@ -221,6 +222,8 @@ type HeaderActionButtonProps = PropsWithChildren<
 
 export const HeaderActionButton = ({ label, children, style, textStyle, ...props }: HeaderActionButtonProps) => (
   <TouchableOpacity
+    accessibilityRole="button"
+    accessibilityLabel={label}
     style={[headerStyles.actionButton, style]}
     activeOpacity={0.85}
     {...props}

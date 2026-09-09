@@ -48,28 +48,23 @@ test('Phase 4 — PlannedRide types + reducer + actions wired in AppDataContext'
   );
 });
 
-test('Phase 4 — completePlannedRide creates a ride log atomically', async () => {
+test('Phase 4 — completePlannedRide dispatches acknowledged log and plan rows', async () => {
   const context = await readProjectFile('context/AppDataContext.tsx');
 
-  // The action dispatches RIDE_LOG_ADD AND PLANNED_RIDE_UPSERT
-  assert.match(context, /dispatch\(\{ type: 'RIDE_LOG_ADD', payload: rideLog \}\);/);
-  assert.match(
-    context,
-    /dispatch\(\{ type: 'PLANNED_RIDE_UPSERT', payload: updatedRide \}\);/,
-  );
-  // Status flips to done and links completed_ride_log_id
+  // Sequencing, retry identity, and conflicts are executed in planned-ride-completion.test.mjs.
+  assert.match(context, /const savedLog = await persistRideLogInsert\(rideLog, true\)/);
+  assert.match(context, /const savedRide = await persistPlannedRideUpsert\(updatedRide, existing\)/);
+  assert.match(context, /dispatch\(\{ type: 'RIDE_LOG_ADD', payload: savedLog \}\)/);
+  assert.match(context, /dispatch\(\{ type: 'PLANNED_RIDE_UPSERT', payload: savedRide \}\)/);
   assert.match(context, /status: 'done',\s+completedRideLogId: rideLog\.id/);
-  // Ride log inherits stable/horse/date from the planned ride
-  assert.match(context, /stableId: existing\.stableId/);
-  assert.match(context, /horseId: existing\.horseId/);
 });
 
 test('Phase 4 — Supabase load includes planned_rides', async () => {
   const context = await readProjectFile('context/AppDataContext.tsx');
 
   assert.match(context, /supabase\.from\('planned_rides'\)\.select\('\*'\)\.in\('stable_id', stableIds\)/);
-  assert.match(context, /from\('planned_rides'\)\.upsert/);
-  assert.match(context, /from\('planned_rides'\)\.delete\(\)\.eq\('id', rideId\)/);
+  assert.match(context, /from\('planned_rides'\)\.insert/);
+  assert.match(context, /from\('planned_rides'\)\.delete\(\)\.eq\('id', ride\.id\)/);
   // STATE_HYDRATE includes plannedRides
   assert.match(context, /plannedRides: action\.payload\.plannedRides \?\? state\.plannedRides/);
 });

@@ -6,9 +6,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { theme } from '@/components/theme';
 import {
   useAppData,
+  type ActionResult,
   type CareEvent,
   type CareEventType,
   type ExternalContact,
@@ -18,11 +20,14 @@ import {
   type HorseDayStatus,
   type Paddock,
   type PlannedRide,
+  type RideLogEntry,
   type Stable,
 } from '@/context/AppDataContext';
 import { color, radius } from '@/design/tokens';
 import { getResponsibleUsersForHorse, getHorseResponsibility } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
+import { generateId } from '@/lib/ids';
+import { confirmAction } from '@/lib/confirm';
 import { feedSlotLabels } from '@/lib/today';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -82,7 +87,7 @@ export default function HorseProfileScreen() {
   const isOwner = Boolean(horse) && horse?.ownerUserId === state.currentUserId;
   const canEditDefaults = derived.permissions.canManageHorses;
   const canEditOverrides = canEditDefaults || isOwner;
-  const canCheckFeed = derived.permissions.canUpdateHorseStatus;
+  const canCheckFeed = derived.permissions.canUpdateHorseStatus || isOwner;
 
   const handleBack = React.useCallback(() => {
     if (router.canGoBack()) {
@@ -146,6 +151,7 @@ export default function HorseProfileScreen() {
           ]}
           showsVerticalScrollIndicator={false}
         >
+          <DataSyncStatus />
           <Card elevated style={styles.heroCard}>
             <View style={styles.heroTop}>
               <View style={styles.heroIcon}>
@@ -168,9 +174,9 @@ export default function HorseProfileScreen() {
               {horse ? (
                 <DailyStatusEditor
                   status={status}
-                  canEdit={canCheckFeed || isOwner}
-                  onUpdate={(updates) => {
-                    const result = actions.updateHorseDayStatus({
+                  canEdit={derived.permissions.canUpdateHorseStatus}
+                  onUpdate={async (updates) => {
+                    const result = await actions.updateHorseDayStatus({
                       horseId: horse.id,
                       date: todayIso,
                       stableId,
@@ -181,6 +187,7 @@ export default function HorseProfileScreen() {
                     } else {
                       toast.showToast('Status uppdaterad.', 'success');
                     }
+                    return result.success;
                   }}
                 />
               ) : null}
@@ -194,24 +201,22 @@ export default function HorseProfileScreen() {
                   plans={stableFeedPlans}
                   canEditDefaults={canEditDefaults}
                   canEditOverrides={canEditOverrides}
-                  onSave={(input) => {
-                    const result = actions.upsertFeedPlan(input);
-                    if (!result.success) toast.showToast(result.reason, 'error');
-                    else toast.showToast('Foderplan sparad.', 'success');
-                    return result.success;
+                  onSave={async (input) => {
+                    const result = await actions.upsertFeedPlan(input);
+                    if (result.success) toast.showToast('Foderplan sparad.', 'success');
+                    return result;
                   }}
-                  onDelete={(id) => {
-                    const result = actions.deleteFeedPlan(id);
-                    if (!result.success) toast.showToast(result.reason, 'error');
-                    else toast.showToast('Foderplan borttagen.', 'success');
-                    return result.success;
+                  onDelete={async (id) => {
+                    const result = await actions.deleteFeedPlan(id);
+                    if (result.success) toast.showToast('Foderplan borttagen.', 'success');
+                    return result;
                   }}
-                  onCheck={(slot, deviationNote) => {
+                  onCheck={async (slot, deviationNote) => {
                     if (!canCheckFeed) {
                       toast.showToast('Du saknar behörighet att markera foder.', 'error');
                       return false;
                     }
-                    const result = actions.upsertFeedCheck({
+                    const result = await actions.upsertFeedCheck({
                       stableId,
                       horseId: horse.id,
                       date: todayIso,
@@ -267,29 +272,27 @@ export default function HorseProfileScreen() {
                     ride.status !== 'cancelled',
                 )}
                 canEdit={derived.permissions.canManageRideLogs || isOwner}
-                onCreate={(input) => {
-                  const result = actions.createPlannedRide(input);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Ridpass planerat.', 'success');
-                  return result.success;
+                canComplete={derived.permissions.canManageRideLogs}
+                logs={state.rideLogs.filter((log) => log.stableId === stableId && log.horseId === horse.id)}
+                onCreate={async (input) => {
+                  const result = await actions.createPlannedRide(input);
+                  if (result.success) toast.showToast('Ridpass planerat.', 'success');
+                  return result;
                 }}
-                onUpdate={(input) => {
-                  const result = actions.updatePlannedRide(input);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Ridpass uppdaterat.', 'success');
-                  return result.success;
+                onUpdate={async (input) => {
+                  const result = await actions.updatePlannedRide(input);
+                  if (result.success) toast.showToast('Ridpass uppdaterat.', 'success');
+                  return result;
                 }}
-                onDelete={(id) => {
-                  const result = actions.deletePlannedRide(id);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Ridpass borttaget.', 'success');
-                  return result.success;
+                onDelete={async (id) => {
+                  const result = await actions.deletePlannedRide(id);
+                  if (result.success) toast.showToast('Ridpass borttaget.', 'success');
+                  return result;
                 }}
-                onComplete={(input) => {
-                  const result = actions.completePlannedRide(input);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Ridpass loggat.', 'success');
-                  return result.success;
+                onComplete={async (input) => {
+                  const result = await actions.completePlannedRide(input);
+                  if (result.success) toast.showToast('Ridpass loggat.', 'success');
+                  return result;
                 }}
               />
             ) : null}
@@ -325,30 +328,26 @@ export default function HorseProfileScreen() {
                 horseId={horse.id}
                 events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
                 contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
-                canEdit={derived.permissions.canManageDayEvents || derived.permissions.canManageOnboarding}
-                onCreate={(input) => {
-                  const result = actions.createCareEvent(input);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Vårdhändelse skapad.', 'success');
-                  return result.success;
+                canEdit={derived.permissions.canManageCareEvents}
+                onCreate={async (input) => {
+                  const result = await actions.createCareEvent(input);
+                  if (result.success) toast.showToast('Vårdhändelse skapad.', 'success');
+                  return result;
                 }}
-                onComplete={(input) => {
-                  const result = actions.completeCareEvent(input);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Vårdhändelse markerad klar.', 'success');
-                  return result.success;
+                onComplete={async (input) => {
+                  const result = await actions.completeCareEvent(input);
+                  if (result.success) toast.showToast('Vårdhändelse markerad klar.', 'success');
+                  return result;
                 }}
-                onCancel={(id) => {
-                  const result = actions.updateCareEvent({ id, updates: { status: 'cancelled' } });
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Vårdhändelse avbokad.', 'success');
-                  return result.success;
+                onCancel={async (id) => {
+                  const result = await actions.updateCareEvent({ id, updates: { status: 'cancelled' } });
+                  if (result.success) toast.showToast('Vårdhändelse avbokad.', 'success');
+                  return result;
                 }}
-                onDelete={(id) => {
-                  const result = actions.deleteCareEvent(id);
-                  if (!result.success) toast.showToast(result.reason, 'error');
-                  else toast.showToast('Vårdhändelse borttagen.', 'success');
-                  return result.success;
+                onDelete={async (id) => {
+                  const result = await actions.deleteCareEvent(id);
+                  if (result.success) toast.showToast('Vårdhändelse borttagen.', 'success');
+                  return result;
                 }}
               />
             ) : null}
@@ -413,10 +412,25 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 type DailyStatusEditorProps = {
   status?: HorseDayStatus;
   canEdit: boolean;
-  onUpdate: (updates: Partial<Pick<HorseDayStatus, 'dayStatus' | 'nightStatus' | 'checked' | 'water' | 'hay'>>) => void;
+  onUpdate: (updates: Partial<Pick<HorseDayStatus, 'dayStatus' | 'nightStatus' | 'checked' | 'water' | 'hay'>>) => Promise<boolean>;
 };
 
 function DailyStatusEditor({ status, canEdit, onUpdate }: DailyStatusEditorProps) {
+  const savingRef = React.useRef(false);
+  const [saving, setSaving] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const update = async (updates: Parameters<DailyStatusEditorProps['onUpdate']>[0]) => {
+    if (!canEdit || savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setFailed(false);
+    try {
+      setFailed(!(await onUpdate(updates)));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  };
   const renderInOutToggle = (
     label: string,
     value: HorseDayStatus['dayStatus'] | undefined,
@@ -430,8 +444,12 @@ function DailyStatusEditor({ status, canEdit, onUpdate }: DailyStatusEditorProps
           return (
             <TouchableOpacity
               key={option}
-              disabled={!canEdit}
-              onPress={() => canEdit && onUpdate({ [field]: active ? undefined : option })}
+              disabled={!canEdit || saving}
+              onPress={() => update({ [field]: active ? undefined : option })}
+              accessibilityRole="button"
+              accessibilityLabel={`${label}: ${option === 'in' ? 'Inne' : 'Ute'}`}
+              accessibilityState={{ selected: active, disabled: !canEdit || saving }}
+              aria-pressed={active}
               activeOpacity={0.85}
               style={[
                 styles.statusEditorButton,
@@ -462,8 +480,12 @@ function DailyStatusEditor({ status, canEdit, onUpdate }: DailyStatusEditorProps
     <View style={styles.statusEditorRow}>
       <Text style={styles.statusEditorLabel}>{label}</Text>
       <TouchableOpacity
-        disabled={!canEdit}
-        onPress={() => canEdit && onUpdate({ [field]: !value })}
+        disabled={!canEdit || saving}
+        onPress={() => update({ [field]: !value })}
+        accessibilityRole="checkbox"
+        accessibilityLabel={label}
+        accessibilityState={{ checked: Boolean(value), disabled: !canEdit || saving }}
+        aria-checked={Boolean(value)}
         activeOpacity={0.85}
         style={[
           styles.statusEditorButton,
@@ -495,6 +517,10 @@ function DailyStatusEditor({ status, canEdit, onUpdate }: DailyStatusEditorProps
       {renderToggle('Hö', status?.hay, 'hay')}
       {renderToggle('Vatten', status?.water, 'water')}
       {renderToggle('Kollad', status?.checked, 'checked')}
+      {saving ? <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Sparar status…</Text> : null}
+      {failed ? (
+        <Text style={{ color: palette.error }}>Häststatus kunde inte sparas. Försök igen.</Text>
+      ) : null}
       {!canEdit ? (
         <Text style={styles.emptyText}>Du kan läsa detta, men inte ändra.</Text>
       ) : null}
@@ -511,9 +537,9 @@ type FeedPlanListProps = {
   canCheck: boolean;
   todayIso: string;
   feedChecks: import('@/context/AppDataContext').FeedCheck[];
-  onSave: (input: import('@/context/AppDataContext').UpsertFeedPlanInput) => boolean;
-  onDelete: (id: string) => boolean;
-  onCheck: (slot: FeedSlot, deviationNote?: string) => boolean;
+  onSave: (input: import('@/context/AppDataContext').UpsertFeedPlanInput) => Promise<ActionResult<FeedPlanItem>>;
+  onDelete: (id: string) => Promise<ActionResult>;
+  onCheck: (slot: FeedSlot, deviationNote?: string) => Promise<boolean>;
 };
 
 function FeedPlanList({
@@ -530,8 +556,58 @@ function FeedPlanList({
   onCheck,
 }: FeedPlanListProps) {
   const [editing, setEditing] = React.useState<{ slot: FeedSlot; mode: 'override' | 'default' } | null>(null);
+  const planWritePending = React.useRef(false);
+  const [planPending, setPlanPending] = React.useState<{ slot: FeedSlot; action: 'save' | 'delete'; mode: 'override' | 'default' } | null>(null);
+  const [planError, setPlanError] = React.useState<{ slot: FeedSlot; reason: string } | null>(null);
+  const handlePlanWrite = async (
+    slot: FeedSlot,
+    action: 'save' | 'delete',
+    operation: () => Promise<ActionResult<unknown>>,
+    mode: 'override' | 'default' = 'override',
+  ) => {
+    if (planWritePending.current) return;
+    planWritePending.current = true;
+    setPlanPending({ slot, action, mode });
+    setPlanError(null);
+    try {
+      const result = await operation();
+      if (result.success) {
+        setEditing((current) => action === 'save' || (current?.slot === slot && current.mode === mode) ? null : current);
+      } else {
+        setPlanError({ slot, reason: result.reason });
+      }
+    } catch (error) {
+      console.warn('[feed plan form] Kunde inte spara ändringen', error);
+      setPlanError({
+        slot,
+        reason: action === 'delete'
+          ? 'Foderplanen kunde inte tas bort. Försök igen.'
+          : 'Foderplanen kunde inte sparas. Försök igen.',
+      });
+    } finally {
+      planWritePending.current = false;
+      setPlanPending(null);
+    }
+  };
   const [deviationFor, setDeviationFor] = React.useState<FeedSlot | null>(null);
   const [deviationText, setDeviationText] = React.useState('');
+  const savePending = React.useRef(false);
+  const [savingSlot, setSavingSlot] = React.useState<FeedSlot | null>(null);
+  const [failedSlot, setFailedSlot] = React.useState<FeedSlot | null>(null);
+  const handleCheck = async (slot: FeedSlot, note?: string) => {
+    if (savePending.current) return false;
+    savePending.current = true;
+    setSavingSlot(slot);
+    setFailedSlot(null);
+    try {
+      const saved = await onCheck(slot, note);
+      if (!saved) setFailedSlot(slot);
+      return saved;
+    } finally {
+      savePending.current = false;
+      setSavingSlot(null);
+    }
+  };
 
   return (
     <View style={styles.feedList}>
@@ -578,9 +654,10 @@ function FeedPlanList({
                     styles.feedActionButton,
                     check?.checkedAt ? styles.feedActionButtonMuted : styles.feedActionButtonPrimary,
                   ]}
-                  onPress={() => {
-                    onCheck(slot);
-                  }}
+                  onPress={() => handleCheck(slot)}
+                  disabled={savingSlot !== null}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: savingSlot !== null, busy: savingSlot === slot }}
                   activeOpacity={0.85}
                 >
                   <Feather
@@ -593,13 +670,14 @@ function FeedPlanList({
                       check?.checkedAt ? styles.feedActionButtonTextMuted : styles.feedActionButtonText
                     }
                   >
-                    {check?.checkedAt ? 'Markera om' : 'Markera klart'}
+                    {savingSlot === slot ? 'Sparar…' : check?.checkedAt ? 'Markera om' : 'Markera klart'}
                   </Text>
                 </TouchableOpacity>
               ) : null}
               {canCheck ? (
                 <TouchableOpacity
                   style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+                  disabled={savingSlot !== null}
                   onPress={() => {
                     setDeviationFor(showDeviation ? null : slot);
                     setDeviationText(check?.deviationNote ?? '');
@@ -613,6 +691,8 @@ function FeedPlanList({
               {canEditOverrides ? (
                 <TouchableOpacity
                   style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+                  disabled={planPending !== null}
+                  accessibilityRole="button"
                   onPress={() =>
                     setEditing(
                       isEditingOverride
@@ -631,6 +711,8 @@ function FeedPlanList({
               {canEditDefaults ? (
                 <TouchableOpacity
                   style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+                  disabled={planPending !== null}
+                  accessibilityRole="button"
                   onPress={() =>
                     setEditing(
                       isEditingDefault
@@ -646,23 +728,66 @@ function FeedPlanList({
                   </Text>
                 </TouchableOpacity>
               ) : null}
-              {canEditOverrides && override ? (
+              {canEditDefaults && fallback ? (
                 <TouchableOpacity
                   style={[styles.feedActionButton, styles.feedActionButtonDanger]}
-                  onPress={() => onDelete(override.id)}
+                  disabled={planPending !== null}
+                  accessibilityRole="button"
+                  accessibilityLabel={planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'default' ? 'Tar bort stallplan…' : 'Ta bort stallplan'}
+                  accessibilityState={{ disabled: planPending !== null, busy: planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'default' }}
+                  onPress={async () => {
+                    const confirmed = await confirmAction({
+                      title: 'Ta bort stallplan?',
+                      message: `Detta tar bort standarden för ${feedSlotLabels[slot].toLowerCase()} för alla hästar utan egen plan.`,
+                      confirmLabel: 'Ta bort stallplan',
+                      destructive: true,
+                    });
+                    if (confirmed) await handlePlanWrite(slot, 'delete', () => onDelete(fallback.id), 'default');
+                  }}
                   activeOpacity={0.85}
                 >
                   <Feather name="trash-2" size={14} color={palette.inverseText} />
-                  <Text style={styles.feedActionButtonText}>Ta bort hästplan</Text>
+                  <Text style={styles.feedActionButtonText}>
+                    {planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'default' ? 'Tar bort stallplan…' : 'Ta bort stallplan'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {canEditOverrides && override ? (
+                <TouchableOpacity
+                  style={[styles.feedActionButton, styles.feedActionButtonDanger]}
+                  disabled={planPending !== null}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: planPending !== null, busy: planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'override' }}
+                  onPress={() => handlePlanWrite(slot, 'delete', () => onDelete(override.id))}
+                  activeOpacity={0.85}
+                >
+                  <Feather name="trash-2" size={14} color={palette.inverseText} />
+                  <Text style={styles.feedActionButtonText}>
+                    {planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'override' ? 'Tar bort hästplan…' : 'Ta bort hästplan'}
+                  </Text>
                 </TouchableOpacity>
               ) : null}
             </View>
 
+            {canEditDefaults && fallback ? (
+              <Text style={styles.feedSlotMeta}>Stallplanen gäller alla hästar utan egen plan.</Text>
+            ) : null}
+            {planError?.slot === slot ? (
+              <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>
+                {planError.reason}
+              </Text>
+            ) : null}
+            {failedSlot === slot ? (
+              <Text style={{ color: palette.error, fontSize: 14 }}>
+                Foderkollen kunde inte sparas. Försök igen.
+              </Text>
+            ) : null}
             {showDeviation ? (
               <View style={styles.feedFormBlock}>
                 <Text style={styles.feedFormLabel}>Avvikelseanteckning</Text>
                 <TextInput
                   value={deviationText}
+                  editable={savingSlot === null}
                   onChangeText={setDeviationText}
                   placeholder="Ex. Hösilage tog slut – ersatt med torrhö."
                   placeholderTextColor={palette.secondaryText}
@@ -671,6 +796,7 @@ function FeedPlanList({
                 <View style={styles.feedFormActions}>
                   <TouchableOpacity
                     style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+                    disabled={savingSlot !== null}
                     onPress={() => {
                       setDeviationFor(null);
                       setDeviationText('');
@@ -681,15 +807,19 @@ function FeedPlanList({
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                    onPress={() => {
-                      if (onCheck(slot, deviationText.trim() || undefined)) {
+                    disabled={savingSlot !== null}
+                    accessibilityRole="button"
+                    onPress={async () => {
+                      if (await handleCheck(slot, deviationText.trim() || undefined)) {
                         setDeviationFor(null);
                         setDeviationText('');
                       }
                     }}
                     activeOpacity={0.85}
                   >
-                    <Text style={styles.feedActionButtonText}>Spara avvikelse</Text>
+                    <Text style={styles.feedActionButtonText}>
+                      {savingSlot === slot ? 'Sparar…' : 'Spara avvikelse'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -703,11 +833,9 @@ function FeedPlanList({
                 slot={slot}
                 isStableDefault={editing.mode === 'default'}
                 existing={editing.mode === 'default' ? fallback : override}
+                saving={planPending !== null}
                 onCancel={() => setEditing(null)}
-                onSubmit={(input) => {
-                  const ok = onSave(input);
-                  if (ok) setEditing(null);
-                }}
+                onSubmit={(input) => handlePlanWrite(slot, 'save', () => onSave(input))}
               />
             ) : null}
           </View>
@@ -723,8 +851,9 @@ type FeedPlanFormProps = {
   slot: FeedSlot;
   isStableDefault: boolean;
   existing?: FeedPlanItem;
+  saving: boolean;
   onCancel: () => void;
-  onSubmit: (input: import('@/context/AppDataContext').UpsertFeedPlanInput) => void;
+  onSubmit: (input: import('@/context/AppDataContext').UpsertFeedPlanInput) => Promise<void>;
 };
 
 function FeedPlanForm({
@@ -733,9 +862,11 @@ function FeedPlanForm({
   slot,
   isStableDefault,
   existing,
+  saving,
   onCancel,
   onSubmit,
 }: FeedPlanFormProps) {
+  const [planId] = React.useState(() => existing?.id ?? generateId());
   const [label, setLabel] = React.useState(existing?.label ?? '');
   const [amount, setAmount] = React.useState(existing?.amount ?? '');
   const [note, setNote] = React.useState(existing?.note ?? '');
@@ -747,6 +878,7 @@ function FeedPlanForm({
       </Text>
       <TextInput
         value={label}
+        editable={!saving}
         onChangeText={setLabel}
         placeholder="Titel, t.ex. Morgonfoder"
         placeholderTextColor={palette.secondaryText}
@@ -754,6 +886,7 @@ function FeedPlanForm({
       />
       <TextInput
         value={amount}
+        editable={!saving}
         onChangeText={setAmount}
         placeholder="Mängd, t.ex. 2 kg hösilage"
         placeholderTextColor={palette.secondaryText}
@@ -761,6 +894,7 @@ function FeedPlanForm({
       />
       <TextInput
         value={note}
+        editable={!saving}
         onChangeText={setNote}
         placeholder="Notering (frivillig)"
         placeholderTextColor={palette.secondaryText}
@@ -769,6 +903,8 @@ function FeedPlanForm({
       <View style={styles.feedFormActions}>
         <TouchableOpacity
           style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+          disabled={saving}
+          accessibilityRole="button"
           onPress={onCancel}
           activeOpacity={0.85}
         >
@@ -776,9 +912,12 @@ function FeedPlanForm({
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
+          disabled={saving}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: saving, busy: saving }}
           onPress={() =>
             onSubmit({
-              id: existing?.id,
+              id: planId,
               stableId,
               horseId: isStableDefault ? null : horseId,
               slot,
@@ -791,7 +930,7 @@ function FeedPlanForm({
           }
           activeOpacity={0.85}
         >
-          <Text style={styles.feedActionButtonText}>Spara</Text>
+          <Text style={styles.feedActionButtonText}>{saving ? 'Sparar foderplan…' : 'Spara'}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -804,10 +943,12 @@ type PlannedRidesEditorProps = {
   stable?: Stable;
   rides: PlannedRide[];
   canEdit: boolean;
-  onCreate: (input: import('@/context/AppDataContext').CreatePlannedRideInput) => boolean;
-  onUpdate: (input: import('@/context/AppDataContext').UpdatePlannedRideInput) => boolean;
-  onDelete: (id: string) => boolean;
-  onComplete: (input: import('@/context/AppDataContext').CompletePlannedRideInput) => boolean;
+  canComplete: boolean;
+  logs: RideLogEntry[];
+  onCreate: (input: import('@/context/AppDataContext').CreatePlannedRideInput) => Promise<ActionResult<unknown>>;
+  onUpdate: (input: import('@/context/AppDataContext').UpdatePlannedRideInput) => Promise<ActionResult<unknown>>;
+  onDelete: (id: string) => Promise<ActionResult>;
+  onComplete: (input: import('@/context/AppDataContext').CompletePlannedRideInput) => Promise<ActionResult<unknown>>;
 };
 
 function PlannedRidesEditor({
@@ -816,6 +957,8 @@ function PlannedRidesEditor({
   stable,
   rides,
   canEdit,
+  canComplete,
+  logs,
   onCreate,
   onUpdate,
   onDelete,
@@ -824,6 +967,49 @@ function PlannedRidesEditor({
   const [creating, setCreating] = React.useState(false);
   const [draft, setDraft] = React.useState({ date: '', time: '', rideTypeId: '', note: '' });
   const [completing, setCompleting] = React.useState<{ id: string; length: string; note: string } | null>(null);
+  const newRideId = React.useRef<string | undefined>(undefined);
+  const rideWritePending = React.useRef(false);
+  const [rideSaving, setRideSaving] = React.useState<{ id?: string; deleting: boolean } | null>(null);
+  const [rideError, setRideError] = React.useState<{ id?: string; reason: string } | null>(null);
+  const handleRideWrite = async (operation: () => Promise<ActionResult<unknown>>, id?: string, deleting = false) => {
+    if (rideWritePending.current || completionPending.current) return false;
+    rideWritePending.current = true;
+    setRideSaving({ id, deleting });
+    setRideError(null);
+    try {
+      const result = await operation();
+      if (!result.success) setRideError({ id, reason: result.reason });
+      return result.success;
+    } catch (error) {
+      console.warn('[planned ride form] Kunde inte spara ridpass', error);
+      setRideError({ id, reason: 'Ridpasset kunde inte sparas. Försök igen.' });
+      return false;
+    } finally {
+      rideWritePending.current = false;
+      setRideSaving(null);
+    }
+  };
+  const completionPending = React.useRef(false);
+  const [completionSaving, setCompletionSaving] = React.useState(false);
+  const [completionError, setCompletionError] = React.useState<string | null>(null);
+  const handleComplete = async () => {
+    if (!completing || completionPending.current || rideWritePending.current) return;
+    completionPending.current = true;
+    setCompletionSaving(true);
+    setCompletionError(null);
+    try {
+      const result = await onComplete(completing);
+      if (result.success) setCompleting(null);
+      else setCompletionError(result.reason);
+    } catch (error) {
+      console.warn('[planned ride form] Kunde inte logga ridpass', error);
+      setCompletionError('Ridpasset kunde inte loggas. Försök igen.');
+    } finally {
+      completionPending.current = false;
+      setCompletionSaving(false);
+    }
+  };
+  const isBusy = completionSaving || rideSaving !== null;
   const sortedRides = React.useMemo(
     () =>
       [...rides].sort((a, b) => {
@@ -842,6 +1028,7 @@ function PlannedRidesEditor({
         sortedRides.map((ride) => {
           const rideType = rideTypes.find((item) => item.id === ride.rideTypeId);
           const isCompleting = completing?.id === ride.id;
+          const savedLog = logs.find((log) => log.id === (ride.completedRideLogId ?? ride.id));
           return (
             <View key={ride.id} style={styles.plannedRideCard}>
               <View style={styles.plannedRideHeader}>
@@ -868,28 +1055,32 @@ function PlannedRidesEditor({
               </View>
               {canEdit && ride.status !== 'done' ? (
                 <View style={styles.plannedRideActions}>
-                  <TouchableOpacity
+                  {canComplete ? <TouchableOpacity
                     style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                    onPress={() =>
-                      setCompleting(
-                        isCompleting ? null : { id: ride.id, length: '', note: ride.note ?? '' },
-                      )
-                    }
+                    disabled={isBusy}
+                    onPress={() => {
+                      setCompletionError(null);
+                      setCompleting(isCompleting ? null : {
+                        id: ride.id, length: savedLog?.length ?? '', note: savedLog?.note ?? ride.note ?? '',
+                      });
+                    }}
                     activeOpacity={0.85}
                   >
                     <Feather name="check" size={14} color={palette.inverseText} />
                     <Text style={styles.feedActionButtonText}>Slutför ridpass</Text>
-                  </TouchableOpacity>
+                  </TouchableOpacity> : null}
                   <TouchableOpacity
                     style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
-                    onPress={() => onUpdate({ id: ride.id, updates: { status: 'cancelled' } })}
+                    disabled={isBusy}
+                    onPress={() => handleRideWrite(() => onUpdate({ id: ride.id, updates: { status: 'cancelled' } }), ride.id)}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.feedActionButtonTextSecondary}>Avboka</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.feedActionButton, styles.feedActionButtonDanger]}
-                    onPress={() => onDelete(ride.id)}
+                    disabled={isBusy}
+                    onPress={() => handleRideWrite(() => onDelete(ride.id), ride.id, true)}
                     activeOpacity={0.85}
                   >
                     <Feather name="trash-2" size={14} color={palette.inverseText} />
@@ -897,11 +1088,19 @@ function PlannedRidesEditor({
                   </TouchableOpacity>
                 </View>
               ) : null}
-              {isCompleting ? (
+              {rideSaving?.id === ride.id ? (
+                <Text>{rideSaving.deleting ? 'Tar bort ridpass…' : 'Sparar ridpass…'}</Text>
+              ) : null}
+              {rideError?.id === ride.id ? (
+                <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>{rideError.reason}</Text>
+              ) : null}
+              {isCompleting && canComplete ? (
                 <View style={styles.feedFormBlock}>
                   <Text style={styles.feedFormLabel}>Logga ridpasset</Text>
+                  {savedLog ? <Text>Ridloggen är redan sparad. Markera det planerade passet som klart.</Text> : null}
                   <TextInput
                     value={completing?.length ?? ''}
+                    editable={!isBusy && !savedLog}
                     onChangeText={(text) =>
                       setCompleting((prev) => (prev ? { ...prev, length: text } : prev))
                     }
@@ -911,6 +1110,7 @@ function PlannedRidesEditor({
                   />
                   <TextInput
                     value={completing?.note ?? ''}
+                    editable={!isBusy && !savedLog}
                     onChangeText={(text) =>
                       setCompleting((prev) => (prev ? { ...prev, note: text } : prev))
                     }
@@ -918,30 +1118,27 @@ function PlannedRidesEditor({
                     placeholderTextColor={palette.secondaryText}
                     style={styles.feedFormInput}
                   />
+                  {completionError ? (
+                    <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>{completionError}</Text>
+                  ) : null}
                   <View style={styles.feedFormActions}>
                     <TouchableOpacity
                       style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
-                      onPress={() => setCompleting(null)}
+                      disabled={isBusy}
+                      onPress={() => { setCompleting(null); setCompletionError(null); }}
                       activeOpacity={0.85}
                     >
                       <Text style={styles.feedActionButtonTextSecondary}>Avbryt</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                      onPress={() => {
-                        if (
-                          onComplete({
-                            id: ride.id,
-                            length: completing?.length,
-                            note: completing?.note,
-                          })
-                        ) {
-                          setCompleting(null);
-                        }
-                      }}
+                      disabled={isBusy}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: completionSaving, busy: completionSaving }}
+                      onPress={handleComplete}
                       activeOpacity={0.85}
                     >
-                      <Text style={styles.feedActionButtonText}>Logga ridpass klart</Text>
+                      <Text style={styles.feedActionButtonText}>{completionSaving ? 'Loggar ridpass…' : savedLog ? 'Markera passet klart' : 'Logga ridpass klart'}</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -959,6 +1156,7 @@ function PlannedRidesEditor({
             <Text style={styles.feedFormLabel}>Nytt ridpass</Text>
             <TextInput
               value={draft.date}
+              editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
               placeholder="Datum (YYYY-MM-DD)"
               placeholderTextColor={palette.secondaryText}
@@ -966,6 +1164,7 @@ function PlannedRidesEditor({
             />
             <TextInput
               value={draft.time}
+              editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
               placeholder="Tid (HH:MM, frivillig)"
               placeholderTextColor={palette.secondaryText}
@@ -978,6 +1177,7 @@ function PlannedRidesEditor({
                   return (
                     <TouchableOpacity
                       key={type.id}
+                      disabled={isBusy}
                       onPress={() =>
                         setDraft((prev) => ({
                           ...prev,
@@ -1004,16 +1204,22 @@ function PlannedRidesEditor({
             ) : null}
             <TextInput
               value={draft.note}
+              editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, note: text }))}
               placeholder="Notering (frivillig)"
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
+            {rideError && !rideError.id ? (
+              <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>{rideError.reason}</Text>
+            ) : null}
             <View style={styles.feedFormActions}>
               <TouchableOpacity
                 style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
+                disabled={isBusy}
                 onPress={() => {
                   setCreating(false);
+                  setRideError(null);
                   setDraft({ date: '', time: '', rideTypeId: '', note: '' });
                 }}
                 activeOpacity={0.85}
@@ -1022,16 +1228,18 @@ function PlannedRidesEditor({
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                onPress={() => {
-                  if (!draft.date.trim()) return;
-                  const ok = onCreate({
+                disabled={isBusy}
+                accessibilityRole="button"
+                onPress={async () => {
+                  const ok = await handleRideWrite(() => onCreate({
+                    requestId: newRideId.current,
                     stableId,
                     horseId,
                     date: draft.date.trim(),
                     time: draft.time.trim() || undefined,
                     rideTypeId: draft.rideTypeId || undefined,
                     note: draft.note.trim() || undefined,
-                  });
+                  }));
                   if (ok) {
                     setCreating(false);
                     setDraft({ date: '', time: '', rideTypeId: '', note: '' });
@@ -1039,14 +1247,15 @@ function PlannedRidesEditor({
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={styles.feedActionButtonText}>Lägg till</Text>
+                <Text style={styles.feedActionButtonText}>{rideSaving && !rideSaving.id ? 'Sparar ridpass…' : 'Lägg till'}</Text>
               </TouchableOpacity>
             </View>
           </View>
         ) : (
           <TouchableOpacity
             style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
-            onPress={() => setCreating(true)}
+            disabled={isBusy}
+            onPress={() => { newRideId.current = generateId(); setRideError(null); setCreating(true); }}
             activeOpacity={0.85}
           >
             <Feather name="plus" size={14} color={palette.primaryText} />
@@ -1082,10 +1291,10 @@ type CareEventsEditorProps = {
   events: CareEvent[];
   contacts: ExternalContact[];
   canEdit: boolean;
-  onCreate: (input: import('@/context/AppDataContext').CreateCareEventInput) => boolean;
-  onComplete: (input: import('@/context/AppDataContext').CompleteCareEventInput) => boolean;
-  onCancel: (id: string) => boolean;
-  onDelete: (id: string) => boolean;
+  onCreate: (input: import('@/context/AppDataContext').CreateCareEventInput) => Promise<ActionResult<unknown>>;
+  onComplete: (input: import('@/context/AppDataContext').CompleteCareEventInput) => Promise<ActionResult<unknown>>;
+  onCancel: (id: string) => Promise<ActionResult<unknown>>;
+  onDelete: (id: string) => Promise<ActionResult>;
 };
 
 function CareEventsEditor({
@@ -1100,6 +1309,28 @@ function CareEventsEditor({
   onDelete,
 }: CareEventsEditorProps) {
   const [creating, setCreating] = React.useState(false);
+  const newEventId = React.useRef<string | undefined>(undefined);
+  const writePending = React.useRef(false);
+  const [saving, setSaving] = React.useState<{ id?: string; deleting: boolean } | null>(null);
+  const [saveError, setSaveError] = React.useState<{ id?: string; reason: string } | null>(null);
+  const handleWrite = async (operation: () => Promise<ActionResult<unknown>>, id?: string, deleting = false) => {
+    if (writePending.current) return false;
+    writePending.current = true;
+    setSaving({ id, deleting });
+    setSaveError(null);
+    try {
+      const result = await operation();
+      if (!result.success) setSaveError({ id, reason: result.reason });
+      return result.success;
+    } catch (error) {
+      console.warn('[care event form] Kunde inte spara vårdhändelse', error);
+      setSaveError({ id, reason: 'Vårdhändelsen kunde inte sparas. Försök igen.' });
+      return false;
+    } finally {
+      writePending.current = false;
+      setSaving(null);
+    }
+  };
   const [completingId, setCompletingId] = React.useState<string | null>(null);
   const [completeNote, setCompleteNote] = React.useState('');
   const [draft, setDraft] = React.useState<{
@@ -1150,6 +1381,8 @@ function CareEventsEditor({
         {canEdit && event.status === 'planned' ? (
           <View style={styles.plannedRideActions}>
             <TouchableOpacity
+              disabled={saving !== null}
+              accessibilityRole="button"
               style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
               onPress={() => {
                 if (isCompleting) {
@@ -1166,15 +1399,19 @@ function CareEventsEditor({
               <Text style={styles.feedActionButtonText}>Slutför vård</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              disabled={saving !== null}
+              accessibilityRole="button"
               style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
-              onPress={() => onCancel(event.id)}
+              onPress={() => handleWrite(() => onCancel(event.id), event.id)}
               activeOpacity={0.85}
             >
               <Text style={styles.feedActionButtonTextSecondary}>Avboka</Text>
             </TouchableOpacity>
             <TouchableOpacity
+              disabled={saving !== null}
+              accessibilityRole="button"
               style={[styles.feedActionButton, styles.feedActionButtonDanger]}
-              onPress={() => onDelete(event.id)}
+              onPress={() => handleWrite(() => onDelete(event.id), event.id, true)}
               activeOpacity={0.85}
             >
               <Feather name="trash-2" size={14} color={palette.inverseText} />
@@ -1182,10 +1419,17 @@ function CareEventsEditor({
             </TouchableOpacity>
           </View>
         ) : null}
+        {saving?.id === event.id ? (
+          <Text>{saving.deleting ? 'Tar bort vårdhändelse…' : 'Sparar vårdhändelse…'}</Text>
+        ) : null}
+        {saveError?.id === event.id ? (
+          <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>{saveError.reason}</Text>
+        ) : null}
         {isCompleting ? (
           <View style={styles.feedFormBlock}>
             <Text style={styles.feedFormLabel}>Slutkommentar</Text>
             <TextInput
+              editable={saving === null}
               value={completeNote}
               onChangeText={setCompleteNote}
               placeholder="Notering, t.ex. nya skor, dosering, datum för uppföljning"
@@ -1194,6 +1438,8 @@ function CareEventsEditor({
             />
             <View style={styles.feedFormActions}>
               <TouchableOpacity
+                disabled={saving !== null}
+                accessibilityRole="button"
                 style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
                 onPress={() => {
                   setCompletingId(null);
@@ -1204,14 +1450,14 @@ function CareEventsEditor({
                 <Text style={styles.feedActionButtonTextSecondary}>Avbryt</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                disabled={saving !== null}
+                accessibilityRole="button"
                 style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                onPress={() => {
-                  if (
-                    onComplete({
-                      id: event.id,
-                      note: completeNote.trim() || undefined,
-                    })
-                  ) {
+                onPress={async () => {
+                  if (await handleWrite(() => onComplete({
+                    id: event.id,
+                    note: completeNote.trim() || undefined,
+                  }), event.id)) {
                     setCompletingId(null);
                     setCompleteNote('');
                   }
@@ -1257,6 +1503,8 @@ function CareEventsEditor({
                 const active = draft.type === type;
                 return (
                   <TouchableOpacity
+                    disabled={saving !== null}
+                    accessibilityRole="button"
                     key={type}
                     onPress={() => setDraft((prev) => ({ ...prev, type }))}
                     style={[
@@ -1277,6 +1525,7 @@ function CareEventsEditor({
               })}
             </View>
             <TextInput
+              editable={saving === null}
               value={draft.title}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, title: text }))}
               placeholder="Titel, t.ex. Skoning"
@@ -1284,6 +1533,7 @@ function CareEventsEditor({
               style={styles.feedFormInput}
             />
             <TextInput
+              editable={saving === null}
               value={draft.date}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
               placeholder="Datum (YYYY-MM-DD)"
@@ -1291,6 +1541,7 @@ function CareEventsEditor({
               style={styles.feedFormInput}
             />
             <TextInput
+              editable={saving === null}
               value={draft.time}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
               placeholder="Tid (HH:MM, frivillig)"
@@ -1300,6 +1551,8 @@ function CareEventsEditor({
             {contacts.length ? (
               <View style={styles.rideTypeRow}>
                 <TouchableOpacity
+                  disabled={saving !== null}
+                  accessibilityRole="button"
                   onPress={() => setDraft((prev) => ({ ...prev, contactId: '' }))}
                   style={[
                     styles.feedActionButton,
@@ -1323,6 +1576,8 @@ function CareEventsEditor({
                   const active = draft.contactId === contact.id;
                   return (
                     <TouchableOpacity
+                      disabled={saving !== null}
+                      accessibilityRole="button"
                       key={contact.id}
                       onPress={() =>
                         setDraft((prev) => ({
@@ -1349,14 +1604,20 @@ function CareEventsEditor({
               </View>
             ) : null}
             <TextInput
+              editable={saving === null}
               value={draft.note}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, note: text }))}
               placeholder="Notering (frivillig)"
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
+            {saveError && !saveError.id ? (
+              <Text accessibilityRole="alert" style={{ color: palette.error, fontSize: 14 }}>{saveError.reason}</Text>
+            ) : null}
             <View style={styles.feedFormActions}>
               <TouchableOpacity
+                disabled={saving !== null}
+                accessibilityRole="button"
                 style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
                 onPress={() => {
                   setCreating(false);
@@ -1367,10 +1628,12 @@ function CareEventsEditor({
                 <Text style={styles.feedActionButtonTextSecondary}>Avbryt</Text>
               </TouchableOpacity>
               <TouchableOpacity
+                disabled={saving !== null}
+                accessibilityRole="button"
                 style={[styles.feedActionButton, styles.feedActionButtonPrimary]}
-                onPress={() => {
-                  if (!draft.title.trim() || !draft.date.trim()) return;
-                  const ok = onCreate({
+                onPress={async () => {
+                  const ok = await handleWrite(() => onCreate({
+                    requestId: newEventId.current,
                     stableId,
                     horseIds: [horseId],
                     type: draft.type,
@@ -1379,7 +1642,7 @@ function CareEventsEditor({
                     time: draft.time.trim() || undefined,
                     contactId: draft.contactId || undefined,
                     note: draft.note.trim() || undefined,
-                  });
+                  }));
                   if (ok) {
                     setCreating(false);
                     setDraft({ type: 'farrier', title: '', date: '', time: '', contactId: '', note: '' });
@@ -1387,14 +1650,16 @@ function CareEventsEditor({
                 }}
                 activeOpacity={0.85}
               >
-                <Text style={styles.feedActionButtonText}>Skapa vårdhändelse</Text>
+                <Text style={styles.feedActionButtonText}>{saving && !saving.id ? 'Sparar vårdhändelse…' : 'Skapa vårdhändelse'}</Text>
               </TouchableOpacity>
             </View>
           </View>
         ) : (
           <TouchableOpacity
+            disabled={saving !== null}
+            accessibilityRole="button"
             style={[styles.feedActionButton, styles.feedActionButtonSecondary]}
-            onPress={() => setCreating(true)}
+            onPress={() => { newEventId.current = generateId(); setSaveError(null); setCreating(true); }}
             activeOpacity={0.85}
           >
             <Feather name="plus" size={14} color={palette.primaryText} />

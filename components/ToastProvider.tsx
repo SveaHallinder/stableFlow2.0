@@ -1,5 +1,5 @@
 import React from 'react';
-import { Animated, StyleSheet, Text, View, Easing, Platform } from 'react-native';
+import { AccessibilityInfo, Animated, StyleSheet, Text, View, Easing, Platform } from 'react-native';
 import { color, radius, space } from '@/design/tokens';
 import { systemPalette } from '@/design/system';
 
@@ -18,6 +18,7 @@ type ToastContextValue = {
 const ToastContext = React.createContext<ToastContextValue | undefined>(undefined);
 
 const DEFAULT_DURATION = 2400;
+const ERROR_DURATION = 6000;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
@@ -33,15 +34,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const showToast = React.useCallback(
-    (message: string, type: ToastType = 'info', durationMs = DEFAULT_DURATION) => {
+    (message: string, type: ToastType = 'info', durationMs?: number) => {
       const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const toast: ToastRecord = { id, message, type };
       setToasts((prev) => [...prev, toast]);
+      if (Platform.OS !== 'web') {
+        AccessibilityInfo.announceForAccessibility(message);
+      }
 
       setTimeout(() => {
         setDismissingIds((prev) => new Set(prev).add(id));
         setTimeout(() => removeToast(id), 200);
-      }, durationMs);
+      }, durationMs ?? (type === 'error' ? ERROR_DURATION : DEFAULT_DURATION));
     },
     [removeToast],
   );
@@ -65,9 +69,22 @@ export function useToast() {
 function ToastViewport({ toasts, dismissing }: { toasts: ToastRecord[]; dismissing: Set<string> }) {
   return (
     <View pointerEvents="none" style={styles.viewport}>
-      {toasts.map((toast) => (
-        <ToastItem key={toast.id} toast={toast} isDismissing={dismissing.has(toast.id)} />
-      ))}
+      {Platform.OS === 'web' ? (
+        <>
+          <View aria-live="assertive" style={styles.toastGroup}>
+            {toasts.filter((toast) => toast.type === 'error').map((toast) => (
+              <ToastItem key={toast.id} toast={toast} isDismissing={dismissing.has(toast.id)} />
+            ))}
+          </View>
+          <View aria-live="polite" style={styles.toastGroup}>
+            {toasts.filter((toast) => toast.type !== 'error').map((toast) => (
+              <ToastItem key={toast.id} toast={toast} isDismissing={dismissing.has(toast.id)} />
+            ))}
+          </View>
+        </>
+      ) : toasts.map((toast) => (
+          <ToastItem key={toast.id} toast={toast} isDismissing={dismissing.has(toast.id)} />
+        ))}
     </View>
   );
 }
@@ -148,6 +165,9 @@ const styles = StyleSheet.create({
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 12 },
     elevation: 4,
+  },
+  toastGroup: {
+    gap: 8,
   },
   toastText: {
     fontSize: 13,

@@ -6,7 +6,17 @@ export type GroupedAssignmentDay = {
   assignments: Assignment[];
 };
 
-const SHORT_WEEKDAY_FORMATTER = new Intl.DateTimeFormat('en-GB', { weekday: 'short' });
+const SHORT_WEEKDAY_FORMATTER = new Intl.DateTimeFormat('sv-SE', { weekday: 'short' });
+
+export function fillWeekDays(start: Date, days: GroupedAssignmentDay[]): GroupedAssignmentDay[] {
+  const byDate = new Map(days.map((day) => [day.isoDate, day]));
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const isoDate = toISODate(date);
+    return byDate.get(isoDate) ?? { isoDate, date, assignments: [] };
+  });
+}
 
 export function groupAssignmentsByDay(assignments: Assignment[]): GroupedAssignmentDay[] {
   const map = new Map<string, GroupedAssignmentDay>();
@@ -31,7 +41,7 @@ export function groupAssignmentsByDay(assignments: Assignment[]): GroupedAssignm
 }
 
 export function formatShortWeekday(date: Date) {
-  return SHORT_WEEKDAY_FORMATTER.format(date);
+  return SHORT_WEEKDAY_FORMATTER.format(date).replace('.', '');
 }
 
 export function formatDayNumber(date: Date) {

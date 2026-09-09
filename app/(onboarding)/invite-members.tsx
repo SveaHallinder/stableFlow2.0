@@ -1,3 +1,5 @@
+import { InviteReceipt } from '@/components/InviteReceipt';
+import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -110,7 +112,7 @@ export default function OnboardingMembers() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, users } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
@@ -118,9 +120,14 @@ export default function OnboardingMembers() {
     fallbackStableId ? [fallbackStableId] : [],
   );
   const [roleId, setRoleId] = React.useState(roleOptions[3]?.id ?? roleOptions[0].id);
+  const [savingInvite, setSavingInvite] = React.useState(false);
+  const savingInviteRef = React.useRef(false);
+  const [inviteReceipt, setInviteReceipt] = React.useState<InviteConfirmation | null>(null);
+  const [inviteError, setInviteError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState({ name: '', email: '', phone: '' });
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
       router.replace('/(onboarding)/create-stable');
       return;
@@ -128,7 +135,7 @@ export default function OnboardingMembers() {
     if (!selectedStableIds.length && fallbackStableId) {
       setSelectedStableIds([fallbackStableId]);
     }
-  }, [fallbackStableId, router, selectedStableIds.length, stables.length]);
+  }, [fallbackStableId, router, selectedStableIds.length, stables.length, hydrating]);
 
   const selectedRole = React.useMemo(
     () => roleOptions.find((option) => option.id === roleId) ?? roleOptions[0],
@@ -174,7 +181,8 @@ export default function OnboardingMembers() {
     return memberIds.size;
   }, [selectedStableIds, users]);
 
-  const handleInvite = React.useCallback(() => {
+  const handleInvite = React.useCallback(async () => {
+    if (savingInviteRef.current) return;
     if (!selectedStableIds.length) {
       toast.showToast('Välj minst ett stall.', 'error');
       return;
@@ -185,7 +193,10 @@ export default function OnboardingMembers() {
       toast.showToast('Namn och epost krävs.', 'error');
       return;
     }
-    const result = actions.addMember({
+    savingInviteRef.current = true;
+    setSavingInvite(true);
+    setInviteError(null);
+    const result = await actions.addMember({
       name,
       email,
       phone: draft.phone.trim() || undefined,
@@ -196,7 +207,10 @@ export default function OnboardingMembers() {
       access: selectedRole.access,
       riderRole: selectedRole.riderRole,
     });
+    savingInviteRef.current = false;
+    setSavingInvite(false);
     if (result.success) {
+      setInviteReceipt(result.data ?? null);
       if (result.data?.inviteCode) {
         toast.showToast(`Inbjudningskod ${result.data.inviteCode}`, 'success');
       } else {
@@ -204,7 +218,7 @@ export default function OnboardingMembers() {
       }
       setDraft({ name: '', email: '', phone: '' });
       for (const stableId of selectedStableIds) {
-        const settingsUpdate = actions.updateStable({
+        const settingsUpdate = await actions.updateStable({
           id: stableId,
           updates: { settings: { onboarding: { membersComplete: true } } },
         });
@@ -213,6 +227,7 @@ export default function OnboardingMembers() {
         }
       }
     } else {
+      setInviteError(result.reason);
       toast.showToast(result.reason, 'error');
     }
   }, [actions, draft.email, draft.name, draft.phone, selectedRole, selectedStableIds, toast]);
@@ -233,6 +248,7 @@ export default function OnboardingMembers() {
       total={6}
       allowExit={false}
       onNext={handleBack}
+      disableNext={savingInvite}
       nextLabel="Tillbaka"
       showProgress
     >
@@ -240,7 +256,7 @@ export default function OnboardingMembers() {
         <Text style={styles.sectionTitle}>Välj stall</Text>
         <View style={styles.chipRow}>
           {stables.length > 1 ? (
-            <TouchableOpacity
+            <TouchableOpacity disabled={savingInvite}
               style={[styles.chip, allSelected && styles.chipActive]}
               onPress={handleToggleAll}
               activeOpacity={0.85}
@@ -251,7 +267,7 @@ export default function OnboardingMembers() {
           {stables.map((stable) => {
             const active = selectedStableIds.includes(stable.id);
             return (
-              <TouchableOpacity
+              <TouchableOpacity disabled={savingInvite}
                 key={stable.id}
                 style={[styles.chip, active && styles.chipActive]}
                 onPress={() => handleToggleStable(stable.id)}
@@ -271,7 +287,7 @@ export default function OnboardingMembers() {
           {roleOptions.map((option) => {
             const active = roleId === option.id;
             return (
-              <TouchableOpacity
+              <TouchableOpacity disabled={savingInvite}
                 key={option.id}
                 style={[styles.roleCard, active && styles.roleCardActive]}
                 onPress={() => setRoleId(option.id)}
@@ -287,14 +303,14 @@ export default function OnboardingMembers() {
 
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Bjud in</Text>
-        <TextInput
+        <TextInput editable={!savingInvite}
           placeholder="Namn"
           placeholderTextColor={palette.mutedText}
           value={draft.name}
           onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
           style={styles.input}
         />
-        <TextInput
+        <TextInput editable={!savingInvite}
           placeholder="Epost"
           placeholderTextColor={palette.mutedText}
           value={draft.email}
@@ -303,7 +319,7 @@ export default function OnboardingMembers() {
           keyboardType="email-address"
           autoCapitalize="none"
         />
-        <TextInput
+        <TextInput editable={!savingInvite}
           placeholder="Telefon (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.phone}
@@ -311,8 +327,10 @@ export default function OnboardingMembers() {
           style={styles.input}
           keyboardType="phone-pad"
         />
-        <TouchableOpacity style={styles.primaryButton} onPress={handleInvite} activeOpacity={0.9}>
-          <Text style={styles.primaryLabel}>Skicka inbjudan</Text>
+        <InviteReceipt confirmation={inviteReceipt} />
+        {inviteError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{inviteError}</Text>}
+        <TouchableOpacity disabled={savingInvite} style={styles.primaryButton} onPress={handleInvite} activeOpacity={0.9}>
+          <Text style={styles.primaryLabel}>{savingInvite ? 'Skapar inbjudan…' : 'Skapa inbjudan'}</Text>
         </TouchableOpacity>
       </Card>
     </OnboardingShell>
