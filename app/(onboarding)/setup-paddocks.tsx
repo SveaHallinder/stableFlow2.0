@@ -8,6 +8,8 @@ import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
+import { generateId } from '@/lib/ids';
+import { confirmAction } from '@/lib/confirm';
 
 const palette = theme.colors;
 
@@ -16,7 +18,7 @@ export default function OnboardingPaddocks() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, horses, paddocks } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
@@ -31,10 +33,15 @@ export default function OnboardingPaddocks() {
   );
 
   const [draft, setDraft] = React.useState({ name: '', horseIds: [] as string[] });
+  const savingPaddockRef = React.useRef(false);
+  const newPaddockIdRef = React.useRef<string | null>(null);
+  const [paddockPending, setPaddockPending] = React.useState<'save' | 'delete' | null>(null);
+  const [paddockError, setPaddockError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!activeStableId && fallbackStableId) {
@@ -43,10 +50,13 @@ export default function OnboardingPaddocks() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
+      if (savingPaddockRef.current) return;
+      newPaddockIdRef.current = null;
+      setPaddockError(null);
       setActiveStableId(stableId);
       actions.setCurrentStable(stableId);
       setDraft({ name: '', horseIds: [] });
@@ -64,7 +74,8 @@ export default function OnboardingPaddocks() {
     });
   }, []);
 
-  const handleAddPaddock = React.useCallback(() => {
+  const handleAddPaddock = React.useCallback(async () => {
+    if (savingPaddockRef.current) return;
     if (!activeStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -77,31 +88,44 @@ export default function OnboardingPaddocks() {
     const horseNames = stableHorses
       .filter((horse) => draft.horseIds.includes(horse.id))
       .map((horse) => horse.name);
-    const result = actions.upsertPaddock({
+    savingPaddockRef.current = true;
+    setPaddockPending('save');
+    setPaddockError(null);
+    newPaddockIdRef.current ??= generateId();
+    const result = await actions.upsertPaddock({
+      id: newPaddockIdRef.current,
       stableId: activeStableId,
       name,
       horseNames,
       season: 'yearRound',
     });
+    savingPaddockRef.current = false;
+    setPaddockPending(null);
     if (result.success) {
+      newPaddockIdRef.current = null;
       toast.showToast('Hage sparad.', 'success');
       setDraft({ name: '', horseIds: [] });
     } else {
-      toast.showToast(result.reason, 'error');
+      setPaddockError(result.reason);
     }
   }, [actions, activeStableId, draft.horseIds, draft.name, stableHorses, toast]);
 
-  const handleDeletePaddock = React.useCallback(
-    (paddockId: string) => {
-      const result = actions.deletePaddock(paddockId);
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      } else {
-        toast.showToast('Hage borttagen.', 'success');
-      }
-    },
-    [actions, toast],
-  );
+  const handleDeletePaddock = React.useCallback(async (paddockId: string) => {
+    if (savingPaddockRef.current) return;
+    savingPaddockRef.current = true;
+    try {
+      const confirmed = await confirmAction({ title: 'Ta bort hage?', message: 'Detta går inte att ångra.', confirmLabel: 'Ta bort', destructive: true });
+      if (!confirmed) return;
+      setPaddockPending('delete');
+      setPaddockError(null);
+      const result = await actions.deletePaddock(paddockId);
+      if (result.success) toast.showToast('Hage borttagen.', 'success');
+      else setPaddockError(result.reason);
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
+    }
+  }, [actions, toast]);
 
   const handleBack = React.useCallback(() => {
     if (returnTo) {
@@ -117,6 +141,7 @@ export default function OnboardingPaddocks() {
       subtitle="Valfritt: Koppla hästar till hagar. Du kan göra det senare."
       step={8}
       total={10}
+      disableNext={Boolean(paddockPending)}
       onNext={handleBack}
       nextLabel="Klar"
       showProgress={false}
@@ -131,6 +156,7 @@ export default function OnboardingPaddocks() {
                 <TouchableOpacity
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
+                  disabled={Boolean(paddockPending)}
                   onPress={() => handleSelectStable(stable.id)}
                   activeOpacity={0.85}
                 >
@@ -144,9 +170,12 @@ export default function OnboardingPaddocks() {
 
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Ny hage</Text>
+        {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
+        {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
         <TextInput
           placeholder="Namn på hage"
           placeholderTextColor={palette.mutedText}
+          editable={!paddockPending}
           value={draft.name}
           onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
           style={styles.input}
@@ -159,6 +188,7 @@ export default function OnboardingPaddocks() {
               <TouchableOpacity
                 key={horse.id}
                 style={[styles.chip, active && styles.chipActive]}
+                disabled={Boolean(paddockPending)}
                 onPress={() => handleToggleHorse(horse.id)}
                 activeOpacity={0.85}
               >
@@ -170,7 +200,7 @@ export default function OnboardingPaddocks() {
             <Text style={styles.emptyText}>Lägg till hästar först.</Text>
           ) : null}
         </View>
-        <TouchableOpacity style={styles.primaryButton} onPress={handleAddPaddock} activeOpacity={0.9}>
+        <TouchableOpacity style={styles.primaryButton} disabled={Boolean(paddockPending)} onPress={handleAddPaddock} activeOpacity={0.9}>
           <Text style={styles.primaryLabel}>Spara hage</Text>
         </TouchableOpacity>
       </Card>
@@ -187,7 +217,10 @@ export default function OnboardingPaddocks() {
                 </Text>
               </View>
               <TouchableOpacity
-                style={styles.iconButton}
+                style={[styles.iconButton, { minWidth: 44, minHeight: 44 }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Ta bort ${paddock.name}`}
+                disabled={Boolean(paddockPending)}
                 onPress={() => handleDeletePaddock(paddock.id)}
                 activeOpacity={0.85}
               >

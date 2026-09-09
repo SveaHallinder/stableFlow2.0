@@ -1,3 +1,5 @@
+import { generateId } from '@/lib/ids';
+import { confirmAction } from '@/lib/confirm';
 import React from 'react';
 import {
   KeyboardAvoidingView,
@@ -18,6 +20,7 @@ import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { theme } from '@/components/theme';
 import { Card, Pill } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData, resolveStableSettings, stripAssignmentNoteMetadata } from '@/context/AppDataContext';
@@ -39,8 +42,10 @@ import type {
 } from '@/context/AppDataContext';
 import {
   groupAssignmentsByDay,
+  fillWeekDays,
   formatShortWeekday,
   formatDayNumber,
+  findInitialWeekIndex,
   generateDateOptions,
   type GroupedAssignmentDay,
   toISODate,
@@ -53,8 +58,17 @@ const palette = theme.colors;
 const statusColors = theme.status;
 const gradients = theme.gradients;
 
-const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling'] as const;
+const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling', 'Vård'] as const;
 type Filter = (typeof filters)[number];
+
+const careEventTypeLabels = {
+  farrier: 'Hovslagare',
+  vet: 'Veterinär',
+  vaccination: 'Vaccination',
+  dental: 'Tandvård',
+  treatment: 'Behandling',
+  other: 'Annat',
+} as const;
 
 type PassView = 'all' | 'mine' | 'open';
 
@@ -77,6 +91,7 @@ const filterLabels: Record<Filter, string> = {
   Riddagar: 'Ridschema',
   Ridhus: 'Ridhus',
   Tävling: 'Tävling',
+  Vård: 'Vård',
 };
 
 const passViewOptions: { id: PassView; label: string }[] = [
@@ -199,6 +214,9 @@ function resolveFilterFromSection(raw?: string | string[]): Filter | undefined {
   if (value === 'pass') {
     return 'Pass';
   }
+  if (value === 'care') {
+    return 'Vård';
+  }
   return undefined;
 }
 
@@ -267,7 +285,6 @@ export default function CalendarScreen() {
     fromOnboarding?: string | string[];
     returnTo?: string | string[];
   }>();
-  const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
   const { permissions } = derived;
   const canManageOnboarding = permissions.canManageOnboarding;
@@ -305,6 +322,12 @@ export default function CalendarScreen() {
     note?: string;
     assignToMe?: boolean;
   }>({ visible: false, mode: 'create' });
+  const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
+  const savingAssignmentIdsRef = React.useRef(new Set<string>());
+  const [savingAssignmentIds, setSavingAssignmentIds] = React.useState<Set<string>>(() => new Set());
+  const [assignmentSaveErrors, setAssignmentSaveErrors] = React.useState<Record<string, string>>({});
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
   const toast = useToast();
@@ -326,6 +349,13 @@ export default function CalendarScreen() {
   const [categoryIndex, setCategoryIndex] = React.useState(0);
   const [monthCursor, setMonthCursor] = React.useState(() => startOfMonth(new Date()));
   const [arenaModalVisible, setArenaModalVisible] = React.useState(false);
+  const [arenaSaving, setArenaSaving] = React.useState(false);
+  const arenaSavingRef = React.useRef(false);
+  const arenaRequestIdRef = React.useRef<string | null>(null);
+  const [arenaSaveError, setArenaSaveError] = React.useState<string | null>(null);
+  const [arenaDeletingId, setArenaDeletingId] = React.useState<string | null>(null);
+  const arenaDeletingRef = React.useRef(false);
+  const [arenaDeleteError, setArenaDeleteError] = React.useState<{ id: string; reason: string } | null>(null);
   const [arenaForm, setArenaForm] = React.useState(() => ({
     date: toISODate(new Date()),
     startTime: '',
@@ -334,6 +364,12 @@ export default function CalendarScreen() {
     note: '',
   }));
   const [dayEventModalVisible, setDayEventModalVisible] = React.useState(false);
+  const [noticeSaving, setNoticeSaving] = React.useState(false);
+  const noticeSavingRef = React.useRef(false);
+  const [noticeSaveError, setNoticeSaveError] = React.useState<string | null>(null);
+  const dayEventRequestIdRef = React.useRef<string | null>(null);
+  const arenaStatusRequestIdRef = React.useRef<string | null>(null);
+  const quickStatusRequestIdsRef = React.useRef(new Map<string, string>());
   const [dayEventForm, setDayEventForm] = React.useState(() => ({
     date: toISODate(new Date()),
     label: '',
@@ -355,6 +391,13 @@ export default function CalendarScreen() {
     label: 'Harvat',
   }));
   const [rideLogModalVisible, setRideLogModalVisible] = React.useState(false);
+  const [rideLogSaving, setRideLogSaving] = React.useState(false);
+  const rideLogSavingRef = React.useRef(false);
+  const rideLogRequestIdRef = React.useRef<string | null>(null);
+  const [rideLogSaveError, setRideLogSaveError] = React.useState<string | null>(null);
+  const [rideLogDeletingId, setRideLogDeletingId] = React.useState<string | null>(null);
+  const rideLogDeletingRef = React.useRef(false);
+  const [rideLogDeleteError, setRideLogDeleteError] = React.useState<{ id: string; reason: string } | null>(null);
   const [rideLogForm, setRideLogForm] = React.useState(() => ({
     date: toISODate(new Date()),
     horseId: '',
@@ -619,6 +662,7 @@ export default function CalendarScreen() {
     [activeDayEvents],
   );
 
+  const todayIso = toISODate(new Date());
   const weekGroups = React.useMemo(() => {
     const grouped = new Map<string, { start: Date; end: Date; days: GroupedAssignmentDay[] }>();
 
@@ -639,18 +683,36 @@ export default function CalendarScreen() {
       }
     });
 
-    return Array.from(grouped.values()).sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [groupedDays]);
+    const todayWeekStart = startOfWeek(new Date(`${todayIso}T00:00:00`));
+    const todayWeekKey = toISODate(todayWeekStart);
+    if (!grouped.has(todayWeekKey)) {
+      grouped.set(todayWeekKey, {
+        start: todayWeekStart,
+        end: endOfWeek(todayWeekStart),
+        days: [],
+      });
+    }
+
+    return Array.from(grouped.values())
+      .map((week) => ({ ...week, days: fillWeekDays(week.start, week.days) }))
+      .sort((a, b) => a.start.getTime() - b.start.getTime());
+  }, [groupedDays, todayIso]);
 
   const [weekIndex, setWeekIndex] = React.useState(0);
+  const initializedWeekStableIdRef = React.useRef<string | undefined>(undefined);
 
   React.useEffect(() => {
     if (weekGroups.length === 0) {
       setWeekIndex(0);
       return;
     }
+    if (initializedWeekStableIdRef.current !== currentStableId) {
+      initializedWeekStableIdRef.current = currentStableId;
+      setWeekIndex(findInitialWeekIndex(weekGroups));
+      return;
+    }
     setWeekIndex((prev) => Math.min(prev, weekGroups.length - 1));
-  }, [weekGroups.length]);
+  }, [currentStableId, weekGroups]);
 
   React.useEffect(() => {
     if (!focusDate || weekGroups.length === 0) {
@@ -672,7 +734,6 @@ export default function CalendarScreen() {
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
-  const todayIso = toISODate(new Date());
   const upcomingDayGroups = React.useMemo(
     () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
     [groupedDays, todayIso],
@@ -810,6 +871,8 @@ export default function CalendarScreen() {
   );
 
   const openArenaModal = React.useCallback(() => {
+    arenaRequestIdRef.current = generateId();
+    setArenaSaveError(null);
     setArenaForm({
       date: toISODate(new Date()),
       startTime: '',
@@ -821,6 +884,8 @@ export default function CalendarScreen() {
   }, []);
 
   const openDayEventModal = React.useCallback(() => {
+    dayEventRequestIdRef.current = generateId();
+    setNoticeSaveError(null);
     setDayEventForm({
       date: toISODate(new Date()),
       label: '',
@@ -830,6 +895,8 @@ export default function CalendarScreen() {
   }, []);
 
   const openRideLogModal = React.useCallback(() => {
+    rideLogRequestIdRef.current = generateId();
+    setRideLogSaveError(null);
     const defaultHorseId = activeHorses[0]?.id ?? '';
     const defaultRideTypeId = activeRideTypes[0]?.id ?? '';
     setRideLogForm({
@@ -843,6 +910,8 @@ export default function CalendarScreen() {
   }, [activeHorses, activeRideTypes]);
 
   const openArenaStatusModal = React.useCallback((label?: string) => {
+    arenaStatusRequestIdRef.current = generateId();
+    setNoticeSaveError(null);
     setArenaStatusForm({
       date: toISODate(new Date()),
       label: label ?? 'Harvat',
@@ -869,7 +938,8 @@ export default function CalendarScreen() {
     });
   }, []);
 
-  const handleCreateRecurringAssignments = React.useCallback(async () => {
+  const handleCreateRecurringAssignments = React.useCallback(() => {
+    const submittedForm = recurringForm;
     const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
     const slotsCount =
       Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
@@ -886,16 +956,19 @@ export default function CalendarScreen() {
       slotsCount,
       assignToCurrentUser: recurringForm.assignToMe,
     };
-    const result = await actions.createRecurringAssignments(payload);
-    if (result.success) {
-      const created = result.data?.createdCount ?? 0;
-      const skipped = result.data?.skippedCount ?? 0;
-      const skippedLabel = skipped ? `, hoppade över ${skipped}` : '';
-      toast.showToast(`Skapade ${created} pass${skippedLabel}.`, 'success');
-      setRecurringModalVisible(false);
-    } else {
+    setRecurringModalVisible(false);
+    void actions.createRecurringAssignments(payload).then((result) => {
+      if (result.success) {
+        const created = result.data?.createdCount ?? 0;
+        const skipped = result.data?.skippedCount ?? 0;
+        const skippedLabel = skipped ? `, hoppade över ${skipped}` : '';
+        toast.showToast(`Skapade ${created} pass${skippedLabel}.`, 'success');
+        return;
+      }
+      setRecurringForm(submittedForm);
+      setRecurringModalVisible(true);
       toast.showToast(result.reason, 'error');
-    }
+    });
   }, [actions, recurringForm, toast]);
 
   const handleOpenProfile = React.useCallback(() => {
@@ -911,13 +984,25 @@ export default function CalendarScreen() {
   }, []);
 
   const handleClaimAssignment = React.useCallback(
-    (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
+    async (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => {
       if (assignmentId) {
-        const result = actions.claimAssignment(assignmentId);
-        if (result.success && result.data) {
-          toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-        } else if (!result.success) {
-          toast.showToast(result.reason, 'error');
+        if (claimingAssignmentIds.has(assignmentId)) {
+          return;
+        }
+        setClaimingAssignmentIds((current) => new Set(current).add(assignmentId));
+        try {
+          const result = await actions.claimAssignment(assignmentId);
+          if (result.success && result.data) {
+            toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+          } else if (!result.success) {
+            toast.showToast(result.reason, 'error');
+          }
+        } finally {
+          setClaimingAssignmentIds((current) => {
+            const next = new Set(current);
+            next.delete(assignmentId);
+            return next;
+          });
         }
         return;
       }
@@ -931,7 +1016,7 @@ export default function CalendarScreen() {
         });
       }
     },
-    [actions, toast],
+    [actions, claimingAssignmentIds, toast],
   );
 
   const handleEditAssignment = React.useCallback(
@@ -987,63 +1072,60 @@ export default function CalendarScreen() {
   }, []);
 
   const handleCreateAssignment = React.useCallback(
-    (input: CreateAssignmentInput) => {
-      const result = actions.createAssignment(input);
+    async (input: CreateAssignmentInput) => {
+      const result = await actions.createAssignment(input);
       if (result.success && result.data) {
         const message = result.data.assigneeId
           ? `${result.data.label} ${result.data.time} lades till på dig.`
           : `${result.data.label} ${result.data.time} finns nu som ledigt pass.`;
         toast.showToast(message, 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
       }
+      return result;
     },
     [actions, toast],
   );
 
   const handleUpdateAssignment = React.useCallback(
-    (input: UpdateAssignmentInput) => {
-      const result = actions.updateAssignment(input);
+    async (input: UpdateAssignmentInput) => {
+      const result = await actions.updateAssignment(input);
       if (result.success && result.data) {
         toast.showToast(`${result.data.label} ${result.data.time} uppdaterades.`, 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
       }
+      return result;
     },
     [actions, toast],
   );
 
   const handleDeleteAssignment = React.useCallback(
-    (assignmentId: string) => {
-      const result = actions.deleteAssignment(assignmentId);
+    async (assignmentId: string) => {
+      const result = await actions.deleteAssignment(assignmentId);
       if (result.success) {
         toast.showToast('Passet togs bort.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
       }
+      return result;
     },
     [actions, toast],
   );
 
-  const handleDeclineAssignment = React.useCallback(
-    (assignmentId: string) => {
-      const result = actions.declineAssignment(assignmentId);
-      if (result.success) {
-        toast.showToast('Passet släpptes och blev ledigt.', 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
-    },
-    [actions, toast],
-  );
-
-  const handleCompleteAssignment = React.useCallback(
-    (assignmentId: string) => {
-      const result = actions.completeAssignment(assignmentId);
-      if (result.success) {
-        toast.showToast('Markerat som klart.', 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
+  const handleAssignmentStatus = React.useCallback(
+    async (assignmentId: string, action: 'complete' | 'decline') => {
+      if (savingAssignmentIdsRef.current.has(assignmentId)) return;
+      savingAssignmentIdsRef.current.add(assignmentId);
+      setSavingAssignmentIds(new Set(savingAssignmentIdsRef.current));
+      setAssignmentSaveErrors((current) => ({ ...current, [assignmentId]: '' }));
+      try {
+        const result = await (action === 'complete'
+          ? actions.completeAssignment(assignmentId)
+          : actions.declineAssignment(assignmentId));
+        if (result.success) {
+          toast.showToast(action === 'complete' ? 'Markerat som klart.' : 'Passet släpptes och blev ledigt.', 'success');
+        } else {
+          setAssignmentSaveErrors((current) => ({ ...current, [assignmentId]: result.reason }));
+          toast.showToast(result.reason, 'error');
+        }
+      } finally {
+        savingAssignmentIdsRef.current.delete(assignmentId);
+        setSavingAssignmentIds(new Set(savingAssignmentIdsRef.current));
       }
     },
     [actions, toast],
@@ -1054,8 +1136,8 @@ export default function CalendarScreen() {
       return {
         title: 'Inga pass på dig ännu',
         body: canManageAssignments
-          ? 'Skapa pass eller sätt standardpass så schemat fylls automatiskt.'
-          : 'Sätt standardpass i profilen så schemat fylls automatiskt.',
+          ? 'Skapa pass i schemat. Standardpass hjälper sedan till att fördela dem.'
+          : 'Välj standardpass i profilen. Stallansvarig behöver först skapa passen i schemat.',
         actions: [
           canManageAssignments
             ? { label: 'Skapa pass', onPress: handleCreateSlot, variant: 'primary' }
@@ -1091,132 +1173,156 @@ export default function CalendarScreen() {
     };
   }, [canManageAssignments, handleCreateSlot, handleOpenProfile, passView, setPassView]);
 
-  const handleCreateArenaBooking = React.useCallback(() => {
-    const result = actions.addArenaBooking({
-      date: arenaForm.date,
-      startTime: arenaForm.startTime,
-      endTime: arenaForm.endTime,
-      purpose: arenaForm.purpose,
-      note: arenaForm.note,
-    });
-    if (result.success) {
-      toast.showToast('Ridhusbokning skapad.', 'success');
-      setArenaModalVisible(false);
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+  const handleCreateArenaBooking = React.useCallback(async () => {
+    if (arenaSavingRef.current) return;
+    arenaSavingRef.current = true;
+    setArenaSaving(true);
+    setArenaSaveError(null);
+    try {
+      const result = await actions.addArenaBooking({ requestId: arenaRequestIdRef.current ?? undefined, ...arenaForm });
+      if (result.success) {
+        toast.showToast('Ridhusbokning skapad.', 'success');
+        setArenaModalVisible(false);
+      } else {
+        setArenaSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally { arenaSavingRef.current = false; setArenaSaving(false); }
   }, [actions, arenaForm, toast]);
 
   const handleRemoveArenaBooking = React.useCallback(
-    (bookingId: string) => {
-      const result = actions.removeArenaBooking(bookingId);
-      if (result.success) {
-        toast.showToast('Bokningen togs bort.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
+    async (bookingId: string) => {
+      if (arenaDeletingRef.current) return;
+      arenaDeletingRef.current = true;
+      try {
+        if (!(await confirmAction({ title: 'Avboka ridhustiden?', message: 'Tiden blir ledig för andra i stallet.', confirmLabel: 'Avboka', destructive: true }))) return;
+        setArenaDeletingId(bookingId);
+        setArenaDeleteError(null);
+        const result = await actions.removeArenaBooking(bookingId);
+        if (result.success) {
+          toast.showToast('Bokningen togs bort.', 'success');
+        } else {
+          setArenaDeleteError({ id: bookingId, reason: result.reason });
+          toast.showToast(result.reason, 'error');
+        }
+      } finally { arenaDeletingRef.current = false; setArenaDeletingId(null); }
     },
     [actions, toast],
   );
 
-  const handleCreateDayEvent = React.useCallback(() => {
-    const result = actions.addDayEvent({
-      date: dayEventForm.date,
-      label: dayEventForm.label,
-      tone: dayEventForm.tone,
-    });
-    if (result.success) {
-      toast.showToast('Händelsen lades till.', 'success');
-      setDayEventModalVisible(false);
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+  const handleCreateDayEvent = React.useCallback(async () => {
+    if (noticeSavingRef.current) return;
+    noticeSavingRef.current = true;
+    setNoticeSaving(true);
+    setNoticeSaveError(null);
+    try {
+      const result = await actions.addDayEvent({ requestId: dayEventRequestIdRef.current ?? undefined, ...dayEventForm });
+      if (result.success) {
+        toast.showToast('Händelsen lades till.', 'success');
+        setDayEventModalVisible(false);
+      } else { setNoticeSaveError(result.reason); toast.showToast(result.reason, 'error'); }
+    } finally { noticeSavingRef.current = false; setNoticeSaving(false); }
   }, [actions, dayEventForm, toast]);
 
-  const handleRemoveDayEvent = React.useCallback(
-    (eventId: string) => {
-      const result = actions.removeDayEvent(eventId);
-      if (result.success) {
-        toast.showToast('Händelsen togs bort.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
-    },
-    [actions, toast],
-  );
+  const handleRemoveDayEvent = React.useCallback(async (eventId: string) => {
+    if (noticeSavingRef.current) return;
+    noticeSavingRef.current = true;
+    try {
+      if (!(await confirmAction({ title: 'Ta bort händelsen?', confirmLabel: 'Ta bort', destructive: true }))) return;
+      setNoticeSaving(true);
+      setNoticeSaveError(null);
+      const result = await actions.removeDayEvent(eventId);
+      if (result.success) toast.showToast('Händelsen togs bort.', 'success');
+      else { setNoticeSaveError(result.reason); toast.showToast(result.reason, 'error'); }
+    } finally { noticeSavingRef.current = false; setNoticeSaving(false); }
+  }, [actions, toast]);
 
-  const handleQuickArenaStatus = React.useCallback(
-    (label: string) => {
-      const result = actions.addArenaStatus({
-        date: toISODate(new Date()),
-        label,
-      });
+  const handleQuickArenaStatus = React.useCallback(async (label: string) => {
+    if (noticeSavingRef.current) return;
+    noticeSavingRef.current = true;
+    setNoticeSaving(true);
+    setNoticeSaveError(null);
+    const date = toISODate(new Date());
+    const key = `${currentStableId}:${date}:${label}`;
+    const requestId = quickStatusRequestIdsRef.current.get(key) ?? generateId();
+    quickStatusRequestIdsRef.current.set(key, requestId);
+    try {
+      const result = await actions.addArenaStatus({ requestId, date, label });
       if (result.success) {
+        quickStatusRequestIdsRef.current.delete(key);
         toast.showToast(`${label} markerat.`, 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
-    },
-    [actions, toast],
-  );
+      } else { setNoticeSaveError(result.reason); toast.showToast(result.reason, 'error'); }
+    } finally { noticeSavingRef.current = false; setNoticeSaving(false); }
+  }, [actions, currentStableId, toast]);
 
-  const handleCreateArenaStatus = React.useCallback(() => {
-    const result = actions.addArenaStatus({
-      date: arenaStatusForm.date,
-      label: arenaStatusForm.label,
-    });
-    if (result.success) {
-      toast.showToast('Ridhusstatus uppdaterad.', 'success');
-      setArenaStatusModalVisible(false);
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+  const handleCreateArenaStatus = React.useCallback(async () => {
+    if (noticeSavingRef.current) return;
+    noticeSavingRef.current = true;
+    setNoticeSaving(true);
+    setNoticeSaveError(null);
+    try {
+      const result = await actions.addArenaStatus({ requestId: arenaStatusRequestIdRef.current ?? undefined, ...arenaStatusForm });
+      if (result.success) {
+        toast.showToast('Ridhusstatus uppdaterad.', 'success');
+        setArenaStatusModalVisible(false);
+      } else { setNoticeSaveError(result.reason); toast.showToast(result.reason, 'error'); }
+    } finally { noticeSavingRef.current = false; setNoticeSaving(false); }
   }, [actions, arenaStatusForm, toast]);
 
-  const handleRemoveArenaStatus = React.useCallback(
-    (statusId: string) => {
-      const result = actions.removeArenaStatus(statusId);
-      if (result.success) {
-        toast.showToast('Statusen togs bort.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
-    },
-    [actions, toast],
-  );
+  const handleRemoveArenaStatus = React.useCallback(async (statusId: string) => {
+    if (noticeSavingRef.current) return;
+    noticeSavingRef.current = true;
+    try {
+      if (!(await confirmAction({ title: 'Ta bort ridhusstatus?', confirmLabel: 'Ta bort', destructive: true }))) return;
+      setNoticeSaving(true);
+      setNoticeSaveError(null);
+      const result = await actions.removeArenaStatus(statusId);
+      if (result.success) toast.showToast('Statusen togs bort.', 'success');
+      else { setNoticeSaveError(result.reason); toast.showToast(result.reason, 'error'); }
+    } finally { noticeSavingRef.current = false; setNoticeSaving(false); }
+  }, [actions, toast]);
 
-  const handleCreateRideLog = React.useCallback(() => {
+  const handleCreateRideLog = React.useCallback(async () => {
+    if (rideLogSavingRef.current) return;
     if (!canManageRideLogs) {
       toast.showToast('Behörighet saknas för att registrera ridpass.', 'error');
       return;
     }
-    const result = actions.addRideLog({
-      date: rideLogForm.date,
-      horseId: rideLogForm.horseId,
-      rideTypeId: rideLogForm.rideTypeId,
-      length: rideLogForm.length,
-      note: rideLogForm.note,
-    });
-    if (result.success) {
-      toast.showToast('Ridpass registrerat.', 'success');
-      setRideLogModalVisible(false);
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+    rideLogSavingRef.current = true;
+    setRideLogSaving(true);
+    setRideLogSaveError(null);
+    try {
+      const result = await actions.addRideLog({ requestId: rideLogRequestIdRef.current ?? undefined, ...rideLogForm });
+      if (result.success) {
+        toast.showToast('Ridpass registrerat.', 'success');
+        setRideLogModalVisible(false);
+      } else {
+        setRideLogSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally { rideLogSavingRef.current = false; setRideLogSaving(false); }
   }, [actions, canManageRideLogs, rideLogForm, toast]);
 
   const handleRemoveRideLog = React.useCallback(
-    (rideLogId: string) => {
+    async (rideLogId: string) => {
+      if (rideLogDeletingRef.current) return;
       if (!canManageRideLogs) {
         toast.showToast('Behörighet saknas för att ta bort ridpass.', 'error');
         return;
       }
-      const result = actions.removeRideLog(rideLogId);
-      if (result.success) {
-        toast.showToast('Ridpass borttaget.', 'success');
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
+      rideLogDeletingRef.current = true;
+      try {
+        if (!(await confirmAction({ title: 'Ta bort registrerat ridpass?', message: 'Registreringen tas bort från hästens ridlogg.', confirmLabel: 'Ta bort', destructive: true }))) return;
+        setRideLogDeletingId(rideLogId);
+        setRideLogDeleteError(null);
+        const result = await actions.removeRideLog(rideLogId);
+        if (result.success) {
+          toast.showToast('Ridpass borttaget.', 'success');
+        } else {
+          setRideLogDeleteError({ id: rideLogId, reason: result.reason });
+          toast.showToast(result.reason, 'error');
+        }
+      } finally { rideLogDeletingRef.current = false; setRideLogDeletingId(null); }
     },
     [actions, canManageRideLogs, toast],
   );
@@ -1297,6 +1403,9 @@ export default function CalendarScreen() {
           contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
           showsVerticalScrollIndicator={false}
         >
+          <DataSyncStatus />
+          {noticeSaveError && !dayEventModalVisible && !arenaStatusModalVisible && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
+          {noticeSaving && !dayEventModalVisible && !arenaStatusModalVisible && <Text style={styles.modalHint}>Sparar…</Text>}
           <Card tone="muted" style={[styles.filterRow, isDesktopWeb && styles.filterRowDesktop]}>
             {filters.map((label) => {
               const active = label === activeFilter;
@@ -1539,6 +1648,9 @@ export default function CalendarScreen() {
                   openSlots={day.openSlots}
                   mineSlots={day.mineSlots}
                   openAssignments={day.openAssignments}
+                  claimingAssignmentIds={claimingAssignmentIds}
+                  savingAssignmentIds={savingAssignmentIds}
+                  assignmentSaveErrors={assignmentSaveErrors}
                   events={day.events}
                   mode={passView}
                   onClaimOpenAssignment={canClaimAssignments ? handleClaimAssignment : undefined}
@@ -1555,8 +1667,8 @@ export default function CalendarScreen() {
                       : undefined
                   }
                   onEditAssignment={canManageAssignments ? handleEditAssignment : undefined}
-                  onDeclineAssignment={canCompleteAssignments ? handleDeclineAssignment : undefined}
-                  onCompleteAssignment={canCompleteAssignments ? handleCompleteAssignment : undefined}
+                  onDeclineAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'decline') : undefined}
+                  onCompleteAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'complete') : undefined}
                 />
               ))}
               {visibleRegularDays.length === 0 ? (
@@ -1662,12 +1774,18 @@ export default function CalendarScreen() {
                                   <TouchableOpacity
                                     style={styles.bookingDelete}
                                     onPress={() => handleRemoveRideLog(log.id)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Ta bort ridpass för ${horseName}`}
+                                    accessibilityState={{ disabled: Boolean(rideLogDeletingId) }}
+                                    disabled={Boolean(rideLogDeletingId)}
                                   >
                                     <Feather name="x" size={16} color={palette.secondaryText} />
                                   </TouchableOpacity>
                                 ) : null}
                               </View>
                               {log.note ? <Text style={styles.bookingNote}>{log.note}</Text> : null}
+                              {rideLogDeletingId === log.id && <Text style={styles.modalHint}>Tar bort…</Text>}
+                              {rideLogDeleteError?.id === log.id && <Text accessibilityRole="alert" style={{ color: palette.error }}>{rideLogDeleteError.reason}</Text>}
                             </Card>
                           );
                         })}
@@ -1840,6 +1958,9 @@ export default function CalendarScreen() {
                                   <TouchableOpacity
                                     style={styles.bookingDelete}
                                     onPress={() => handleRemoveArenaBooking(booking.id)}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Avboka ${booking.purpose}`}
+                                    disabled={Boolean(arenaDeletingId)}
                                   >
                                     <Feather name="x" size={16} color={palette.secondaryText} />
                                   </TouchableOpacity>
@@ -1848,6 +1969,8 @@ export default function CalendarScreen() {
                               {booking.note ? (
                                 <Text style={styles.bookingNote}>{booking.note}</Text>
                               ) : null}
+                              {arenaDeletingId === booking.id && <Text style={styles.modalHint}>Avbokar…</Text>}
+                              {arenaDeleteError?.id === booking.id && <Text accessibilityRole="alert" style={{ color: palette.error }}>{arenaDeleteError.reason}</Text>}
                             </Card>
                           );
                         })}
@@ -1893,6 +2016,7 @@ export default function CalendarScreen() {
                       key={label}
                       style={styles.statusQuickButton}
                       onPress={() => handleQuickArenaStatus(label)}
+                      disabled={noticeSaving}
                       activeOpacity={0.85}
                     >
                       <Text style={styles.statusQuickText}>{label}</Text>
@@ -1919,6 +2043,9 @@ export default function CalendarScreen() {
                                 <TouchableOpacity
                                   style={styles.bookingDelete}
                                   onPress={() => handleRemoveArenaStatus(status.id)}
+                                  disabled={noticeSaving}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={`Ta bort status ${status.label}`}
                                 >
                                   <Feather name="x" size={16} color={palette.secondaryText} />
                                 </TouchableOpacity>
@@ -1982,6 +2109,9 @@ export default function CalendarScreen() {
                           <TouchableOpacity
                             style={styles.dayEventDelete}
                             onPress={() => handleRemoveDayEvent(event.id)}
+                            disabled={noticeSaving}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Ta bort händelse ${event.label}`}
                           >
                             <Feather name="x" size={16} color={palette.secondaryText} />
                           </TouchableOpacity>
@@ -2026,24 +2156,29 @@ export default function CalendarScreen() {
               </View>
             </View>
           )}
+
+          {activeFilter === 'Vård' && <CareEventsSection />}
         </ScrollView>
       </SafeAreaView>
       <Modal
         transparent
         animationType="fade"
         visible={arenaModalVisible}
-        onRequestClose={() => setArenaModalVisible(false)}
+        onRequestClose={() => { if (!arenaSavingRef.current) setArenaModalVisible(false); }}
       >
         <View style={styles.modalBackdrop}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalKeyboard}
           >
-            <Card tone="muted" style={styles.modalCard}>
+            <Card tone="muted" style={[styles.modalCard, { maxHeight: '100%' }]}>
+              <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 12 }} keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>Ny ridhusbokning</Text>
+              {arenaSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{arenaSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
                 <TextInput
+                  editable={!arenaSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
                   placeholderTextColor={palette.secondaryText}
@@ -2057,6 +2192,7 @@ export default function CalendarScreen() {
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Start</Text>
                   <TextInput
+                  editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="17:00"
                     placeholderTextColor={palette.secondaryText}
@@ -2069,6 +2205,7 @@ export default function CalendarScreen() {
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Slut</Text>
                   <TextInput
+                  editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="18:00"
                     placeholderTextColor={palette.secondaryText}
@@ -2082,6 +2219,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Syfte</Text>
                 <TextInput
+                  editable={!arenaSaving}
                   style={styles.modalInput}
                   placeholder="Dressyrträning"
                   placeholderTextColor={palette.secondaryText}
@@ -2092,6 +2230,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Notering</Text>
                 <TextInput
+                  editable={!arenaSaving}
                   style={styles.modalInput}
                   placeholder="Valfritt"
                   placeholderTextColor={palette.secondaryText}
@@ -2102,14 +2241,16 @@ export default function CalendarScreen() {
               <View style={styles.modalActions}>
                 <TouchableOpacity
                   style={styles.modalGhostButton}
+                  disabled={arenaSaving}
                   onPress={() => setArenaModalVisible(false)}
                 >
                   <Text style={styles.modalGhostText}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.modalPrimaryButton} onPress={handleCreateArenaBooking}>
-                  <Text style={styles.modalPrimaryText}>Skapa</Text>
+                <TouchableOpacity style={styles.modalPrimaryButton} disabled={arenaSaving} onPress={handleCreateArenaBooking}>
+                  <Text style={styles.modalPrimaryText}>{arenaSaving ? 'Sparar…' : 'Skapa'}</Text>
                 </TouchableOpacity>
               </View>
+              </ScrollView>
             </Card>
           </KeyboardAvoidingView>
         </View>
@@ -2119,18 +2260,21 @@ export default function CalendarScreen() {
         transparent
         animationType="fade"
         visible={dayEventModalVisible}
-        onRequestClose={() => setDayEventModalVisible(false)}
+        onRequestClose={() => { if (!noticeSavingRef.current) setDayEventModalVisible(false); }}
       >
         <View style={styles.modalBackdrop}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalKeyboard}
           >
-            <Card tone="muted" style={styles.modalCard}>
+            <Card tone="muted" style={[styles.modalCard, { maxHeight: '100%' }]}>
+              <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 12 }} keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>Ny dagshändelse</Text>
+              {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
                 <TextInput
+                  editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
                   placeholderTextColor={palette.secondaryText}
@@ -2143,6 +2287,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Rubrik</Text>
                 <TextInput
+                  editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="Hovslagare bortrest"
                   placeholderTextColor={palette.secondaryText}
@@ -2157,6 +2302,7 @@ export default function CalendarScreen() {
                     const active = option.id === dayEventForm.tone;
                     return (
                       <TouchableOpacity
+                  disabled={noticeSaving}
                         key={option.id}
                         onPress={() => setDayEventForm((prev) => ({ ...prev, tone: option.id }))}
                       >
@@ -2178,15 +2324,17 @@ export default function CalendarScreen() {
               </View>
               <View style={styles.modalActions}>
                 <TouchableOpacity
+                  disabled={noticeSaving}
                   style={styles.modalGhostButton}
                   onPress={() => setDayEventModalVisible(false)}
                 >
                   <Text style={styles.modalGhostText}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.modalPrimaryButton} onPress={handleCreateDayEvent}>
-                  <Text style={styles.modalPrimaryText}>Lägg till</Text>
+                <TouchableOpacity disabled={noticeSaving} style={styles.modalPrimaryButton} onPress={handleCreateDayEvent}>
+                  <Text style={styles.modalPrimaryText}>{noticeSaving ? 'Sparar…' : 'Lägg till'}</Text>
                 </TouchableOpacity>
               </View>
+              </ScrollView>
             </Card>
           </KeyboardAvoidingView>
         </View>
@@ -2196,18 +2344,21 @@ export default function CalendarScreen() {
         transparent
         animationType="fade"
         visible={arenaStatusModalVisible}
-        onRequestClose={() => setArenaStatusModalVisible(false)}
+        onRequestClose={() => { if (!noticeSavingRef.current) setArenaStatusModalVisible(false); }}
       >
         <View style={styles.modalBackdrop}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalKeyboard}
           >
-            <Card tone="muted" style={styles.modalCard}>
+            <Card tone="muted" style={[styles.modalCard, { maxHeight: '100%' }]}>
+              <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 12 }} keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>Ridhusstatus</Text>
+              {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
                 <TextInput
+                  editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
                   placeholderTextColor={palette.secondaryText}
@@ -2220,6 +2371,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Status</Text>
                 <TextInput
+                  editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="Harvat"
                   placeholderTextColor={palette.secondaryText}
@@ -2229,15 +2381,17 @@ export default function CalendarScreen() {
               </View>
               <View style={styles.modalActions}>
                 <TouchableOpacity
+                  disabled={noticeSaving}
                   style={styles.modalGhostButton}
                   onPress={() => setArenaStatusModalVisible(false)}
                 >
                   <Text style={styles.modalGhostText}>Avbryt</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.modalPrimaryButton} onPress={handleCreateArenaStatus}>
-                  <Text style={styles.modalPrimaryText}>Spara</Text>
+                <TouchableOpacity disabled={noticeSaving} style={styles.modalPrimaryButton} onPress={handleCreateArenaStatus}>
+                  <Text style={styles.modalPrimaryText}>{noticeSaving ? 'Sparar…' : 'Spara'}</Text>
                 </TouchableOpacity>
               </View>
+              </ScrollView>
             </Card>
           </KeyboardAvoidingView>
         </View>
@@ -2247,18 +2401,21 @@ export default function CalendarScreen() {
         transparent
         animationType="fade"
         visible={rideLogModalVisible}
-        onRequestClose={() => setRideLogModalVisible(false)}
+        onRequestClose={() => { if (!rideLogSavingRef.current) setRideLogModalVisible(false); }}
       >
         <View style={styles.modalBackdrop}>
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalKeyboard}
           >
-            <Card tone="muted" style={styles.modalCard}>
+            <Card tone="muted" style={[styles.modalCard, { maxHeight: '100%' }]}>
+              <ScrollView style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 12 }} keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>Registrera ridpass</Text>
+              {rideLogSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{rideLogSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
                 <TextInput
+                  editable={!rideLogSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
                   placeholderTextColor={palette.secondaryText}
@@ -2276,6 +2433,7 @@ export default function CalendarScreen() {
                     return (
                       <TouchableOpacity
                         key={horse.id}
+                        disabled={rideLogSaving}
                         onPress={() => setRideLogForm((prev) => ({ ...prev, horseId: horse.id }))}
                       >
                         <Pill style={[styles.selectorChip, active && styles.selectorChipActive]}>
@@ -2299,6 +2457,7 @@ export default function CalendarScreen() {
                     return (
                       <TouchableOpacity
                         key={type.id}
+                        disabled={rideLogSaving}
                         onPress={() => setRideLogForm((prev) => ({ ...prev, rideTypeId: type.id }))}
                       >
                         <Pill style={[styles.selectorChip, active && styles.selectorChipActive]}>
@@ -2317,6 +2476,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Längd</Text>
                 <TextInput
+                  editable={!rideLogSaving}
                   style={styles.modalInput}
                   placeholder="45 min / 8 km"
                   placeholderTextColor={palette.secondaryText}
@@ -2327,6 +2487,7 @@ export default function CalendarScreen() {
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Notering</Text>
                 <TextInput
+                  editable={!rideLogSaving}
                   style={styles.modalInput}
                   placeholder="Valfritt"
                   placeholderTextColor={palette.secondaryText}
@@ -2338,183 +2499,187 @@ export default function CalendarScreen() {
                 <TouchableOpacity
                   style={styles.modalGhostButton}
                   onPress={() => setRideLogModalVisible(false)}
+                  disabled={rideLogSaving}
                 >
                   <Text style={styles.modalGhostText}>Avbryt</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
                     styles.modalPrimaryButton,
-                    (!rideLogForm.horseId || !rideLogForm.rideTypeId) && styles.modalPrimaryButtonDisabled,
+                    (rideLogSaving || !rideLogForm.horseId || !rideLogForm.rideTypeId) && styles.modalPrimaryButtonDisabled,
                   ]}
                   onPress={handleCreateRideLog}
-                  disabled={!rideLogForm.horseId || !rideLogForm.rideTypeId}
+                  disabled={rideLogSaving || !rideLogForm.horseId || !rideLogForm.rideTypeId}
                 >
-                  <Text style={styles.modalPrimaryText}>Spara</Text>
+                  <Text style={styles.modalPrimaryText}>{rideLogSaving ? 'Sparar…' : 'Spara'}</Text>
                 </TouchableOpacity>
               </View>
+              </ScrollView>
             </Card>
           </KeyboardAvoidingView>
         </View>
       </Modal>
 
-      <Modal
-        transparent
-        animationType="fade"
-        visible={recurringModalVisible}
-        onRequestClose={() => setRecurringModalVisible(false)}
-      >
-        <View style={styles.modalBackdrop}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.modalKeyboard}
-          >
-            <Card tone="muted" style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
-              <View style={styles.modalRow}>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Startdatum</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="ÅÅÅÅ-MM-DD"
-                    placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.dateFrom}
-                    onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, dateFrom: value }))
-                    }
-                    autoCapitalize="none"
-                  />
+      {recurringModalVisible ? (
+        <Modal
+          transparent
+          animationType="fade"
+          visible={recurringModalVisible}
+          onRequestClose={() => setRecurringModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={styles.modalKeyboard}
+            >
+              <Card tone="muted" style={styles.modalCard}>
+                <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+                <View style={styles.modalRow}>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Startdatum</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="ÅÅÅÅ-MM-DD"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.dateFrom}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, dateFrom: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Slutdatum</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="ÅÅÅÅ-MM-DD"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.dateTo}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, dateTo: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
                 </View>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Slutdatum</Text>
-                  <TextInput
-                    style={styles.modalInput}
-                    placeholder="ÅÅÅÅ-MM-DD"
-                    placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.dateTo}
-                    onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, dateTo: value }))
-                    }
-                    autoCapitalize="none"
-                  />
-                </View>
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Veckodagar</Text>
-                <View style={styles.weekdayRow}>
-                  {WEEKDAY_LABELS.map((label, index) => {
-                    const weekday = index as WeekdayIndex;
-                    const active = recurringForm.weekdays.includes(weekday);
-                    return (
-                      <TouchableOpacity
-                        key={label}
-                        onPress={() => toggleRecurringWeekday(weekday)}
-                      >
-                        <Pill
-                          active={active}
-                          style={[styles.weekdayChip, active && styles.weekdayChipActive]}
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Veckodagar</Text>
+                  <View style={styles.weekdayRow}>
+                    {WEEKDAY_LABELS.map((label, index) => {
+                      const weekday = index as WeekdayIndex;
+                      const active = recurringForm.weekdays.includes(weekday);
+                      return (
+                        <TouchableOpacity
+                          key={label}
+                          onPress={() => toggleRecurringWeekday(weekday)}
                         >
-                          <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
-                            {label}
-                          </Text>
-                        </Pill>
-                      </TouchableOpacity>
-                    );
-                  })}
+                          <Pill
+                            active={active}
+                            style={[styles.weekdayChip, active && styles.weekdayChipActive]}
+                          >
+                            <Text style={[styles.weekdayText, active && styles.weekdayTextActive]}>
+                              {label}
+                            </Text>
+                          </Pill>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
-              </View>
-              <View style={styles.modalRow}>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Start</Text>
+                <View style={styles.modalRow}>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Start</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="07:00"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.startTime}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, startTime: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                  <View style={styles.modalFieldFlex}>
+                    <Text style={styles.modalLabel}>Slut</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="08:00"
+                      placeholderTextColor={palette.secondaryText}
+                      keyboardType="numbers-and-punctuation"
+                      value={recurringForm.endTime}
+                      onChangeText={(value) =>
+                        setRecurringForm((prev) => ({ ...prev, endTime: value }))
+                      }
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Benämning</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="07:00"
+                    placeholder="Mockning"
                     placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.startTime}
+                    value={recurringForm.title}
                     onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, startTime: value }))
+                      setRecurringForm((prev) => ({ ...prev, title: value }))
                     }
-                    autoCapitalize="none"
                   />
                 </View>
-                <View style={styles.modalFieldFlex}>
-                  <Text style={styles.modalLabel}>Slut</Text>
+                <View style={styles.modalField}>
+                  <Text style={styles.modalLabel}>Antal pass</Text>
                   <TextInput
                     style={styles.modalInput}
-                    placeholder="08:00"
+                    placeholder="1"
                     placeholderTextColor={palette.secondaryText}
-                    keyboardType="numbers-and-punctuation"
-                    value={recurringForm.endTime}
+                    keyboardType="number-pad"
+                    value={recurringForm.slotsCount}
                     onChangeText={(value) =>
-                      setRecurringForm((prev) => ({ ...prev, endTime: value }))
+                      setRecurringForm((prev) => ({ ...prev, slotsCount: value }))
                     }
-                    autoCapitalize="none"
                   />
                 </View>
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Benämning</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Mockning"
-                  placeholderTextColor={palette.secondaryText}
-                  value={recurringForm.title}
-                  onChangeText={(value) =>
-                    setRecurringForm((prev) => ({ ...prev, title: value }))
-                  }
-                />
-              </View>
-              <View style={styles.modalField}>
-                <Text style={styles.modalLabel}>Antal pass</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="1"
-                  placeholderTextColor={palette.secondaryText}
-                  keyboardType="number-pad"
-                  value={recurringForm.slotsCount}
-                  onChangeText={(value) =>
-                    setRecurringForm((prev) => ({ ...prev, slotsCount: value }))
-                  }
-                />
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.recurringAssignToggle,
-                  recurringForm.assignToMe && styles.recurringAssignToggleActive,
-                ]}
-                onPress={() =>
-                  setRecurringForm((prev) => ({ ...prev, assignToMe: !prev.assignToMe }))
-                }
-              >
-                <Text
+                <TouchableOpacity
                   style={[
-                    styles.recurringAssignText,
-                    recurringForm.assignToMe && styles.recurringAssignTextActive,
+                    styles.recurringAssignToggle,
+                    recurringForm.assignToMe && styles.recurringAssignToggleActive,
                   ]}
+                  onPress={() =>
+                    setRecurringForm((prev) => ({ ...prev, assignToMe: !prev.assignToMe }))
+                  }
                 >
-                  {recurringForm.assignToMe ? 'Tilldelas mig direkt' : 'Låt passen vara öppna'}
-                </Text>
-              </TouchableOpacity>
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={styles.modalGhostButton}
-                  onPress={() => setRecurringModalVisible(false)}
-                >
-                  <Text style={styles.modalGhostText}>Avbryt</Text>
+                  <Text
+                    style={[
+                      styles.recurringAssignText,
+                      recurringForm.assignToMe && styles.recurringAssignTextActive,
+                    ]}
+                  >
+                    {recurringForm.assignToMe ? 'Tilldelas mig direkt' : 'Låt passen vara öppna'}
+                  </Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.modalPrimaryButton}
-                  onPress={handleCreateRecurringAssignments}
-                >
-                  <Text style={styles.modalPrimaryText}>Skapa</Text>
-                </TouchableOpacity>
-              </View>
-            </Card>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.modalGhostButton}
+                    onPress={() => setRecurringModalVisible(false)}
+                  >
+                    <Text style={styles.modalGhostText}>Avbryt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.modalPrimaryButton}
+                    onPress={handleCreateRecurringAssignments}
+                  >
+                    <Text style={styles.modalPrimaryText}>Skapa</Text>
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            </KeyboardAvoidingView>
+          </View>
+        </Modal>
+      ) : null}
 
       <NewAssignmentModal
         visible={assignmentModal.visible}
@@ -2530,7 +2695,7 @@ export default function CalendarScreen() {
 
           if (assignmentModal.mode === 'edit' && assignmentModal.assignmentId) {
             const assignChanged = resolvedAssign !== (assignmentModal.assignToMe ?? false);
-            handleUpdateAssignment({
+            return handleUpdateAssignment({
               id: assignmentModal.assignmentId,
               date: resolvedDate,
               slot: resolvedSlot,
@@ -2542,7 +2707,8 @@ export default function CalendarScreen() {
               assignToCurrentUser: assignChanged ? resolvedAssign : undefined,
             });
           } else {
-            handleCreateAssignment({
+            return handleCreateAssignment({
+              requestId: input.requestId,
               date: resolvedDate,
               slot: resolvedSlot,
               labelOverride: input.labelOverride,
@@ -2557,15 +2723,10 @@ export default function CalendarScreen() {
               assignToCurrentUser: resolvedAssign,
             });
           }
-
-          setAssignmentModal({ visible: false, mode: 'create' });
         }}
         onDelete={
           assignmentModal.mode === 'edit' && assignmentModal.assignmentId
-            ? () => {
-                handleDeleteAssignment(assignmentModal.assignmentId as string);
-                setAssignmentModal({ visible: false, mode: 'create' });
-              }
+            ? () => handleDeleteAssignment(assignmentModal.assignmentId as string)
             : undefined
         }
         dateOptions={dateOptions}
@@ -2589,6 +2750,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots,
   mineSlots,
   openAssignments,
+  claimingAssignmentIds,
+  savingAssignmentIds,
+  assignmentSaveErrors,
   events,
   mode,
   onClaimOpenAssignment,
@@ -2605,6 +2769,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
   openSlots: number;
   mineSlots: number;
   openAssignments: Assignment[];
+  claimingAssignmentIds: Set<string>;
+  savingAssignmentIds: Set<string>;
+  assignmentSaveErrors: Record<string, string>;
   events: { id: string; label: string; color: string }[];
   mode: PassView;
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
@@ -2620,12 +2787,17 @@ const RegularDayCard = React.memo(function RegularDayCard({
         ? slots.filter((slot) => slot.status === 'open')
         : slots;
 
+  const footerAssignmentId = openAssignments[0]?.id;
+  const isFooterClaiming = footerAssignmentId
+    ? claimingAssignmentIds.has(footerAssignmentId)
+    : false;
+
   const handleActionPress = () => {
     if (openSlots > 0) {
-      if (!onClaimOpenAssignment) {
+      if (!onClaimOpenAssignment || isFooterClaiming) {
         return;
       }
-      onClaimOpenAssignment(openAssignments[0]?.id, {
+      void onClaimOpenAssignment(footerAssignmentId, {
         date: isoDate,
         slot: openAssignments[0]?.slot,
       });
@@ -2662,6 +2834,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
             <View style={styles.dayStatusPill}>
               <Text style={styles.dayStatusPillText}>{openSlots} ledigt</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2693,6 +2867,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isLast={index === visibleSlots.length - 1}
             status={slot.status}
             isMissed={slot.isMissed}
+            isClaiming={claimingAssignmentIds.has(slot.id)}
+            isSaving={savingAssignmentIds.has(slot.id)}
+            saveError={assignmentSaveErrors[slot.id]}
             onTake={
               slot.status === 'open'
                 ? () =>
@@ -2723,6 +2900,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
               <Feather name="alert-triangle" size={12} color={palette.warning} />
               <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
             </View>
+          ) : slots.length === 0 ? (
+            <Text style={styles.dayStatusLabel}>Inga pass</Text>
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
@@ -2734,6 +2913,9 @@ const RegularDayCard = React.memo(function RegularDayCard({
               ]}
               activeOpacity={0.85}
               onPress={handleActionPress}
+              disabled={isFooterClaiming}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: isFooterClaiming, busy: isFooterClaiming }}
             >
               <Text
                 style={[
@@ -2741,7 +2923,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
                   openSlots > 0 && styles.dayActionLabelPrimary,
                 ]}
               >
-                {openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
+                {isFooterClaiming ? 'Tar pass...' : openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
               </Text>
             </TouchableOpacity>
           ) : null}
@@ -2764,6 +2946,9 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast,
   status,
   isMissed,
+  isClaiming,
+  isSaving,
+  saveError,
   onTake,
   onManage,
   onDecline,
@@ -2781,6 +2966,9 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isLast?: boolean;
   status: AssignmentStatus;
   isMissed: boolean;
+  isClaiming: boolean;
+  isSaving: boolean;
+  saveError?: string;
   onTake?: () => void;
   onManage?: () => void;
   onDecline?: () => void;
@@ -2868,6 +3056,9 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                   <TouchableOpacity
                     style={styles.scheduleCantButton}
                     onPress={onDecline}
+                    disabled={isSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Släpp ${label}`}
                     activeOpacity={0.85}
                   >
                     <Feather name="x" size={14} color={palette.secondaryText} />
@@ -2876,22 +3067,40 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                   <TouchableOpacity
                     style={[styles.scheduleManageButton, styles.scheduleCompleteButton]}
                     onPress={onComplete}
+                    disabled={isSaving}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Markera ${label} klart`}
+                    accessibilityState={{ disabled: isSaving, busy: isSaving }}
                     activeOpacity={0.85}
                   >
                     <Feather name="check" size={14} color={palette.inverseText} />
                     <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
-                      Klart
+                      {isSaving ? 'Sparar…' : 'Klart'}
                     </Text>
                   </TouchableOpacity>
                 </View>
               ) : onTake ? (
                 <TouchableOpacity
-                  style={[styles.scheduleManageButton, styles.scheduleTakeButton]}
+                  style={[
+                    styles.scheduleManageButton,
+                    styles.scheduleTakeButton,
+                    isClaiming && styles.scheduleManageButtonDisabled,
+                  ]}
                   onPress={onTake}
                   activeOpacity={0.85}
+                  disabled={isClaiming}
+                  accessibilityRole="button"
+                  accessibilityLabel={isClaiming ? `Tar ${label}` : `Ta ${label}`}
+                  accessibilityState={{ disabled: isClaiming, busy: isClaiming }}
                 >
-                  <Feather name="plus" size={14} color={palette.inverseText} />
-                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>Ta pass</Text>
+                  {isClaiming ? (
+                    <ActivityIndicator size="small" color={palette.inverseText} />
+                  ) : (
+                    <Feather name="plus" size={14} color={palette.inverseText} />
+                  )}
+                  <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
+                    {isClaiming ? 'Tar pass...' : 'Ta pass'}
+                  </Text>
                 </TouchableOpacity>
               ) : onManage ? (
                 <TouchableOpacity style={styles.scheduleManageButton} onPress={onManage} activeOpacity={0.85}>
@@ -2903,6 +3112,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
           </View>
         </View>
       </View>
+      {saveError ? <Text style={{ color: palette.error }}>{saveError}</Text> : null}
     </View>
   );
 });
@@ -2935,6 +3145,81 @@ const RidingDayRow = React.memo(function RidingDayRow({
     </Card>
   );
 });
+
+function CareEventsSection() {
+  const { state } = useAppData();
+  const router = useRouter();
+  const stableId = state.currentStableId;
+  const events = state.careEvents
+    .filter((event) => event.stableId === stableId)
+    .sort((a, b) => `${a.date} ${a.time ?? ''}`.localeCompare(`${b.date} ${b.time ?? ''}`));
+  const upcoming = events.filter((event) => event.status === 'planned');
+  const past = events.filter((event) => event.status !== 'planned').reverse();
+  const horseNameById = (id: string) =>
+    state.horses.find((horse) => horse.id === id)?.name ?? 'Okänd häst';
+  const contactNameById = (id?: string) =>
+    id ? state.externalContacts.find((contact) => contact.id === id)?.name : undefined;
+
+  if (!events.length) {
+    return (
+      <View style={{ gap: 12 }}>
+        <EmptyStateCard
+          title="Inga vårdhändelser"
+          body="Lägg till vårdhändelser från en hästprofil så syns de här."
+        />
+      </View>
+    );
+  }
+
+  const renderRow = (event: typeof events[number]) => (
+    <Card key={event.id} tone="muted" style={styles.careEventCard}>
+      <View style={styles.careEventHeader}>
+        <Text style={styles.careEventDate}>
+          {`${event.date}${event.time ? ` · ${event.time}` : ''}`}
+        </Text>
+        <Text style={styles.careEventStatus}>
+          {event.status === 'done' ? 'Klart' : event.status === 'cancelled' ? 'Avbokat' : careEventTypeLabels[event.type]}
+        </Text>
+      </View>
+      <Text style={styles.careEventTitle}>{event.title}</Text>
+      <Text style={styles.careEventMeta}>
+        {[
+          event.horseIds.map(horseNameById).join(', '),
+          contactNameById(event.contactId),
+          event.note,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </Text>
+      {event.horseIds.length === 1 ? (
+        <TouchableOpacity
+          onPress={() => router.push(`/horses/${event.horseIds[0]}`)}
+          style={styles.careEventLink}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.careEventLinkText}>Öppna hästprofil →</Text>
+        </TouchableOpacity>
+      ) : null}
+    </Card>
+  );
+
+  return (
+    <View style={{ gap: 14 }}>
+      {upcoming.length ? (
+        <View style={{ gap: 10 }}>
+          <Text style={styles.careEventSectionTitle}>Kommande vård</Text>
+          {upcoming.map(renderRow)}
+        </View>
+      ) : null}
+      {past.length ? (
+        <View style={{ gap: 10 }}>
+          <Text style={styles.careEventSectionTitle}>Vårdhistorik</Text>
+          {past.map(renderRow)}
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 const CompetitionCard = React.memo(function CompetitionCard({ event }: { event: CompetitionEvent }) {
   const statusLabel = event.status === 'open' ? 'ÖPPEN' : 'STÄNGD';
@@ -3179,7 +3464,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: 20,
-    paddingBottom: 50,
+    paddingBottom: 120,
     gap: 24,
     paddingTop: 10,
   },
@@ -3188,6 +3473,7 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 48,
+    paddingBottom: 40,
   },
   pageHeader: {
     marginBottom: 0,
@@ -3425,7 +3711,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.12)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
   },
   todayPillText: {
     fontSize: 10,
@@ -3804,6 +4090,9 @@ const styles = StyleSheet.create({
   scheduleTakeButton: {
     backgroundColor: palette.primary,
   },
+  scheduleManageButtonDisabled: {
+    opacity: 0.65,
+  },
   scheduleCompleteButton: {
     backgroundColor: palette.success,
   },
@@ -3963,8 +4252,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   bookingDelete: {
-    width: 28,
-    height: 28,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -4002,8 +4291,8 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   dayEventDelete: {
-    width: 28,
-    height: 28,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -4041,6 +4330,7 @@ const styles = StyleSheet.create({
   },
   modalKeyboard: {
     width: '100%',
+    maxHeight: '100%',
     alignItems: 'center',
   },
   modalCard: {
@@ -4285,6 +4575,55 @@ const styles = StyleSheet.create({
     gap: space.md,
     padding: space.lg,
     flexWrap: 'wrap',
+  },
+  careEventSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.secondaryText,
+    textTransform: 'uppercase',
+  },
+  careEventCard: {
+    padding: space.md,
+    gap: 6,
+  },
+  careEventHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  careEventDate: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primaryText,
+    textTransform: 'uppercase',
+  },
+  careEventStatus: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.primary,
+    textTransform: 'uppercase',
+  },
+  careEventTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  careEventMeta: {
+    fontSize: 13,
+    color: palette.secondaryText,
+  },
+  careEventLink: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: palette.surface,
+  },
+  careEventLinkText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primary,
   },
   competitionDate: {
     width: 88,

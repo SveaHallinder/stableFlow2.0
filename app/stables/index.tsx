@@ -1,4 +1,9 @@
+import { DataSyncStatus } from '@/components/DataSyncStatus';
+import { InviteReceipt } from '@/components/InviteReceipt';
+import type { ActionResult, InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
+import { generateId } from '@/lib/ids';
+import { confirmAction } from '@/lib/confirm';
 import {
   Image,
   Platform,
@@ -53,7 +58,8 @@ const eventVisibilityOptions = [
 
 export default function StablesScreen() {
   const router = useRouter();
-  const { q } = useLocalSearchParams<{ q?: string | string[] }>();
+  const { q, section } = useLocalSearchParams<{ q?: string | string[]; section?: string }>();
+  const horsesOnly = section === 'horses';
   const toast = useToast();
   const { state, actions, derived } = useAppData();
   const { stables, currentStableId, users, horses, currentUserId, farms } = state;
@@ -63,12 +69,48 @@ export default function StablesScreen() {
   const { permissions } = derived;
   const showFarmSection = stables.length > 1;
 
+  const creatingStableRef = React.useRef(false);
+  const newStableIdRef = React.useRef<string | null>(null);
+  const [creatingStable, setCreatingStable] = React.useState(false);
+  const [stableCreateError, setStableCreateError] = React.useState<string | null>(null);
   const [stableDraft, setStableDraft] = React.useState<{ id?: string; name: string; location: string; farmId?: string }>({
     id: undefined,
     name: '',
     location: '',
     farmId: undefined,
   });
+  const [savingInvite, setSavingInvite] = React.useState(false);
+  const savingInviteRef = React.useRef(false);
+  const [memberReceipt, setMemberReceipt] = React.useState<InviteConfirmation | null>(null);
+  const [delegateReceipt, setDelegateReceipt] = React.useState<InviteConfirmation | null>(null);
+  const [memberInviteError, setMemberInviteError] = React.useState<string | null>(null);
+  const [memberSaving, setMemberSaving] = React.useState(false);
+  const memberSavingRef = React.useRef(false);
+  const [memberError, setMemberError] = React.useState<string | null>(null);
+  const runMemberChange = React.useCallback(async (operation: () => Promise<ActionResult<unknown>>) => {
+    if (memberSavingRef.current) return false;
+    memberSavingRef.current = true;
+    setMemberSaving(true);
+    setMemberError(null);
+    try {
+      const result = await operation();
+      if (!result.success) setMemberError(result.reason);
+      return result.success;
+    } catch {
+      setMemberError('Medlemsändringen kunde inte sparas. Försök igen.');
+      return false;
+    } finally {
+      memberSavingRef.current = false;
+      setMemberSaving(false);
+    }
+  }, []);
+  const [delegateInviteError, setDelegateInviteError] = React.useState<string | null>(null);
+  const [savingHorse, setSavingHorse] = React.useState(false);
+  const [horseSaveError, setHorseSaveError] = React.useState<string | null>(null);
+  const savingHorseRef = React.useRef(false);
+  const [deletingHorseId, setDeletingHorseId] = React.useState<string | null>(null);
+  const [horseDeleteError, setHorseDeleteError] = React.useState<{ id: string; reason: string } | null>(null);
+  const newHorseIdRef = React.useRef<string | null>(null);
   const [horseDraft, setHorseDraft] = React.useState<{
     id?: string;
     name: string;
@@ -102,7 +144,7 @@ export default function StablesScreen() {
     name: '',
     email: '',
     phone: '',
-    stableIds: [currentStableId],
+    stableIds: currentStableId ? [currentStableId] : [],
     role: 'rider',
     customRole: '',
     access: 'view',
@@ -118,6 +160,10 @@ export default function StablesScreen() {
     email: '',
     phone: '',
   });
+  const savingFarmRef = React.useRef(false);
+  const newFarmIdRef = React.useRef<string | null>(null);
+  const [savingFarm, setSavingFarm] = React.useState(false);
+  const [farmSaveError, setFarmSaveError] = React.useState<string | null>(null);
   const [farmDraft, setFarmDraft] = React.useState<{
     id?: string;
     name: string;
@@ -131,6 +177,10 @@ export default function StablesScreen() {
     hasIndoorArena: false,
     arenaNote: '',
   });
+  const savingPaddockRef = React.useRef(false);
+  const newPaddockIdRef = React.useRef<string | null>(null);
+  const [paddockPending, setPaddockPending] = React.useState<'save' | 'delete' | null>(null);
+  const [paddockError, setPaddockError] = React.useState<string | null>(null);
   const [paddockDraft, setPaddockDraft] = React.useState<{
     id?: string;
     name: string;
@@ -146,6 +196,8 @@ export default function StablesScreen() {
   });
   const initialQuery = React.useMemo(() => (Array.isArray(q) ? q[0] : q) ?? '', [q]);
   const [horseSearch, setHorseSearch] = React.useState(initialQuery);
+  const newRideTypeIdRef = React.useRef<string | null>(null);
+  const rideTypeOriginalRef = React.useRef<{ id: string; code: string; label: string; description?: string } | null>(null);
   const [rideTypeDraft, setRideTypeDraft] = React.useState<{
     id?: string;
     code: string;
@@ -157,6 +209,11 @@ export default function StablesScreen() {
     label: '',
     description: '',
   });
+  const [savingSettings, setSavingSettings] = React.useState(false);
+  const savingSettingsRef = React.useRef(false);
+  const [settingsSaveError, setSettingsSaveError] = React.useState<string | null>(null);
+  const settingsDraftStableRef = React.useRef('');
+  const dirtySettingsRef = React.useRef(new Set<string>());
   const [settingsDraft, setSettingsDraft] = React.useState<StableSettings>(() => resolveStableSettings());
 
   const roleOptions: { id: UserRole; label: string }[] = sharedRoleOrder.map((role) => ({
@@ -201,8 +258,12 @@ export default function StablesScreen() {
     [currentStableId, stables],
   );
   React.useEffect(() => {
-    setSettingsDraft(resolveStableSettings(currentStable));
-  }, [currentStable]);
+    if (settingsDraftStableRef.current !== currentStableId) {
+      settingsDraftStableRef.current = currentStableId;
+      dirtySettingsRef.current.clear();
+    }
+    if (!dirtySettingsRef.current.size) setSettingsDraft(resolveStableSettings(currentStable));
+  }, [currentStable, currentStableId]);
   const currentRideTypes = React.useMemo(
     () => currentStable?.rideTypes ?? [],
     [currentStable],
@@ -251,11 +312,11 @@ export default function StablesScreen() {
   const canManageMembers = permissions.canManageMembers;
   const canManagePaddocks = permissions.canManagePaddocks;
   const canManageHorses = permissions.canManageHorses;
-  const canSaveStable = isAdmin;
-  const canDelegate = canManageMembers && stables.length > 0;
-  const canEditPaddocks = canManagePaddocks;
-  const canEditHorses = canManageHorses;
-  const canEditMembers = canManageMembers;
+  const canSaveStable = isAdmin && !creatingStable;
+  const canDelegate = !savingInvite && canManageMembers && stables.length > 0;
+  const canEditPaddocks = canManagePaddocks && !paddockPending;
+  const canEditHorses = canManageHorses && !savingHorse;
+  const canEditMembers = canManageMembers && !savingInvite;
   const joinCode = currentStable?.joinCode?.trim() ?? '';
   const canRevealJoinCode = canManageMembers && Boolean(joinCode);
   const canShareJoinCode = Platform.OS !== 'web';
@@ -354,7 +415,10 @@ export default function StablesScreen() {
     setPaddockDraft((prev) => ({ ...prev, horsesText: '' }));
   }, []);
 
+  const formStableRef = React.useRef('');
   React.useEffect(() => {
+    if (formStableRef.current === currentStableId) return;
+    formStableRef.current = currentStableId;
     setHorseDraft((prev) => {
       const ownerStillValid = prev.ownerUserId
         ? users[prev.ownerUserId]?.membership?.some((entry) => entry.stableId === currentStableId)
@@ -365,6 +429,8 @@ export default function StablesScreen() {
         ownerUserId: ownerStillValid ? prev.ownerUserId : undefined,
       };
     });
+    newPaddockIdRef.current = null;
+    setPaddockError(null);
     setPaddockDraft((prev) => ({
       ...prev,
       name: '',
@@ -394,18 +460,27 @@ export default function StablesScreen() {
     unknown: 'Okänt',
   };
 
-  const handleCreateStable = React.useCallback(() => {
+  const handleCreateStable = React.useCallback(async () => {
+    if (creatingStableRef.current) return;
     if (!stableDraft.name.trim()) {
       toast.showToast('Namn krävs.', 'error');
       return;
     }
-    const result = actions.upsertStable({
+    creatingStableRef.current = true;
+    setCreatingStable(true);
+    setStableCreateError(null);
+    newStableIdRef.current ??= generateId();
+    const result = await actions.upsertStable({
       id: stableDraft.id,
+      requestId: newStableIdRef.current,
       name: stableDraft.name,
       location: stableDraft.location,
       farmId: stableDraft.farmId,
     });
+    creatingStableRef.current = false;
+    setCreatingStable(false);
     if (result.success) {
+      newStableIdRef.current = null;
       toast.showToast(stableDraft.id ? 'Stall uppdaterat.' : 'Stall skapat.', 'success');
       setStableDraft({
         id: undefined,
@@ -414,7 +489,7 @@ export default function StablesScreen() {
         farmId: showFarmSection ? stableDraft.farmId : undefined,
       });
     } else {
-      toast.showToast(result.reason, 'error');
+      setStableCreateError(result.reason);
     }
   }, [
     actions,
@@ -426,26 +501,35 @@ export default function StablesScreen() {
     toast,
   ]);
 
-  const handleCreateFarm = React.useCallback(() => {
+  const handleCreateFarm = React.useCallback(async () => {
+    if (savingFarmRef.current) return;
     if (!farmDraft.name.trim()) {
       toast.showToast('Gårdsnamn krävs.', 'error');
       return;
     }
-    const result = actions.upsertFarm({
+    savingFarmRef.current = true;
+    setSavingFarm(true);
+    setFarmSaveError(null);
+    newFarmIdRef.current ??= generateId();
+    const result = await actions.upsertFarm({
       id: farmDraft.id,
+      requestId: newFarmIdRef.current,
       name: farmDraft.name,
       location: farmDraft.location,
       hasIndoorArena: farmDraft.hasIndoorArena,
       arenaNote: farmDraft.arenaNote,
     });
+    savingFarmRef.current = false;
+    setSavingFarm(false);
     if (result.success) {
+      newFarmIdRef.current = null;
       toast.showToast(farmDraft.id ? 'Gård uppdaterad.' : 'Gård skapad.', 'success');
       setFarmDraft({ id: undefined, name: '', location: '', hasIndoorArena: false, arenaNote: '' });
       if (result.data && showFarmSection) {
         setStableDraft((prev) => ({ ...prev, farmId: result.data?.id ?? prev.farmId }));
       }
     } else {
-      toast.showToast(result.reason, 'error');
+      setFarmSaveError(result.reason);
     }
   }, [
     actions,
@@ -458,7 +542,8 @@ export default function StablesScreen() {
     toast,
   ]);
 
-  const handleSaveHorse = React.useCallback(() => {
+  const handleSaveHorse = React.useCallback(async () => {
+    if (savingHorseRef.current) return;
     if (!horseDraft.name.trim()) {
       toast.showToast('Hästens namn krävs.', 'error');
       return;
@@ -468,17 +553,24 @@ export default function StablesScreen() {
       toast.showToast('Ålder måste vara ett nummer.', 'error');
       return;
     }
-    const result = actions.upsertHorse({
-      id: horseDraft.id,
+    savingHorseRef.current = true;
+    setSavingHorse(true);
+    setHorseSaveError(null);
+    newHorseIdRef.current ??= generateId();
+    const result = await actions.upsertHorse({
+      id: horseDraft.id ?? newHorseIdRef.current,
       name: horseDraft.name,
       stableId: horseDraft.stableId || currentStableId,
       ownerUserId: horseDraft.ownerUserId,
-      image: horseDraft.image ?? undefined,
+      image: horseDraft.image,
       gender: horseDraft.gender,
       age: parsedAge,
       note: horseDraft.note,
     });
+    savingHorseRef.current = false;
+    setSavingHorse(false);
     if (result.success) {
+      newHorseIdRef.current = null;
       toast.showToast(horseDraft.id ? 'Häst uppdaterad.' : 'Häst tillagd.', 'success');
       setHorseDraft({
         id: undefined,
@@ -491,6 +583,7 @@ export default function StablesScreen() {
         image: null,
       });
     } else {
+      setHorseSaveError(result.reason);
       toast.showToast(result.reason, 'error');
     }
   }, [
@@ -547,30 +640,46 @@ export default function StablesScreen() {
   );
 
   const handleDeleteHorse = React.useCallback(
-    (horseId: string) => {
-      const result = actions.deleteHorse(horseId);
-      if (result.success) {
-        toast.showToast('Häst borttagen.', 'success');
-        if (horseDraft.id === horseId) {
-          setHorseDraft({
-            id: undefined,
-            name: '',
-            stableId: currentStableId,
-            ownerUserId: undefined,
-            gender: 'unknown',
-            age: '',
-            note: '',
-            image: null,
-          });
+    async (horseId: string) => {
+      if (savingHorseRef.current) return;
+      const horse = horses.find((entry) => entry.id === horseId);
+      if (!horse) return;
+      savingHorseRef.current = true;
+      try {
+        const confirmed = await confirmAction({
+          title: `Ta bort ${horse.name}?`,
+          message: 'Hästen och tillhörande historik tas bort permanent. Det går inte att ångra.',
+          confirmLabel: 'Ta bort häst',
+          destructive: true,
+        });
+        if (!confirmed) return;
+        setSavingHorse(true);
+        setDeletingHorseId(horseId);
+        setHorseDeleteError(null);
+        const result = await actions.deleteHorse(horseId);
+        if (result.success) {
+          toast.showToast('Häst borttagen.', 'success');
+          if (horseDraft.id === horseId) {
+            setHorseDraft({ id: undefined, name: '', stableId: currentStableId, ownerUserId: undefined,
+              gender: 'unknown', age: '', note: '', image: null });
+          }
+        } else {
+          setHorseDeleteError({ id: horseId, reason: result.reason });
         }
-      } else {
-        toast.showToast(result.reason, 'error');
+      } catch (error) {
+        console.warn('[horse delete form] Kunde inte ta bort häst', error);
+        setHorseDeleteError({ id: horseId, reason: 'Hästen kunde inte tas bort. Försök igen.' });
+      } finally {
+        savingHorseRef.current = false;
+        setSavingHorse(false);
+        setDeletingHorseId(null);
       }
     },
-    [actions, currentStableId, horseDraft.id, toast],
+    [actions, currentStableId, horseDraft.id, horses, toast],
   );
 
-  const handleDelegateAdmin = React.useCallback(() => {
+  const handleDelegateAdmin = React.useCallback(async () => {
+    if (savingInviteRef.current) return;
     if (!delegateDraft.name.trim() || !delegateDraft.email.trim()) {
       toast.showToast('Namn och e-post krävs.', 'error');
       return;
@@ -579,7 +688,10 @@ export default function StablesScreen() {
       toast.showToast('Välj ett stall först.', 'error');
       return;
     }
-    const result = actions.addMember({
+    savingInviteRef.current = true;
+    setSavingInvite(true);
+    setDelegateInviteError(null);
+    const result = await actions.addMember({
       name: delegateDraft.name,
       email: delegateDraft.email,
       phone: delegateDraft.phone.trim() ? delegateDraft.phone.trim() : undefined,
@@ -588,10 +700,14 @@ export default function StablesScreen() {
       customRole: 'Stallansvarig',
       access: 'owner',
     });
+    savingInviteRef.current = false;
+    setSavingInvite(false);
     if (result.success) {
-      toast.showToast('Ansvarig admin inbjuden.', 'success');
+      setDelegateReceipt(result.data ?? null);
+      toast.showToast('Inbjudan skapad.', 'success');
       setDelegateDraft({ name: '', email: '', phone: '' });
     } else {
+      setDelegateInviteError(result.reason);
       toast.showToast(result.reason, 'error');
     }
   }, [actions, currentStableId, delegateDraft.email, delegateDraft.name, delegateDraft.phone, toast]);
@@ -655,30 +771,40 @@ export default function StablesScreen() {
     }));
   }, [toast]);
 
-  const handleSavePaddock = React.useCallback(() => {
+  const handleSavePaddock = React.useCallback(async () => {
+    if (savingPaddockRef.current) return;
     if (!paddockDraft.name.trim()) {
       toast.showToast('Hagen behöver ett namn/nummer.', 'error');
       return;
     }
+    savingPaddockRef.current = true;
+    setPaddockPending('save');
+    setPaddockError(null);
+    newPaddockIdRef.current ??= generateId();
     const payload = {
-      id: paddockDraft.id,
+      id: paddockDraft.id ?? newPaddockIdRef.current,
       name: paddockDraft.name,
       horseNames: parseHorses(paddockDraft.horsesText),
       stableId: currentStableId,
       image: paddockDraft.image,
       season: paddockDraft.season,
     };
-    const result = actions.upsertPaddock(payload);
+    const result = await actions.upsertPaddock(payload);
+    savingPaddockRef.current = false;
+    setPaddockPending(null);
     if (result.success) {
+      newPaddockIdRef.current = null;
       toast.showToast(paddockDraft.id ? 'Hage uppdaterad.' : 'Hage sparad.', 'success');
       setPaddockDraft({ id: undefined, name: '', horsesText: '', image: null, season: 'yearRound' });
     } else {
-      toast.showToast(result.reason, 'error');
+      setPaddockError(result.reason);
     }
   }, [actions, currentStableId, paddockDraft, parseHorses, toast]);
 
   const handleEditPaddock = React.useCallback(
     (id: string) => {
+      if (savingPaddockRef.current) return;
+      setPaddockError(null);
       const target = paddocks.find((p) => p.id === id);
       if (!target) return;
       setPaddockDraft({
@@ -692,22 +818,33 @@ export default function StablesScreen() {
     [paddocks],
   );
 
-  const handleDeletePaddock = React.useCallback(
-    (id: string) => {
-      const result = actions.deletePaddock(id);
+  const handleDeletePaddock = React.useCallback(async (id: string) => {
+    if (savingPaddockRef.current) return;
+    savingPaddockRef.current = true;
+    try {
+      const confirmed = await confirmAction({ title: 'Ta bort hage?', message: 'Detta går inte att ångra.', confirmLabel: 'Ta bort', destructive: true });
+      if (!confirmed) return;
+      setPaddockPending('delete');
+      setPaddockError(null);
+      const result = await actions.deletePaddock(id);
       if (result.success) {
         toast.showToast('Hage borttagen.', 'success');
         if (paddockDraft.id === id) {
+          newPaddockIdRef.current = null;
           setPaddockDraft({ id: undefined, name: '', horsesText: '', image: null, season: 'yearRound' });
         }
       } else {
-        toast.showToast(result.reason, 'error');
+        setPaddockError(result.reason);
       }
-    },
-    [actions, paddockDraft.id, toast],
-  );
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
+    }
+  }, [actions, paddockDraft.id, toast]);
 
   const resetRideTypeDraft = React.useCallback(() => {
+    newRideTypeIdRef.current = null;
+    rideTypeOriginalRef.current = null;
     setRideTypeDraft({ id: undefined, code: '', label: '', description: '' });
   }, []);
 
@@ -715,45 +852,65 @@ export default function StablesScreen() {
     resetRideTypeDraft();
   }, [currentStableId, resetRideTypeDraft]);
 
-  const handleSaveRideType = React.useCallback(() => {
-    if (!currentStable) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return;
-    }
-    const code = rideTypeDraft.code.trim();
-    const label = rideTypeDraft.label.trim();
-    if (!code || !label) {
-      toast.showToast('Ange både kod och namn.', 'error');
-      return;
-    }
-    const existingIndex = currentRideTypes.findIndex((type) => type.id === rideTypeDraft.id);
-    const nextType = {
-      id: rideTypeDraft.id ?? `ride-type-${Date.now()}`,
-      code,
-      label,
-      description: rideTypeDraft.description.trim() || undefined,
-    };
-    const nextRideTypes =
-      existingIndex >= 0
-        ? currentRideTypes.map((type) => (type.id === rideTypeDraft.id ? nextType : type))
-        : [...currentRideTypes, nextType];
+  const handleSaveRideType = React.useCallback(async () => {
+    if (savingSettingsRef.current) return false;
+    savingSettingsRef.current = true;
+    setSavingSettings(true);
+    setSettingsSaveError(null);
+    try {
+      if (!currentStable) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return;
+      }
+      const code = rideTypeDraft.code.trim();
+      const label = rideTypeDraft.label.trim();
+      if (!code || !label) {
+        toast.showToast('Ange både kod och namn.', 'error');
+        return;
+      }
+      newRideTypeIdRef.current ??= generateId();
+      const draftId = rideTypeDraft.id ?? newRideTypeIdRef.current;
+      const existingIndex = currentRideTypes.findIndex((type) => type.id === draftId);
+      const latest = currentRideTypes[existingIndex];
+      const original = rideTypeOriginalRef.current;
+      if (rideTypeDraft.id && !latest) {
+        const reason = 'Ridpass-typen har tagits bort. Ditt utkast finns kvar; avbryt redigeringen för att lägga till en ny.';
+        setSettingsSaveError(reason);
+        toast.showToast(reason, 'error');
+        return;
+      }
+      const nextType = {
+        id: draftId,
+        code: original && latest && code === original.code ? latest.code : code,
+        label: original && latest && label === original.label ? latest.label : label,
+        description: original && latest && rideTypeDraft.description.trim() === (original.description ?? '')
+          ? latest.description : rideTypeDraft.description.trim() || undefined,
+      };
+      const nextRideTypes =
+        existingIndex >= 0
+          ? currentRideTypes.map((type) => (type.id === draftId ? nextType : type))
+          : [...currentRideTypes, nextType];
 
-    const result = actions.updateStable({
-      id: currentStable.id,
-      updates: { rideTypes: nextRideTypes },
-    });
-    if (result.success) {
-      toast.showToast(rideTypeDraft.id ? 'Ridpass-typ uppdaterad.' : 'Ridpass-typ sparad.', 'success');
-      resetRideTypeDraft();
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+      const result = await actions.updateStable({
+        id: currentStable.id,
+        updates: { rideTypes: nextRideTypes },
+      });
+      if (result.success) {
+        toast.showToast(rideTypeDraft.id ? 'Ridpass-typ uppdaterad.' : 'Ridpass-typ sparad.', 'success');
+        resetRideTypeDraft();
+      } else {
+        setSettingsSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally { savingSettingsRef.current = false; setSavingSettings(false); }
   }, [actions, currentRideTypes, currentStable, resetRideTypeDraft, rideTypeDraft, toast]);
 
   const handleEditRideType = React.useCallback(
     (id: string) => {
+      if (savingSettingsRef.current) return;
       const target = currentRideTypes.find((type) => type.id === id);
       if (!target) return;
+      rideTypeOriginalRef.current = { ...target };
       setRideTypeDraft({
         id: target.id,
         code: target.code,
@@ -765,29 +922,37 @@ export default function StablesScreen() {
   );
 
   const handleDeleteRideType = React.useCallback(
-    (id: string) => {
-      if (!currentStable) {
-        toast.showToast('Välj ett stall först.', 'error');
-        return;
-      }
-      const nextRideTypes = currentRideTypes.filter((type) => type.id !== id);
-      const result = actions.updateStable({
-        id: currentStable.id,
-        updates: { rideTypes: nextRideTypes },
-      });
-      if (result.success) {
-        toast.showToast('Ridpass-typ borttagen.', 'success');
-        if (rideTypeDraft.id === id) {
-          resetRideTypeDraft();
-        }
-      } else {
-        toast.showToast(result.reason, 'error');
-      }
+    async (id: string) => {
+      if (savingSettingsRef.current) return false;
+      savingSettingsRef.current = true;
+      setSavingSettings(true);
+      setSettingsSaveError(null);
+      try {
+          if (!currentStable) {
+            toast.showToast('Välj ett stall först.', 'error');
+            return;
+          }
+          const nextRideTypes = currentRideTypes.filter((type) => type.id !== id);
+          const result = await actions.updateStable({
+            id: currentStable.id,
+            updates: { rideTypes: nextRideTypes },
+          });
+          if (result.success) {
+            toast.showToast('Ridpass-typ borttagen.', 'success');
+            if (rideTypeDraft.id === id) {
+              resetRideTypeDraft();
+            }
+          } else {
+            setSettingsSaveError(result.reason);
+            toast.showToast(result.reason, 'error');
+          }
+      } finally { savingSettingsRef.current = false; setSavingSettings(false); }
     },
     [actions, currentRideTypes, currentStable, resetRideTypeDraft, rideTypeDraft.id, toast],
   );
 
   const handleToggleEventVisibility = React.useCallback((key: keyof StableEventVisibility) => {
+    dirtySettingsRef.current.add(key);
     setSettingsDraft((prev) => ({
       ...prev,
       eventVisibility: {
@@ -798,23 +963,35 @@ export default function StablesScreen() {
   }, []);
 
   const handleSetDayLogic = React.useCallback((value: StableSettings['dayLogic']) => {
+    dirtySettingsRef.current.add('dayLogic');
     setSettingsDraft((prev) => ({ ...prev, dayLogic: value }));
   }, []);
 
-  const handleSaveSettings = React.useCallback(() => {
-    if (!currentStable) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return;
-    }
-    const result = actions.updateStable({
-      id: currentStable.id,
-      updates: { settings: settingsDraft },
-    });
-    if (result.success) {
-      toast.showToast('Stallinställningar sparade.', 'success');
-    } else {
-      toast.showToast(result.reason, 'error');
-    }
+  const handleSaveSettings = React.useCallback(async () => {
+    if (savingSettingsRef.current) return false;
+    savingSettingsRef.current = true;
+    setSavingSettings(true);
+    setSettingsSaveError(null);
+    try {
+      if (!currentStable) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return;
+      }
+      const result = await actions.updateStable({
+        id: currentStable.id,
+        updates: { settings: {
+          ...(dirtySettingsRef.current.has('dayLogic') ? { dayLogic: settingsDraft.dayLogic } : {}),
+          eventVisibility: Object.fromEntries(Object.entries(settingsDraft.eventVisibility).filter(([key]) => dirtySettingsRef.current.has(key))),
+        } },
+      });
+      if (result.success) {
+        dirtySettingsRef.current.clear();
+        toast.showToast('Stallinställningar sparade.', 'success');
+      } else {
+        setSettingsSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    } finally { savingSettingsRef.current = false; setSavingSettings(false); }
   }, [actions, currentStable, settingsDraft, toast]);
 
   const wrapDesktop = (content: React.ReactNode) => {
@@ -843,7 +1020,7 @@ export default function StablesScreen() {
     const restrictedContent = (
       <>
         <ScreenHeader
-          title="Stall och hästar"
+          title={horsesOnly ? 'Hantera hästar' : 'Stall och hästar'}
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
           left={
             <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -879,7 +1056,7 @@ export default function StablesScreen() {
         {wrapDesktop(
           <>
             <ScreenHeader
-              title="Stall och hästar"
+              title={horsesOnly ? 'Hantera hästar' : 'Stall och hästar'}
               style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
               left={
                 <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -896,7 +1073,7 @@ export default function StablesScreen() {
               keyboardShouldPersistTaps="handled"
             >
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
-                <View style={[styles.stepHeader, isDesktopWeb && styles.stepHeaderDesktop, stickyPanelStyle]}>
+                {!horsesOnly && <View style={[styles.stepHeader, isDesktopWeb && styles.stepHeaderDesktop, stickyPanelStyle]}>
                   <Text style={styles.sectionTitle}>Snabbstart</Text>
                   <Card
                     tone="muted"
@@ -926,9 +1103,10 @@ export default function StablesScreen() {
                       </Text>
                     </Card>
                   ) : null}
-                </View>
+                </View>}
 
                 <View style={[styles.stepBody, isDesktopWeb && styles.stepBodyDesktop]}>
+          {!horsesOnly && <>
           {showFarmSection ? (
             <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
               <Text style={styles.sectionTitle}>Gårdar (valfritt)</Text>
@@ -954,13 +1132,15 @@ export default function StablesScreen() {
                 <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnWide]}>
                   <View style={styles.stableForm}>
                     <Text style={styles.formLabel}>Lägg till gård</Text>
+                    {farmSaveError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{farmSaveError}</Text> : null}
+                    {savingFarm ? <Text accessibilityLiveRegion="polite">Sparar gården…</Text> : null}
                     <TextInput
                       placeholder="Namn"
                       placeholderTextColor={palette.mutedText}
                       value={farmDraft.name}
                       onChangeText={(text) => setFarmDraft((prev) => ({ ...prev, name: text }))}
                       style={styles.input}
-                      editable={isOwner}
+                      editable={isOwner && !savingFarm}
                     />
                     <TextInput
                       placeholder="Plats (valfritt)"
@@ -968,7 +1148,7 @@ export default function StablesScreen() {
                       value={farmDraft.location}
                       onChangeText={(text) => setFarmDraft((prev) => ({ ...prev, location: text }))}
                       style={styles.input}
-                      editable={isOwner}
+                      editable={isOwner && !savingFarm}
                     />
                     <Text style={styles.formLabel}>Ridhus</Text>
                     <View style={styles.chipRow}>
@@ -983,7 +1163,7 @@ export default function StablesScreen() {
                             style={[styles.accessChip, active && styles.accessChipActive]}
                             onPress={() => isOwner && setFarmDraft((prev) => ({ ...prev, hasIndoorArena: option.id }))}
                             activeOpacity={0.85}
-                            disabled={!isOwner}
+                            disabled={!isOwner || savingFarm}
                           >
                             <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{option.label}</Text>
                           </TouchableOpacity>
@@ -996,13 +1176,13 @@ export default function StablesScreen() {
                       value={farmDraft.arenaNote}
                       onChangeText={(text) => setFarmDraft((prev) => ({ ...prev, arenaNote: text }))}
                       style={styles.input}
-                      editable={isOwner}
+                      editable={isOwner && !savingFarm}
                     />
                     <TouchableOpacity
                       style={[styles.primaryButton, !isOwner && styles.primaryButtonDisabled]}
                       onPress={handleCreateFarm}
                       activeOpacity={0.9}
-                      disabled={!isOwner}
+                      disabled={!isOwner || savingFarm}
                     >
                       <Text style={styles.primaryButtonText}>Spara gård</Text>
                     </TouchableOpacity>
@@ -1026,6 +1206,7 @@ export default function StablesScreen() {
                         <TouchableOpacity
                           key={stable.id}
                           style={[styles.stableRow, active && styles.stableRowActive]}
+                          disabled={Boolean(paddockPending)}
                           onPress={() => actions.setCurrentStable(stable.id)}
                           activeOpacity={0.85}
                         >
@@ -1047,13 +1228,15 @@ export default function StablesScreen() {
                   <View style={styles.formStack}>
                     <View style={styles.stableForm}>
                       <Text style={styles.formLabel}>Nytt stall</Text>
+                      {stableCreateError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{stableCreateError}</Text> : null}
+                      {creatingStable ? <Text accessibilityLiveRegion="polite">Skapar stallet…</Text> : null}
                       <TextInput
                         placeholder="Namn"
                         placeholderTextColor={palette.mutedText}
                         value={stableDraft.name}
                         onChangeText={(text) => setStableDraft((prev) => ({ ...prev, name: text }))}
                         style={styles.input}
-                        editable={isOwner}
+                        editable={isOwner && !creatingStable}
                       />
                       <TextInput
                         placeholder="Plats (valfritt)"
@@ -1061,7 +1244,7 @@ export default function StablesScreen() {
                         value={stableDraft.location}
                         onChangeText={(text) => setStableDraft((prev) => ({ ...prev, location: text }))}
                         style={styles.input}
-                        editable={isOwner}
+                        editable={isOwner && !creatingStable}
                       />
                       {showFarmSection ? (
                         <>
@@ -1075,7 +1258,7 @@ export default function StablesScreen() {
                                   style={[styles.roleChip, active && styles.roleChipActive]}
                                   onPress={() => setStableDraft((prev) => ({ ...prev, farmId: farm.id }))}
                                   activeOpacity={0.85}
-                                  disabled={!isOwner}
+                                  disabled={!isOwner || creatingStable}
                                 >
                                   <Text style={[styles.roleChipText, active && styles.roleChipTextActive]}>{farm.name}</Text>
                                 </TouchableOpacity>
@@ -1102,6 +1285,8 @@ export default function StablesScreen() {
                       <Text style={styles.formHint}>
                         Bjud in en admin som kan hjälpa till med inställningarna för {currentStable?.name ?? 'valt stall'}.
                       </Text>
+                      <InviteReceipt confirmation={delegateReceipt} />
+                      {delegateInviteError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{delegateInviteError}</Text>}
                       {stables.length === 0 ? <Text style={styles.emptyText}>Skapa ett stall först.</Text> : null}
                       <TextInput
                         placeholder="Namn"
@@ -1136,7 +1321,7 @@ export default function StablesScreen() {
                         activeOpacity={0.9}
                         disabled={!canDelegate}
                       >
-                        <Text style={styles.primaryButtonText}>Bjud in ansvarig admin</Text>
+                        <Text style={styles.primaryButtonText}>{savingInvite ? 'Skapar inbjudan…' : 'Bjud in ansvarig admin'}</Text>
                       </TouchableOpacity>
                     </View>
                     {canRevealJoinCode ? (
@@ -1179,6 +1364,8 @@ export default function StablesScreen() {
 
           <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
             <Text style={styles.sectionTitle}>Stallinställningar (valfritt)</Text>
+            <DataSyncStatus />
+            {settingsSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{settingsSaveError}</Text>}
               <Text style={styles.formHint}>
                 Styr vilka händelser som syns i schemat och hur dygnslogiken ser ut.
               </Text>
@@ -1198,7 +1385,7 @@ export default function StablesScreen() {
                         ]}
                         onPress={() => isOwner && handleSetDayLogic(option.id)}
                         activeOpacity={0.85}
-                        disabled={!isOwner}
+                        disabled={!isOwner || savingSettings}
                       >
                         <Text style={[styles.settingsOptionTitle, active && styles.settingsOptionTitleActive]}>
                           {option.title}
@@ -1228,7 +1415,7 @@ export default function StablesScreen() {
                         ]}
                         onPress={() => isOwner && handleToggleEventVisibility(option.id)}
                         activeOpacity={0.85}
-                        disabled={!isOwner}
+                        disabled={!isOwner || savingSettings}
                       >
                         <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
                           {option.label}
@@ -1243,9 +1430,9 @@ export default function StablesScreen() {
                 style={[styles.primaryButton, !isOwner && styles.primaryButtonDisabled]}
                 onPress={handleSaveSettings}
                 activeOpacity={0.9}
-                disabled={!isOwner}
+                disabled={!isOwner || savingSettings}
               >
-                <Text style={styles.primaryButtonText}>Spara inställningar</Text>
+                <Text style={styles.primaryButtonText}>{savingSettings ? 'Sparar…' : 'Spara inställningar'}</Text>
               </TouchableOpacity>
           </Card>
 
@@ -1303,7 +1490,7 @@ export default function StablesScreen() {
                         value={rideTypeDraft.code}
                         onChangeText={(text) => setRideTypeDraft((prev) => ({ ...prev, code: text }))}
                         style={[styles.input, styles.rideTypeInputShort]}
-                        editable={isOwner}
+                        editable={isOwner && !savingSettings}
                       />
                       <TextInput
                         placeholder="Namn"
@@ -1311,7 +1498,7 @@ export default function StablesScreen() {
                         value={rideTypeDraft.label}
                         onChangeText={(text) => setRideTypeDraft((prev) => ({ ...prev, label: text }))}
                         style={[styles.input, styles.rideTypeInputLong]}
-                        editable={isOwner}
+                        editable={isOwner && !savingSettings}
                       />
                     </View>
                     <TextInput
@@ -1320,7 +1507,7 @@ export default function StablesScreen() {
                       value={rideTypeDraft.description}
                       onChangeText={(text) => setRideTypeDraft((prev) => ({ ...prev, description: text }))}
                       style={styles.input}
-                      editable={isOwner}
+                      editable={isOwner && !savingSettings}
                     />
                     <View style={styles.rideTypeFooter}>
                       {rideTypeDraft.id ? (
@@ -1336,10 +1523,10 @@ export default function StablesScreen() {
                         style={[styles.primaryButton, !isOwner && styles.primaryButtonDisabled]}
                         onPress={handleSaveRideType}
                         activeOpacity={0.9}
-                        disabled={!isOwner}
+                        disabled={!isOwner || savingSettings}
                       >
                         <Text style={styles.primaryButtonText}>
-                          {rideTypeDraft.id ? 'Spara ändring' : 'Lägg till'}
+                          {savingSettings ? 'Sparar…' : rideTypeDraft.id ? 'Spara ändring' : 'Lägg till'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1392,9 +1579,12 @@ export default function StablesScreen() {
                             </View>
                           </View>
                         </TouchableOpacity>
-                        {canEditPaddocks ? (
+                        {canManagePaddocks ? (
                           <TouchableOpacity
                             style={styles.removeButton}
+                            disabled={!canEditPaddocks}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Ta bort ${paddock.name}`}
                             onPress={() => handleDeletePaddock(paddock.id)}
                           >
                             <Feather name="trash-2" size={14} color={palette.error} />
@@ -1408,6 +1598,8 @@ export default function StablesScreen() {
                 <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnWide]}>
                   <View style={styles.stableForm}>
                     <Text style={styles.formLabel}>{paddockDraft.id ? 'Redigera hage' : 'Ny hage/karta'}</Text>
+                    {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
+                    {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
                     <TextInput
                       placeholder="Namn eller nummer"
                       placeholderTextColor={palette.mutedText}
@@ -1580,6 +1772,7 @@ export default function StablesScreen() {
                 </View>
               </View>
           </Card>
+          </>}
 
           <>
             <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
@@ -1629,10 +1822,16 @@ export default function StablesScreen() {
                                 {meta ? <Text style={styles.horseMeta}>{meta}</Text> : null}
                                 {ownerName ? <Text style={styles.horseMeta}>Ansvarig: {ownerName}</Text> : null}
                                 {horse.note ? <Text style={styles.horseNote}>{horse.note}</Text> : null}
+                                {deletingHorseId === horse.id ? <Text>Tar bort hästen…</Text> : null}
+                                {horseDeleteError?.id === horse.id ? (
+                                  <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseDeleteError.reason}</Text>
+                                ) : null}
                               </View>
                             </TouchableOpacity>
-                            {canEditHorses ? (
-                              <TouchableOpacity style={styles.removeButton} onPress={() => handleDeleteHorse(horse.id)}>
+                            {canManageHorses ? (
+                              <TouchableOpacity style={[styles.removeButton, { minWidth: 44, minHeight: 44 }]}
+                                disabled={!canEditHorses} accessibilityRole="button" accessibilityLabel={`Ta bort ${horse.name}`}
+                                onPress={() => handleDeleteHorse(horse.id)}>
                                 <Feather name="trash-2" size={14} color={palette.error} />
                               </TouchableOpacity>
                             ) : null}
@@ -1784,14 +1983,16 @@ export default function StablesScreen() {
                           </TouchableOpacity>
                         ) : null}
                       </View>
+                      {horseSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseSaveError}</Text>}
                       <TouchableOpacity
+                        accessibilityRole="button"
                         style={[styles.primaryButton, !canEditHorses && styles.primaryButtonDisabled]}
                         onPress={handleSaveHorse}
                         activeOpacity={0.9}
                         disabled={!canEditHorses}
                       >
                         <Text style={styles.primaryButtonText}>
-                          {horseDraft.id ? 'Uppdatera häst' : 'Spara häst'}
+                          {savingHorse ? 'Sparar…' : horseDraft.id ? 'Uppdatera häst' : 'Spara häst'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1799,7 +2000,7 @@ export default function StablesScreen() {
                 </View>
               </Card>
 
-            <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
+            {!horsesOnly && <Card tone="muted" style={[styles.card, isDesktopWeb && styles.cardDesktop, styles.stepCard, isDesktopWeb && styles.stepCardDesktop]}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.sectionTitle}>Medlemmar i {currentStable?.name ?? 'valt stall'}</Text>
                   <Text style={styles.countText}>
@@ -1809,6 +2010,8 @@ export default function StablesScreen() {
                 <View style={[styles.splitRow, isDesktopWeb && styles.splitRowDesktop]}>
                   <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnNarrow]}>
                     <View style={styles.memberList}>
+                      {memberSaving && <Text accessibilityLiveRegion="polite" style={styles.memberMeta}>Sparar medlemsändring…</Text>}
+                      {memberError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{memberError}</Text>}
                       {Object.values(users)
                         .filter((user) => user.membership.some((m) => m.stableId === currentStableId))
                         .map((user) => {
@@ -1853,17 +2056,22 @@ export default function StablesScreen() {
                                   onPress={() => {
                                     const index = sharedRoleOrder.indexOf(role);
                                     const nextRole = sharedRoleOrder[(index + 1) % sharedRoleOrder.length];
-                                    actions.updateMemberRole({ userId: user.id, stableId: currentStableId, role: nextRole });
+                                    void runMemberChange(() => actions.updateMemberRole({ userId: user.id, stableId: currentStableId, role: nextRole }));
                                   }}
-                                  disabled={!canEditMembers}
+                                  disabled={!canEditMembers || memberSaving}
+                                  accessibilityRole="button"
+                                  accessibilityState={{ disabled: !canEditMembers || memberSaving }}
                                 >
                                   <Text style={styles.roleButtonText}>{sharedRoleLabels[role] ?? role}</Text>
                                 </TouchableOpacity>
                                 {user.id !== currentUserId ? (
                                   <TouchableOpacity
                                     style={styles.removeButton}
-                                    onPress={() => actions.removeMemberFromStable(user.id, currentStableId)}
-                                    disabled={!canEditMembers}
+                                    onPress={() => { void runMemberChange(() => actions.removeMemberFromStable(user.id, currentStableId)); }}
+                                    disabled={!canEditMembers || memberSaving}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={`Ta bort ${user.name} från stallet`}
+                                    accessibilityState={{ disabled: !canEditMembers || memberSaving }}
                                   >
                                     <Feather name="x" size={14} color={palette.error} />
                                   </TouchableOpacity>
@@ -1877,6 +2085,8 @@ export default function StablesScreen() {
                   <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnWide]}>
                     <View style={styles.stableForm}>
                       <Text style={styles.formLabel}>Bjud in medlem</Text>
+                      <InviteReceipt confirmation={memberReceipt} />
+                      {memberInviteError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{memberInviteError}</Text>}
                       <TextInput
                         placeholder="Namn"
                         placeholderTextColor={palette.mutedText}
@@ -2018,11 +2228,11 @@ export default function StablesScreen() {
                         </>
                       ) : null}
                       <Text style={styles.formLabel}>Koppla till hästar</Text>
-                      {activeHorses.length === 0 ? (
+                      {horses.filter(horse => inviteDraft.stableIds.includes(horse.stableId)).length === 0 ? (
                         <Text style={styles.emptyText}>Lägg till hästar först.</Text>
                       ) : (
                         <View style={styles.chipRow}>
-                          {activeHorses.map((horse) => {
+                          {horses.filter(horse => inviteDraft.stableIds.includes(horse.stableId)).map((horse) => {
                             const active = inviteDraft.horseIds.includes(horse.id);
                             return (
                               <TouchableOpacity
@@ -2048,7 +2258,8 @@ export default function StablesScreen() {
                       )}
                       <TouchableOpacity
                         style={[styles.primaryButton, !canEditMembers && styles.primaryButtonDisabled]}
-                        onPress={() => {
+                        onPress={async () => {
+                          if (savingInviteRef.current) return;
                           if (!inviteDraft.name.trim() || !inviteDraft.email.trim()) {
                             toast.showToast('Namn och e-post krävs.', 'error');
                             return;
@@ -2057,25 +2268,31 @@ export default function StablesScreen() {
                             toast.showToast('Välj minst ett stall.', 'error');
                             return;
                           }
-                          const result = actions.addMember({
+                          savingInviteRef.current = true;
+                          setSavingInvite(true);
+                          setMemberInviteError(null);
+                          const result = await actions.addMember({
                             name: inviteDraft.name,
                             email: inviteDraft.email,
                             phone: inviteDraft.phone.trim() ? inviteDraft.phone.trim() : undefined,
-                            stableId: currentStableId,
+                            stableId: inviteDraft.stableIds[0],
                             stableIds: inviteDraft.stableIds,
                             role: inviteDraft.role,
                             customRole: inviteDraft.customRole || undefined,
                             access: inviteDraft.access,
-                            horseIds: inviteDraft.horseIds,
+                            horseIds: inviteDraft.horseIds.filter(id => horses.some(horse => horse.id === id && inviteDraft.stableIds.includes(horse.stableId))),
                             riderRole: inviteDraft.role === 'rider' ? inviteDraft.riderRole : undefined,
                           });
+                          savingInviteRef.current = false;
+                          setSavingInvite(false);
                           if (result.success) {
-                            toast.showToast('Inbjudan skickad.', 'success');
+                            setMemberReceipt(result.data ?? null);
+                            toast.showToast('Inbjudan skapad.', 'success');
                             setInviteDraft({
                               name: '',
                               email: '',
                               phone: '',
-                              stableIds: [currentStableId],
+                              stableIds: currentStableId ? [currentStableId] : [],
                               role: 'rider',
                               customRole: '',
                               access: 'view',
@@ -2083,18 +2300,19 @@ export default function StablesScreen() {
                               horseIds: [],
                             });
                           } else {
+                            setMemberInviteError(result.reason);
                             toast.showToast(result.reason, 'error');
                           }
                         }}
                         activeOpacity={0.9}
                         disabled={!canEditMembers}
                       >
-                        <Text style={styles.primaryButtonText}>Lägg till</Text>
+                        <Text style={styles.primaryButtonText}>{savingInvite ? 'Skapar inbjudan…' : 'Skapa inbjudan'}</Text>
                       </TouchableOpacity>
                     </View>
                   </View>
                 </View>
-            </Card>
+            </Card>}
           </>
 
             </View>
@@ -2160,7 +2378,7 @@ const styles = StyleSheet.create({
   stepBodyDesktop: { flex: 1, minWidth: 0 },
   splitRow: { gap: 16 },
   splitRowDesktop: { flexDirection: 'row', alignItems: 'flex-start', gap: 20 },
-  splitColumn: { flex: 1, minWidth: 0 },
+  splitColumn: { minWidth: 0 },
   splitColumnNarrow: { flex: 0.9 },
   splitColumnWide: { flex: 1.1 },
   formStack: { gap: 12 },
@@ -2216,7 +2434,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.12)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
   },
   rideTypeCodeText: { fontSize: 12, fontWeight: '700', color: palette.primary },
   rideTypeLabel: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
@@ -2268,8 +2486,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   stableRowActive: {
-    borderColor: 'rgba(45,108,246,0.3)',
-    backgroundColor: 'rgba(45,108,246,0.08)',
+    borderColor: 'rgba(62,155,95,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.08)',
   },
   stableName: { fontSize: 15, fontWeight: '700', color: palette.primaryText },
   stableLocation: { fontSize: 12, color: palette.secondaryText },
@@ -2290,7 +2508,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.14)',
+    backgroundColor: 'rgba(62,155,95,0.14)',
     color: palette.primary,
     fontSize: 12,
     fontWeight: '700',
@@ -2313,8 +2531,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   settingsOptionCardActive: {
-    borderColor: 'rgba(45,108,246,0.35)',
-    backgroundColor: 'rgba(45,108,246,0.08)',
+    borderColor: 'rgba(62,155,95,0.35)',
+    backgroundColor: 'rgba(62,155,95,0.08)',
   },
   settingsOptionCardDisabled: { opacity: 0.6 },
   settingsOptionTitle: { fontSize: 14, fontWeight: '700', color: palette.primaryText },
@@ -2507,8 +2725,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   roleChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.14)',
-    borderColor: 'rgba(45,108,246,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.14)',
+    borderColor: 'rgba(62,155,95,0.3)',
   },
   roleChipText: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   roleChipTextActive: { color: palette.primary },
@@ -2522,8 +2740,8 @@ const styles = StyleSheet.create({
   },
   accessChipDisabled: { opacity: 0.5 },
   accessChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.1)',
-    borderColor: 'rgba(45,108,246,0.26)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
+    borderColor: 'rgba(62,155,95,0.26)',
   },
   accessChipText: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   accessChipTextActive: { color: palette.primary },
@@ -2551,9 +2769,9 @@ const styles = StyleSheet.create({
   },
   stepItemDesktop: { paddingVertical: 14, paddingHorizontal: 14 },
   stepItemActive: {
-    backgroundColor: 'rgba(45,108,246,0.1)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(45,108,246,0.3)',
+    borderColor: 'rgba(62,155,95,0.3)',
   },
   stepItemDisabled: { opacity: 0.5 },
   stepDot: { width: 22, height: 22, borderRadius: radius.full, borderWidth: StyleSheet.hairlineWidth, borderColor: palette.border, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surface },

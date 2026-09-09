@@ -1,0 +1,33 @@
+\set ON_ERROR_STOP on
+-- Isolated test schema. Never run against the app database.
+do $$begin if not exists(select 1 from pg_roles where rolname='anon') then create role anon nologin; end if; end$$;
+create schema auth;
+create schema extensions;
+create extension pgcrypto with schema extensions;
+create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+create function public.test_id(value text) returns uuid language sql immutable as $$select md5(value)::uuid$$;
+create function public.generate_join_code() returns text language sql immutable set search_path=public,extensions as $$select upper(substr(encode(gen_random_bytes(4),'hex'),1,6))$$;
+create table public.profiles(id uuid primary key);
+create table public.stables(id uuid primary key,created_at timestamptz default now(),name text,created_by uuid references profiles on delete set null,join_code text unique default generate_join_code());
+create table public.stable_members(id uuid primary key default gen_random_uuid(),stable_id uuid references stables on delete cascade,user_id uuid references profiles on delete cascade,role text not null default 'rider',access text default 'view',unique(stable_id,user_id));
+create table public.arena_bookings(id uuid primary key default gen_random_uuid(),stable_id uuid references stables on delete cascade,date date not null,start_time text not null,end_time text not null,purpose text not null,note text,booked_by_user_id uuid references profiles on delete set null,created_at timestamptz default now());
+create function public.is_stable_member(p_stable_id uuid) returns boolean language sql stable security definer set search_path=pg_catalog set row_security=off as $$select exists(select 1 from public.stable_members m where m.stable_id=p_stable_id and m.user_id=auth.uid())$$;
+create function public.is_stable_owner(p_stable_id uuid) returns boolean language sql stable security definer set search_path=pg_catalog set row_security=off as $$select exists(select 1 from public.stable_members m where m.stable_id=p_stable_id and m.user_id=auth.uid() and m.role='admin' and m.access='owner')$$;
+create function public.can_manage_arena_bookings(p_stable_id uuid) returns boolean language sql stable set search_path=pg_catalog as $$select exists(select 1 from public.stable_members m where m.stable_id=p_stable_id and m.user_id=auth.uid() and m.role in ('admin','staff'))$$;
+alter table public.stables enable row level security;
+alter table public.stable_members enable row level security;
+alter table public.arena_bookings enable row level security;
+create policy stables_select on stables for select using (created_by=auth.uid() or is_stable_member(id));
+create policy stables_update on stables for update using (created_by=auth.uid() or is_stable_owner(id)) with check (created_by=auth.uid() or is_stable_owner(id));
+create policy stables_delete on stables for delete using (created_by=auth.uid());
+create policy members_select on stable_members for select using(is_stable_member(stable_id));
+create policy members_insert on stable_members for insert with check(is_stable_owner(stable_id) or (user_id=auth.uid() and exists(select 1 from stables where id=stable_id and created_by=auth.uid())));
+create policy members_update on stable_members for update using(is_stable_owner(stable_id));
+create policy members_delete on stable_members for delete using(is_stable_owner(stable_id));
+create policy arena_select on arena_bookings for select using(is_stable_member(stable_id));
+create policy arena_insert on arena_bookings for insert with check(can_manage_arena_bookings(stable_id));
+create policy arena_update on arena_bookings for update using(can_manage_arena_bookings(stable_id));
+create policy arena_delete on arena_bookings for delete using(can_manage_arena_bookings(stable_id));
+grant usage on schema public,auth to authenticated,anon;
+grant select,insert,update,delete on stables,stable_members,arena_bookings to authenticated;
+grant select on stables,stable_members,arena_bookings to anon;

@@ -1,3 +1,4 @@
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -23,18 +24,23 @@ const eventVisibilityOptions: { id: keyof StableEventVisibility; label: string }
 export default function OnboardingEvents() {
   const router = useRouter();
   const toast = useToast();
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
   const { stables, currentStableId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
   const activeStable = React.useMemo(
     () => stables.find((stable) => stable.id === activeStableId),
     [activeStableId, stables],
   );
 
+  const draftStableRef = React.useRef('');
+  const dirtyFieldsRef = React.useRef(new Set<string>());
   const [visibility, setVisibility] = React.useState<StableEventVisibility>({
     feeding: true,
     cleaning: true,
@@ -44,8 +50,9 @@ export default function OnboardingEvents() {
     evening: true,
   });
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!activeStableId && fallbackStableId) {
@@ -54,12 +61,17 @@ export default function OnboardingEvents() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   React.useEffect(() => {
+    if (draftStableRef.current !== activeStableId) {
+      draftStableRef.current = activeStableId;
+      dirtyFieldsRef.current.clear();
+    }
     const settings = resolveStableSettings(activeStable);
-    setVisibility({ ...settings.eventVisibility });
-  }, [activeStable]);
+    setVisibility(previous => Object.fromEntries(Object.entries(settings.eventVisibility).map(([key, value]) =>
+      [key, dirtyFieldsRef.current.has(key) ? previous[key as keyof StableEventVisibility] : value])) as StableEventVisibility);
+  }, [activeStable, activeStableId]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -70,28 +82,36 @@ export default function OnboardingEvents() {
   );
 
   const handleToggle = React.useCallback((key: keyof StableEventVisibility) => {
+    dirtyFieldsRef.current.add(key);
     setVisibility((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const handleFinish = React.useCallback(() => {
-    if (!activeStableId) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return;
-    }
-    const result = actions.updateStable({
-      id: activeStableId,
-      updates: { settings: { eventVisibility: visibility } },
-    });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-      return;
-    }
-    toast.showToast('Inställningar sparade.', 'success');
-    if (returnTo) {
-      router.replace(returnTo);
-    } else {
-      router.back();
-    }
+  const handleFinish = React.useCallback(async () => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (!activeStableId) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return;
+      }
+      const result = await actions.updateStable({
+        id: activeStableId,
+        updates: { settings: { eventVisibility: Object.fromEntries(Object.entries(visibility).filter(([key]) => dirtyFieldsRef.current.has(key))) } },
+      });
+      if (!result.success) {
+        setSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+        return;
+      }
+      toast.showToast('Inställningar sparade.', 'success');
+      if (returnTo) {
+        router.replace(returnTo);
+      } else {
+        router.back();
+      }
+    } finally { savingRef.current = false; setSaving(false); }
   }, [actions, activeStableId, returnTo, router, toast, visibility]);
 
   const handleBack = React.useCallback(() => {
@@ -110,9 +130,12 @@ export default function OnboardingEvents() {
       total={10}
       onBack={handleBack}
       onNext={handleFinish}
-      nextLabel="Spara & tillbaka"
+      disableNext={saving}
+      nextLabel={saving ? 'Sparar…' : 'Spara & tillbaka'}
       showProgress={false}
     >
+      <DataSyncStatus />
+      {saveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text>}
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
           <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -120,7 +143,7 @@ export default function OnboardingEvents() {
             {stables.map((stable) => {
               const active = stable.id === activeStableId;
               return (
-                <TouchableOpacity
+                <TouchableOpacity disabled={saving}
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => handleSelectStable(stable.id)}
@@ -140,7 +163,7 @@ export default function OnboardingEvents() {
           {eventVisibilityOptions.map((option) => {
             const active = visibility[option.id];
             return (
-              <TouchableOpacity
+              <TouchableOpacity disabled={saving}
                 key={option.id}
                 style={[styles.chip, active && styles.chipActive]}
                 onPress={() => handleToggle(option.id)}

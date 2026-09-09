@@ -1,9 +1,13 @@
 import React from 'react';
 import type { PropsWithChildren } from 'react';
 import type { ImageSourcePropType } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
+import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 import { supabase } from '@/lib/supabase';
+import { trackPendingWrite } from '@/lib/writeTracker';
+import { createTimeoutFetch } from '@/lib/requestTimeout';
 import {
   clearPendingJoinCode,
   clearPendingOwnerStable,
@@ -13,6 +17,7 @@ import {
 import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
 import { formatTimeAgo } from '@/lib/time';
+import { isQaDemoMode, QA_DEMO_MEMBER_ID, QA_DEMO_USER_ID } from '@/lib/qaDemo';
 
 export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
@@ -57,7 +62,11 @@ export type StableSettings = {
   onboarding?: StableOnboardingSettings;
 };
 
-export type StableSettingsInput = Partial<StableSettings>;
+export type StableSettingsInput = Omit<Partial<StableSettings>, 'eventVisibility' | 'arena' | 'onboarding'> & {
+  eventVisibility?: Partial<StableEventVisibility>;
+  arena?: Partial<StableArenaSettings>;
+  onboarding?: Partial<StableOnboardingSettings>;
+};
 
 export type Stable = {
   id: string;
@@ -89,6 +98,7 @@ export type RideLogEntry = {
 };
 
 export type CreateRideLogInput = {
+  requestId?: string;
   stableId?: string;
   horseId: string;
   date: string;
@@ -107,6 +117,7 @@ export type ArenaStatus = {
 };
 
 export type CreateArenaStatusInput = {
+  requestId?: string;
   stableId?: string;
   date: string;
   label: string;
@@ -140,6 +151,91 @@ export type Horse = {
   boxNumber?: string;
   canSleepInside?: boolean;
   note?: string;
+};
+
+export type HorseResponsibility = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  userId: string;
+  kind: 'medryttare' | 'staff' | 'trainer' | 'other';
+  canLogRide: boolean;
+  canUpdateDailyStatus: boolean;
+  canSuggestPlanChanges: boolean;
+};
+
+export type FeedSlot = 'morning' | 'lunch' | 'evening';
+
+export type FeedPlanItem = {
+  id: string;
+  stableId: string;
+  horseId?: string;
+  slot: FeedSlot;
+  label: string;
+  amount?: string;
+  note?: string;
+  isStableDefault: boolean;
+  active: boolean;
+};
+
+export type FeedCheck = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  date: string;
+  slot: FeedSlot;
+  checkedByUserId?: string;
+  checkedAt?: string;
+  deviationNote?: string;
+};
+
+export type PlannedRideStatus = 'planned' | 'done' | 'cancelled';
+
+export type PlannedRide = {
+  id: string;
+  stableId: string;
+  horseId: string;
+  riderUserId?: string;
+  date: string;
+  time?: string;
+  rideTypeId?: string;
+  note?: string;
+  status: PlannedRideStatus;
+  completedRideLogId?: string;
+  createdAt: string;
+};
+
+export type ExternalContactType = 'farrier' | 'vet' | 'trainer' | 'therapist' | 'other';
+
+export type ExternalContact = {
+  id: string;
+  stableId: string;
+  name: string;
+  type: ExternalContactType;
+  phone?: string;
+  email?: string;
+  note?: string;
+  createdAt: string;
+};
+
+export type CareEventType = 'farrier' | 'vet' | 'vaccination' | 'dental' | 'treatment' | 'other';
+
+export type CareEventStatus = 'planned' | 'done' | 'cancelled';
+
+export type CareEvent = {
+  id: string;
+  stableId: string;
+  horseIds: string[];
+  type: CareEventType;
+  title: string;
+  date: string;
+  time?: string;
+  contactId?: string;
+  responsibleUserId?: string;
+  status: CareEventStatus;
+  note?: string;
+  completedAt?: string;
+  createdAt: string;
 };
 
 export type HorseDayStatus = {
@@ -220,11 +316,13 @@ async function saveDefaultPassDraft(userId: string, passes: DefaultPass[]) {
   try {
     if (!normalized.length) {
       await SecureStore.deleteItemAsync(key);
-      return;
+      return true;
     }
     await SecureStore.setItemAsync(key, JSON.stringify(normalized));
-  } catch {
-    return;
+    return true;
+  } catch (error) {
+    console.warn('[default pass draft] Kunde inte spara lokala standardpass', error);
+    return false;
   }
 }
 
@@ -258,6 +356,7 @@ export type Assignment = {
 };
 
 export type CreateAssignmentInput = {
+  requestId?: string;
   date: string;
   stableId?: string;
   slot: AssignmentSlot;
@@ -296,6 +395,31 @@ export type AlertMessage = {
   message: string;
   type: 'critical' | 'info';
   createdAt: string;
+};
+
+export type StableAlert = {
+  id: string;
+  stableId: string;
+  title: string;
+  body?: string;
+  severity: 'info' | 'important' | 'urgent';
+  horseId?: string;
+  paddockId?: string;
+  assignmentId?: string;
+  createdByUserId: string;
+  createdAt: string;
+  resolvedAt?: string;
+};
+
+export type CreateStableAlertInput = {
+  requestId?: string;
+  stableId?: string;
+  title: string;
+  body?: string;
+  severity?: StableAlert['severity'];
+  horseId?: string;
+  paddockId?: string;
+  assignmentId?: string;
 };
 
 export type MessagePreview = {
@@ -347,7 +471,19 @@ export type PostComment = {
   createdAt: string;
 };
 
+export type ContentReport = {
+  id: string;
+  stableId: string | null;
+  reporterUserId: string | null;
+  targetType: 'post' | 'comment';
+  targetId: string;
+  reason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+
 export type CreatePostInput = {
+  requestId?: string;
   content: string;
   stableId?: string;
   groupIds?: string[];
@@ -368,6 +504,7 @@ export type Group = {
 };
 
 export type CreateGroupInput = {
+  requestId?: string;
   name: string;
   stableId?: string;
 };
@@ -434,6 +571,7 @@ export type DayEvent = {
 };
 
 export type CreateDayEventInput = {
+  requestId?: string;
   date: string;
   stableId?: string;
   label: string;
@@ -452,6 +590,7 @@ export type ArenaBooking = {
 };
 
 export type CreateArenaBookingInput = {
+  requestId?: string;
   date: string;
   stableId?: string;
   startTime: string;
@@ -487,6 +626,7 @@ export type UpsertPaddockInput = {
 export type StableUpdates = Partial<Omit<Stable, 'settings' | 'joinCode'>> & { settings?: StableSettingsInput };
 
 export type UpsertStableInput = {
+  requestId?: string;
   id?: string;
   name: string;
   description?: string;
@@ -497,8 +637,9 @@ export type UpsertStableInput = {
 };
 
 export type UpsertFarmInput = {
+  requestId?: string;
   id?: string;
-  name: string;
+  name?: string;
   location?: string;
   hasIndoorArena?: boolean;
   arenaNote?: string;
@@ -507,10 +648,10 @@ export type UpsertFarmInput = {
 
 export type UpsertHorseInput = {
   id?: string;
-  name: string;
+  name?: string;
   stableId: string;
   ownerUserId?: string;
-  image?: Horse['image'];
+  image?: Horse['image'] | null;
   gender?: Horse['gender'];
   age?: number;
   boxNumber?: string;
@@ -524,6 +665,84 @@ export type UpdateHorseDayStatusInput = {
   stableId?: string;
   updates: Partial<Pick<HorseDayStatus, 'dayStatus' | 'nightStatus' | 'checked' | 'water' | 'hay'>>;
 };
+
+export type UpsertFeedPlanInput = {
+  id?: string;
+  stableId?: string;
+  horseId?: string | null;
+  slot: FeedSlot;
+  label: string;
+  amount?: string;
+  note?: string;
+  isStableDefault: boolean;
+  active?: boolean;
+};
+
+export type UpsertFeedCheckInput = {
+  stableId?: string;
+  horseId: string;
+  date: string;
+  slot: FeedSlot;
+  checked?: boolean;
+  deviationNote?: string;
+};
+
+export type CreatePlannedRideInput = {
+  requestId?: string;
+  stableId?: string;
+  horseId: string;
+  date: string;
+  time?: string;
+  rideTypeId?: string;
+  note?: string;
+  riderUserId?: string;
+};
+
+export type UpdatePlannedRideInput = {
+  id: string;
+  updates: Partial<Pick<PlannedRide, 'date' | 'time' | 'rideTypeId' | 'note' | 'riderUserId' | 'status'>>;
+};
+
+export type CompletePlannedRideInput = {
+  id: string;
+  length?: string;
+  note?: string;
+};
+
+export type UpsertExternalContactInput = {
+  id?: string;
+  stableId?: string;
+  name: string;
+  type: ExternalContactType;
+  phone?: string;
+  email?: string;
+  note?: string;
+};
+
+export type CreateCareEventInput = {
+  requestId?: string;
+  stableId?: string;
+  horseIds: string[];
+  type: CareEventType;
+  title: string;
+  date: string;
+  time?: string;
+  contactId?: string;
+  responsibleUserId?: string;
+  note?: string;
+};
+
+export type UpdateCareEventInput = {
+  id: string;
+  updates: Partial<Pick<CareEvent, 'horseIds' | 'type' | 'title' | 'date' | 'time' | 'contactId' | 'responsibleUserId' | 'note' | 'status'>>;
+};
+
+export type CompleteCareEventInput = {
+  id: string;
+  note?: string;
+};
+
+export type InviteConfirmation = { inviteCode: string; codes: { stableId: string; code: string }[] };
 
 export type AddMemberInput = {
   name: string;
@@ -578,6 +797,7 @@ export type PermissionSet = {
   canManageArenaBookings: boolean;
   canManageArenaStatus: boolean;
   canManageDayEvents: boolean;
+  canManageCareEvents: boolean;
   canManagePaddocks: boolean;
   canUpdateHorseStatus: boolean;
   canManageHorses: boolean;
@@ -592,7 +812,7 @@ type PostsCursor = {
   id: string;
 };
 
-type AppDataState = {
+export type AppDataState = {
   currentStableId: string;
   stables: Stable[];
   farms: Farm[];
@@ -601,6 +821,7 @@ type AppDataState = {
   sessionUserId: string | null;
   users: Record<string, UserProfile>;
   alerts: AlertMessage[];
+  stableAlerts: StableAlert[];
   assignments: Assignment[];
   assignmentHistory: Array<{
     id: string;
@@ -625,6 +846,13 @@ type AppDataState = {
   rideLogs: RideLogEntry[];
   paddocks: Paddock[];
   horseDayStatuses: HorseDayStatus[];
+  horseResponsibilities: HorseResponsibility[];
+  feedPlans: FeedPlanItem[];
+  feedChecks: FeedCheck[];
+  plannedRides: PlannedRide[];
+  externalContacts: ExternalContact[];
+  careEvents: CareEvent[];
+  blockedUserIds: string[];
 };
 
 type AssignmentUpdateAction = {
@@ -654,6 +882,11 @@ type AssignmentRemoveAction = {
 type AddAlertAction = {
   type: 'ALERT_ADD';
   payload: AlertMessage;
+};
+
+type StableAlertUpsertAction = {
+  type: 'STABLE_ALERT_UPSERT';
+  payload: StableAlert;
 };
 
 type MarkMessageReadAction = {
@@ -745,6 +978,9 @@ type PostUpdateAction = {
   payload: { id: string; updates: Partial<Post> };
 };
 
+type PostCommentUpsertAction = { type: 'POST_COMMENT_UPSERT'; payload: PostComment };
+type PostLikeSetAction = { type: 'POST_LIKE_SET'; payload: { postId: string; userId: string; enabled: boolean } };
+
 type PostDeleteAction = {
   type: 'POST_DELETE';
   payload: { id: string };
@@ -773,6 +1009,56 @@ type GroupDeleteAction = {
 type HorseDayStatusUpsertAction = {
   type: 'HORSE_DAY_STATUS_UPSERT';
   payload: HorseDayStatus;
+};
+
+type FeedPlanUpsertAction = {
+  type: 'FEED_PLAN_UPSERT';
+  payload: FeedPlanItem;
+};
+
+type FeedPlanDeleteAction = {
+  type: 'FEED_PLAN_DELETE';
+  payload: { id: string };
+};
+
+type FeedCheckUpsertAction = {
+  type: 'FEED_CHECK_UPSERT';
+  payload: FeedCheck;
+};
+
+type FeedCheckDeleteAction = {
+  type: 'FEED_CHECK_DELETE';
+  payload: { id: string };
+};
+
+type PlannedRideUpsertAction = {
+  type: 'PLANNED_RIDE_UPSERT';
+  payload: PlannedRide;
+};
+
+type PlannedRideDeleteAction = {
+  type: 'PLANNED_RIDE_DELETE';
+  payload: { id: string };
+};
+
+type ExternalContactUpsertAction = {
+  type: 'EXTERNAL_CONTACT_UPSERT';
+  payload: ExternalContact;
+};
+
+type ExternalContactDeleteAction = {
+  type: 'EXTERNAL_CONTACT_DELETE';
+  payload: { id: string };
+};
+
+type CareEventUpsertAction = {
+  type: 'CARE_EVENT_UPSERT';
+  payload: CareEvent;
+};
+
+type CareEventDeleteAction = {
+  type: 'CARE_EVENT_DELETE';
+  payload: { id: string };
 };
 
 type StableUpsertAction = {
@@ -830,6 +1116,7 @@ type AppDataAction =
   | AssignmentHistoryPushAction
   | AssignmentRemoveAction
   | AddAlertAction
+  | StableAlertUpsertAction
   | MarkMessageReadAction
   | AppendConversationMessageAction
   | UserUpdateAction
@@ -847,12 +1134,24 @@ type AppDataAction =
   | RideLogDeleteAction
   | PostAddAction
   | PostUpdateAction
+  | PostCommentUpsertAction
+  | PostLikeSetAction
   | PostDeleteAction
   | PostRestoreAction
   | GroupAddAction
   | GroupUpdateAction
   | GroupDeleteAction
   | HorseDayStatusUpsertAction
+  | FeedPlanUpsertAction
+  | FeedPlanDeleteAction
+  | FeedCheckUpsertAction
+  | FeedCheckDeleteAction
+  | PlannedRideUpsertAction
+  | PlannedRideDeleteAction
+  | ExternalContactUpsertAction
+  | ExternalContactDeleteAction
+  | CareEventUpsertAction
+  | CareEventDeleteAction
   | StableSetAction
   | StableUpsertAction
   | StableUpdateAction
@@ -886,6 +1185,7 @@ type AppDataContextValue = {
   hydrating: boolean;
   refreshing: boolean;
   refreshError?: string | null;
+  lastRefreshedAt?: string | null;
   derived: {
     isFirstTimeOnboarding: boolean;
     canManageOnboardingAny: boolean;
@@ -913,57 +1213,78 @@ type AppDataContextValue = {
   };
   actions: {
     logNextAssignment: () => ActionResult<Assignment>;
-    claimNextOpenAssignment: () => ActionResult<Assignment>;
-    claimAssignment: (assignmentId: string) => ActionResult<Assignment>;
-    declineAssignment: (assignmentId: string) => ActionResult<Assignment>;
-    completeAssignment: (assignmentId: string) => ActionResult<Assignment>;
-    createAssignment: (input: CreateAssignmentInput) => ActionResult<Assignment>;
+    claimNextOpenAssignment: () => Promise<ActionResult<Assignment>>;
+    claimAssignment: (assignmentId: string) => Promise<ActionResult<Assignment>>;
+    declineAssignment: (assignmentId: string) => Promise<ActionResult<Assignment>>;
+    completeAssignment: (assignmentId: string) => Promise<ActionResult<Assignment>>;
+    createAssignment: (input: CreateAssignmentInput) => Promise<ActionResult<Assignment>>;
     createRecurringAssignments: (
       input: CreateRecurringAssignmentsInput,
     ) => Promise<ActionResult<{ createdCount: number; skippedCount: number }>>;
-    updateAssignment: (input: UpdateAssignmentInput) => ActionResult<Assignment>;
-    deleteAssignment: (assignmentId: string) => ActionResult;
-    addEvent: (message: string, type?: AlertMessage['type']) => ActionResult<AlertMessage>;
-    toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => ActionResult<UserProfile>;
-    upsertPaddock: (input: UpsertPaddockInput) => ActionResult<Paddock>;
-    deletePaddock: (paddockId: string) => ActionResult;
-    updateHorseDayStatus: (input: UpdateHorseDayStatusInput) => ActionResult<HorseDayStatus>;
-    addDayEvent: (input: CreateDayEventInput) => ActionResult<DayEvent>;
-    removeDayEvent: (eventId: string) => ActionResult;
-    addArenaBooking: (input: CreateArenaBookingInput) => ActionResult<ArenaBooking>;
-    updateArenaBooking: (input: { id: string; updates: Partial<ArenaBooking> }) => ActionResult<ArenaBooking>;
-    removeArenaBooking: (bookingId: string) => ActionResult;
-    addArenaStatus: (input: CreateArenaStatusInput) => ActionResult<ArenaStatus>;
-    removeArenaStatus: (statusId: string) => ActionResult;
-    addRideLog: (input: CreateRideLogInput) => ActionResult<RideLogEntry>;
-    removeRideLog: (rideLogId: string) => ActionResult;
-    addPost: (input: CreatePostInput) => ActionResult<Post>;
-    togglePostLike: (postId: string) => ActionResult<Post>;
-    addPostComment: (postId: string, text: string) => ActionResult<PostComment>;
+    updateAssignment: (input: UpdateAssignmentInput) => Promise<ActionResult<Assignment>>;
+    deleteAssignment: (assignmentId: string) => Promise<ActionResult>;
+    addEvent: (message: string, type?: AlertMessage['type'], requestId?: string) => Promise<ActionResult<AlertMessage>>;
+    createStableAlert: (input: CreateStableAlertInput) => Promise<ActionResult<StableAlert>>;
+    resolveStableAlert: (alertId: string) => Promise<ActionResult<StableAlert>>;
+    toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => Promise<ActionResult<UserProfile>>;
+    upsertPaddock: (input: UpsertPaddockInput) => Promise<ActionResult<Paddock>>;
+    deletePaddock: (paddockId: string) => Promise<ActionResult>;
+    updateHorseDayStatus: (input: UpdateHorseDayStatusInput) => Promise<ActionResult<HorseDayStatus>>;
+    upsertFeedPlan: (input: UpsertFeedPlanInput) => Promise<ActionResult<FeedPlanItem>>;
+    deleteFeedPlan: (feedPlanId: string) => Promise<ActionResult>;
+    upsertFeedCheck: (input: UpsertFeedCheckInput) => Promise<ActionResult<FeedCheck>>;
+    createPlannedRide: (input: CreatePlannedRideInput) => Promise<ActionResult<PlannedRide>>;
+    updatePlannedRide: (input: UpdatePlannedRideInput) => Promise<ActionResult<PlannedRide>>;
+    deletePlannedRide: (plannedRideId: string) => Promise<ActionResult>;
+    completePlannedRide: (input: CompletePlannedRideInput) => Promise<ActionResult<{ plannedRide: PlannedRide; rideLog: RideLogEntry }>>;
+    upsertExternalContact: (input: UpsertExternalContactInput) => Promise<ActionResult<ExternalContact>>;
+    deleteExternalContact: (contactId: string) => Promise<ActionResult>;
+    createCareEvent: (input: CreateCareEventInput) => Promise<ActionResult<CareEvent>>;
+    updateCareEvent: (input: UpdateCareEventInput) => Promise<ActionResult<CareEvent>>;
+    deleteCareEvent: (careEventId: string) => Promise<ActionResult>;
+    completeCareEvent: (input: CompleteCareEventInput) => Promise<ActionResult<CareEvent>>;
+    addDayEvent: (input: CreateDayEventInput) => Promise<ActionResult<DayEvent>>;
+    removeDayEvent: (eventId: string) => Promise<ActionResult>;
+    addArenaBooking: (input: CreateArenaBookingInput) => Promise<ActionResult<ArenaBooking>>;
+    updateArenaBooking: (input: { id: string; updates: Partial<ArenaBooking> }) => Promise<ActionResult<ArenaBooking>>;
+    removeArenaBooking: (bookingId: string) => Promise<ActionResult>;
+    addArenaStatus: (input: CreateArenaStatusInput) => Promise<ActionResult<ArenaStatus>>;
+    removeArenaStatus: (statusId: string) => Promise<ActionResult>;
+    addRideLog: (input: CreateRideLogInput) => Promise<ActionResult<RideLogEntry>>;
+    removeRideLog: (rideLogId: string) => Promise<ActionResult>;
+    addPost: (input: CreatePostInput) => Promise<ActionResult<Post>>;
+    togglePostLike: (postId: string) => Promise<ActionResult>;
+    addPostComment: (postId: string, text: string, requestId?: string) => Promise<ActionResult<PostComment>>;
     deletePost: (postId: string) => Promise<ActionResult>;
+    reportPost: (postId: string, reason?: string) => Promise<ActionResult>;
+    reportComment: (postId: string, commentId: string, reason?: string) => Promise<ActionResult>;
+    fetchContentReports: (includeResolved?: boolean) => Promise<ActionResult<ContentReport[]>>;
+    resolveContentReport: (reportId: string) => Promise<ActionResult>;
+    blockUser: (targetUserId: string) => Promise<ActionResult>;
+    unblockUser: (targetUserId: string) => Promise<ActionResult>;
     loadMorePosts: () => Promise<ActionResult>;
-    createGroup: (input: CreateGroupInput) => ActionResult<Group>;
-    renameGroup: (input: RenameGroupInput) => ActionResult<Group>;
-    deleteGroup: (groupId: string) => ActionResult;
+    createGroup: (input: CreateGroupInput) => Promise<ActionResult<Group>>;
+    renameGroup: (input: RenameGroupInput) => Promise<ActionResult<Group>>;
+    deleteGroup: (groupId: string) => Promise<ActionResult>;
     markConversationRead: (conversationId: string) => void;
-    sendConversationMessage: (conversationId: string, text: string) => ActionResult<ConversationMessage>;
+    sendConversationMessage: (conversationId: string, text: string, requestId?: string) => Promise<ActionResult<ConversationMessage>>;
     createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
     setCurrentStable: (stableId: string) => void;
     refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
-    updateProfile: (input: UpdateProfileInput) => ActionResult<UserProfile>;
-    upsertFarm: (input: UpsertFarmInput, options?: PersistOptions) => ActionResult<Farm>;
+    updateProfile: (input: UpdateProfileInput) => Promise<ActionResult<UserProfile>>;
+    upsertFarm: (input: UpsertFarmInput, options?: PersistOptions) => Promise<ActionResult<Farm>>;
     deleteFarm: (farmId: string) => ActionResult;
-    upsertStable: (input: UpsertStableInput, options?: PersistOptions) => ActionResult<Stable>;
-    updateStable: (input: { id: string; updates: StableUpdates }, options?: PersistOptions) => ActionResult<Stable>;
+    upsertStable: (input: UpsertStableInput, options?: PersistOptions) => Promise<ActionResult<Stable>>;
+    updateStable: (input: { id: string; updates: StableUpdates }, options?: PersistOptions) => Promise<ActionResult<Stable>>;
     deleteStable: (stableId: string) => ActionResult;
-    upsertHorse: (input: UpsertHorseInput) => ActionResult<Horse>;
-    deleteHorse: (horseId: string) => ActionResult;
-    addMember: (input: AddMemberInput) => ActionResult<{ inviteCode: string }>;
-    updateMemberRole: (input: UpdateMemberRoleInput) => ActionResult<UserProfile>;
-    updateMemberHorseIds: (input: UpdateMemberHorseIdsInput) => ActionResult<UserProfile>;
-    toggleMemberDefaultPass: (input: ToggleMemberDefaultPassInput) => ActionResult<UserProfile>;
-    removeMemberFromStable: (userId: string, stableId: string) => ActionResult<UserProfile>;
+    upsertHorse: (input: UpsertHorseInput) => Promise<ActionResult<Horse>>;
+    deleteHorse: (horseId: string) => Promise<ActionResult>;
+    addMember: (input: AddMemberInput) => Promise<ActionResult<InviteConfirmation>>;
+    updateMemberRole: (input: UpdateMemberRoleInput) => Promise<ActionResult<UserProfile>>;
+    updateMemberHorseIds: (input: UpdateMemberHorseIdsInput) => Promise<ActionResult<UserProfile>>;
+    toggleMemberDefaultPass: (input: ToggleMemberDefaultPassInput) => Promise<ActionResult<UserProfile>>;
+    removeMemberFromStable: (userId: string, stableId: string) => Promise<ActionResult<UserProfile>>;
     joinStableByCode: (code: string) => Promise<ActionResult<{ stableId: string }>>;
     acceptPendingInvites: () => Promise<ActionResult<{ count: number }>>;
   };
@@ -1106,6 +1427,7 @@ const emptyPermissions: PermissionSet = {
   canManageArenaBookings: false,
   canManageArenaStatus: false,
   canManageDayEvents: false,
+  canManageCareEvents: false,
   canManagePaddocks: false,
   canUpdateHorseStatus: false,
   canManageHorses: false,
@@ -1165,6 +1487,7 @@ function resolvePermissions(
     canManageArenaBookings: arenaRoles.has(role),
     canManageArenaStatus: arenaRoles.has(role),
     canManageDayEvents: dayEventRoles.has(role),
+    canManageCareEvents: canEditAccess,
     canManagePaddocks: canEditAccess,
     canUpdateHorseStatus: horseStatusRoles.has(role),
     canManageHorses: canEditAccess,
@@ -1184,6 +1507,7 @@ const initialState: AppDataState = {
   sessionUserId: null,
   users: {},
   alerts: [],
+  stableAlerts: [],
   assignments: [],
   assignmentHistory: [],
   messages: [],
@@ -1202,7 +1526,383 @@ const initialState: AppDataState = {
   rideLogs: [],
   paddocks: [],
   horseDayStatuses: [],
+  horseResponsibilities: [],
+  feedPlans: [],
+  feedChecks: [],
+  plannedRides: [],
+  externalContacts: [],
+  careEvents: [],
+  blockedUserIds: [],
 };
+
+function addDaysIso(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function createQaDemoState(): AppDataState {
+  const now = new Date().toISOString();
+  const stableId = 'qa-stable-main';
+  const farmId = 'qa-farm-main';
+  const horseId = 'qa-horse-main';
+  const paddockId = 'qa-paddock-main';
+  const conversationId = 'qa-conversation-private';
+  const groupConversationId = 'qa-conversation-stable';
+  const groupId = 'qa-group-paddock';
+  const today = addDaysIso(0);
+  const tomorrow = addDaysIso(1);
+  const stableSettings = createDefaultStableSettings();
+
+  stableSettings.arena = {
+    hasArena: true,
+    hasRoundPen: true,
+    hasSchedule: true,
+    bookingMode: 'open',
+    rules: 'Mocka efter ridning och lämna bommar på plats.',
+  };
+  stableSettings.onboarding = { resourcesComplete: true, membersComplete: true };
+
+  return {
+    ...initialState,
+    currentStableId: stableId,
+    currentUserId: QA_DEMO_USER_ID,
+    sessionUserId: QA_DEMO_USER_ID,
+    farms: [
+      {
+        id: farmId,
+        name: 'QA Gården',
+        location: 'Stockholm',
+        hasIndoorArena: true,
+        arenaNote: 'Ridhus och utevolt används i QA-flödet.',
+      },
+    ],
+    stables: [
+      {
+        id: stableId,
+        name: 'QA Stallet',
+        location: 'Stockholm',
+        farmId,
+        joinCode: 'QATEST',
+        rideTypes: [
+          { id: 'qa-ride-dressage', code: 'DR', label: 'Dressyr' },
+          { id: 'qa-ride-hack', code: 'UT', label: 'Uteritt' },
+        ],
+        settings: stableSettings,
+      },
+    ],
+    users: {
+      [QA_DEMO_USER_ID]: {
+        id: QA_DEMO_USER_ID,
+        name: 'QA Admin',
+        email: 'qa-admin@example.com',
+        membership: [{ stableId, role: 'admin', access: 'owner', riderRole: 'owner' }],
+        horses: ['Saga'],
+        location: 'Stockholm',
+        phone: '070-000 00 01',
+        responsibilities: ['Schema', 'Hagar'],
+        defaultPasses: [{ weekday: 0, slot: 'Morning' }],
+        awayNotices: [],
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        onboardingDismissed: false,
+      },
+      [QA_DEMO_MEMBER_ID]: {
+        id: QA_DEMO_MEMBER_ID,
+        name: 'QA Medlem',
+        email: 'qa-member@example.com',
+        membership: [{ stableId, role: 'rider', access: 'view', riderRole: 'medryttare', horseIds: [horseId] }],
+        horses: ['Saga'],
+        location: 'Stockholm',
+        phone: '070-000 00 02',
+        responsibilities: ['Kvällsfodring'],
+        defaultPasses: [{ weekday: 2, slot: 'Evening' }],
+        awayNotices: [],
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        onboardingDismissed: true,
+      },
+    },
+    horses: [
+      {
+        id: horseId,
+        stableId,
+        name: 'Saga',
+        ownerUserId: QA_DEMO_USER_ID,
+        gender: 'mare',
+        age: 9,
+        boxNumber: '12',
+        canSleepInside: true,
+        note: 'Känslig för snabb foderändring.',
+      },
+    ],
+    horseResponsibilities: [
+      {
+        id: 'qa-horse-responsibility-1',
+        stableId,
+        horseId,
+        userId: QA_DEMO_MEMBER_ID,
+        kind: 'medryttare',
+        canLogRide: true,
+        canUpdateDailyStatus: true,
+        canSuggestPlanChanges: true,
+      },
+    ],
+    paddocks: [
+      {
+        id: paddockId,
+        stableId,
+        name: 'Vinterhagen',
+        horseNames: ['Saga'],
+        updatedAt: now,
+        season: 'winter',
+      },
+    ],
+    assignments: [
+      {
+        id: 'qa-assignment-open',
+        stableId,
+        date: today,
+        label: 'Lunchfodring',
+        slot: 'Lunch',
+        icon: 'clock',
+        time: '12:00',
+        status: 'open',
+      },
+      {
+        id: 'qa-assignment-mine',
+        stableId,
+        date: today,
+        label: 'Morgonfodring',
+        slot: 'Morning',
+        icon: 'sun',
+        time: '07:00',
+        status: 'assigned',
+        assigneeId: QA_DEMO_USER_ID,
+      },
+      {
+        id: 'qa-assignment-member',
+        stableId,
+        date: tomorrow,
+        label: 'Kvällsfodring',
+        slot: 'Evening',
+        icon: 'moon',
+        time: '19:00',
+        status: 'assigned',
+        assigneeId: QA_DEMO_MEMBER_ID,
+      },
+    ],
+    assignmentHistory: [
+      {
+        id: 'qa-history-1',
+        assignmentId: 'qa-assignment-open',
+        label: 'Lunchfodring 12:00',
+        timestamp: now,
+        action: 'created',
+      },
+    ],
+    stableAlerts: [
+      {
+        id: 'qa-stable-alert-1',
+        stableId,
+        title: 'Grinden till Vinterhagen är trög',
+        body: 'Stäng med kedjan tills den är justerad.',
+        severity: 'important',
+        paddockId,
+        createdByUserId: QA_DEMO_USER_ID,
+        createdAt: now,
+      },
+    ],
+    dayEvents: [
+      { id: 'qa-event-1', stableId, date: today, label: 'Hovslagare kl 14', tone: 'farrierAway' },
+    ],
+    arenaBookings: [
+      {
+        id: 'qa-booking-1',
+        stableId,
+        date: today,
+        startTime: '18:00',
+        endTime: '18:45',
+        purpose: 'Dressyr',
+        bookedByUserId: QA_DEMO_USER_ID,
+      },
+    ],
+    arenaStatuses: [
+      { id: 'qa-arena-status-1', stableId, date: today, label: 'Sladdad', createdByUserId: QA_DEMO_USER_ID, createdAt: now },
+    ],
+    groups: [
+      { id: groupId, stableId, name: 'Haggruppen', type: 'custom', createdAt: now, createdByUserId: QA_DEMO_USER_ID },
+    ],
+    messages: [
+      {
+        id: conversationId,
+        title: 'QA Medlem',
+        subtitle: 'Privat chatt',
+        description: 'Kan du ta kvällspasset imorgon?',
+        timeAgo: 'Nu',
+        unreadCount: 1,
+        stableId,
+      },
+      {
+        id: groupConversationId,
+        title: 'QA Stallet',
+        subtitle: 'Stallchatt',
+        description: 'Välkommen till QA-stallet.',
+        timeAgo: 'Idag',
+        group: true,
+        stableId,
+      },
+    ],
+    conversations: {
+      [conversationId]: [
+        {
+          id: 'qa-message-1',
+          conversationId,
+          authorId: QA_DEMO_MEMBER_ID,
+          text: 'Kan du ta kvällspasset imorgon?',
+          timestamp: now,
+          status: 'delivered',
+        },
+      ],
+      [groupConversationId]: [
+        {
+          id: 'qa-message-2',
+          conversationId: groupConversationId,
+          authorId: QA_DEMO_USER_ID,
+          text: 'Välkommen till QA-stallet.',
+          timestamp: now,
+          status: 'seen',
+        },
+      ],
+    },
+    posts: [
+      {
+        id: 'qa-post-1',
+        authorId: QA_DEMO_USER_ID,
+        author: 'QA Admin',
+        avatar: require('@/assets/images/dummy-avatar.png'),
+        timeAgo: 'Nyss',
+        createdAt: now,
+        content: 'Saga gick fint i ridhuset idag.',
+        likes: 1,
+        comments: 1,
+        likedByUserIds: [QA_DEMO_MEMBER_ID],
+        commentsData: [
+          {
+            id: 'qa-comment-1',
+            postId: 'qa-post-1',
+            authorId: QA_DEMO_MEMBER_ID,
+            authorName: 'QA Medlem',
+            text: 'Härligt!',
+            createdAt: now,
+          },
+        ],
+        stableId,
+        groupIds: [groupId],
+      },
+    ],
+    postsHasMore: false,
+    ridingSchedule: [
+      { id: 'qa-ride-day-1', stableId, label: 'Idag', upcomingRides: 'Saga 18:00', isToday: true },
+    ],
+    competitionEvents: [
+      { id: 'qa-competition-1', start: today, end: tomorrow, title: 'Pay and ride', status: 'open' },
+    ],
+    horseDayStatuses: [
+      {
+        id: 'qa-horse-status-1',
+        stableId,
+        horseId,
+        date: today,
+        dayStatus: 'out',
+        nightStatus: 'in',
+        checked: true,
+        water: true,
+        hay: true,
+      },
+    ],
+    feedPlans: [
+      {
+        id: 'qa-feed-plan-default-morning',
+        stableId,
+        slot: 'morning',
+        label: 'Morgonfoder',
+        amount: '2 kg hösilage + 0.5 kg krossad havre',
+        isStableDefault: true,
+        active: true,
+      },
+      {
+        id: 'qa-feed-plan-saga-evening',
+        stableId,
+        horseId,
+        slot: 'evening',
+        label: 'Saga – kvällsfoder',
+        amount: '3 kg hösilage',
+        note: 'Trappa upp långsamt vid foderbyte.',
+        isStableDefault: false,
+        active: true,
+      },
+    ],
+    feedChecks: [
+      {
+        id: 'qa-feed-check-saga-morning',
+        stableId,
+        horseId,
+        date: today,
+        slot: 'morning',
+        checkedByUserId: QA_DEMO_USER_ID,
+        checkedAt: now,
+      },
+    ],
+    plannedRides: [
+      {
+        id: 'qa-planned-ride-1',
+        stableId,
+        horseId,
+        date: today,
+        time: '18:00',
+        rideTypeId: 'qa-ride-dressage',
+        note: 'Lugnt dressyrpass.',
+        riderUserId: QA_DEMO_USER_ID,
+        status: 'planned',
+        createdAt: now,
+      },
+    ],
+    externalContacts: [
+      {
+        id: 'qa-contact-vet',
+        stableId,
+        name: 'Anna Veterinär',
+        type: 'vet',
+        phone: '070-111 22 33',
+        email: 'anna@example.com',
+        createdAt: now,
+      },
+      {
+        id: 'qa-contact-farrier',
+        stableId,
+        name: 'Per Hovslagare',
+        type: 'farrier',
+        phone: '070-222 33 44',
+        createdAt: now,
+      },
+    ],
+    careEvents: [
+      {
+        id: 'qa-care-vaccin',
+        stableId,
+        horseIds: [horseId],
+        type: 'vaccination',
+        title: 'Årsvaccination',
+        date: tomorrow,
+        time: '14:00',
+        contactId: 'qa-contact-vet',
+        responsibleUserId: QA_DEMO_USER_ID,
+        status: 'planned',
+        note: 'Påminn om hälsointyg.',
+        createdAt: now,
+      },
+    ],
+  };
+}
 
 function reducer(state: AppDataState, action: AppDataAction): AppDataState {
   switch (action.type) {
@@ -1278,12 +1978,25 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'ALERT_ADD':
       return {
         ...state,
-        alerts: [action.payload, ...state.alerts],
+        alerts: [action.payload, ...state.alerts.filter(alert => alert.id !== action.payload.id)],
       };
+    case 'STABLE_ALERT_UPSERT': {
+      const existingIndex = state.stableAlerts.findIndex((alert) => alert.id === action.payload.id);
+      const stableAlerts = [...state.stableAlerts];
+      if (existingIndex >= 0) {
+        stableAlerts[existingIndex] = action.payload;
+      } else {
+        stableAlerts.push(action.payload);
+      }
+      stableAlerts.sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+      return { ...state, stableAlerts };
+    }
     case 'DAY_EVENT_ADD':
       return {
         ...state,
-        dayEvents: [action.payload, ...state.dayEvents],
+        dayEvents: [action.payload, ...state.dayEvents.filter(event => event.id !== action.payload.id)],
       };
     case 'DAY_EVENT_DELETE':
       return {
@@ -1293,7 +2006,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'ARENA_BOOKING_ADD':
       return {
         ...state,
-        arenaBookings: [...state.arenaBookings, action.payload],
+        arenaBookings: [...state.arenaBookings.filter(booking => booking.id !== action.payload.id), action.payload],
       };
     case 'ARENA_BOOKING_UPDATE': {
       const updated = state.arenaBookings.map((booking) =>
@@ -1312,7 +2025,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'ARENA_STATUS_ADD':
       return {
         ...state,
-        arenaStatuses: [action.payload, ...state.arenaStatuses],
+        arenaStatuses: [action.payload, ...state.arenaStatuses.filter(status => status.id !== action.payload.id)],
       };
     case 'ARENA_STATUS_DELETE':
       return {
@@ -1322,7 +2035,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'RIDE_LOG_ADD':
       return {
         ...state,
-        rideLogs: [action.payload, ...state.rideLogs],
+        rideLogs: [action.payload, ...state.rideLogs.filter((log) => log.id !== action.payload.id)],
       };
     case 'RIDE_LOG_DELETE':
       return {
@@ -1332,7 +2045,15 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'POST_ADD':
       return {
         ...state,
-        posts: [action.payload, ...state.posts],
+        posts: state.posts.some((post) => post.id === action.payload.id)
+          ? state.posts.map((post) => post.id === action.payload.id ? {
+            ...post,
+            content: action.payload.content,
+            groupIds: action.payload.groupIds,
+            image: action.payload.image,
+            imagePath: action.payload.imagePath,
+            imageSignedUrl: action.payload.imageSignedUrl,
+          } : post) : [action.payload, ...state.posts],
       };
     case 'POST_UPDATE': {
       const { id, updates } = action.payload;
@@ -1341,6 +2062,25 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         posts: state.posts.map((post) => (post.id === id ? { ...post, ...updates } : post)),
       };
     }
+    case 'POST_COMMENT_UPSERT':
+      return { ...state, posts: state.posts.map((post) => {
+        if (post.id !== action.payload.postId) return post;
+        const comments = post.commentsData ?? [];
+        const existing = comments.some(comment => comment.id === action.payload.id);
+        return { ...post, comments: post.comments + (existing ? 0 : 1),
+          commentsData: existing ? comments.map(comment => comment.id === action.payload.id ? action.payload : comment)
+            : [...comments, action.payload].sort((a, b) => a.createdAt.localeCompare(b.createdAt)) };
+      }) };
+    case 'POST_LIKE_SET':
+      return { ...state, posts: state.posts.map((post) => {
+        if (post.id !== action.payload.postId) return post;
+        const likedBy = new Set(post.likedByUserIds ?? []);
+        const alreadyLiked = likedBy.has(action.payload.userId);
+        if (action.payload.enabled) likedBy.add(action.payload.userId);
+        else likedBy.delete(action.payload.userId);
+        return { ...post, likedByUserIds: [...likedBy],
+          likes: Math.max(0, post.likes + (alreadyLiked === action.payload.enabled ? 0 : action.payload.enabled ? 1 : -1)) };
+      }) };
     case 'POST_DELETE':
       return {
         ...state,
@@ -1390,16 +2130,21 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'CONVERSATION_APPEND': {
       const { conversationId, message, preview } = action.payload;
       const existingMessages = state.conversations[conversationId] ?? [];
+      const duplicate = message && existingMessages.some((entry) => entry.id === message.id);
+      const nextMessages = message && !duplicate
+        ? [...existingMessages, message].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+        : existingMessages;
+      const preservePreview = duplicate || (message && nextMessages.at(-1)?.id !== message.id);
       const hasPreview = state.messages.some((msg) => msg.id === conversationId);
       const updatedPreview = hasPreview
-        ? state.messages.map((msg) => (msg.id === conversationId ? preview : msg))
+        ? state.messages.map((msg) => (msg.id === conversationId && !preservePreview ? preview : msg))
         : [preview, ...state.messages];
 
       return {
         ...state,
         conversations: {
           ...state.conversations,
-          [conversationId]: message ? [...existingMessages, message] : existingMessages,
+          [conversationId]: nextMessages,
         },
         messages: updatedPreview,
       };
@@ -1458,18 +2203,90 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
       };
     }
     case 'HORSE_DAY_STATUS_UPSERT': {
-      const existingIndex = state.horseDayStatuses.findIndex((status) => status.id === action.payload.id);
-      if (existingIndex >= 0) {
-        const next = [...state.horseDayStatuses];
-        next[existingIndex] = action.payload;
-        return {
-          ...state,
-          horseDayStatuses: next,
-        };
-      }
       return {
         ...state,
-        horseDayStatuses: [...state.horseDayStatuses, action.payload],
+        horseDayStatuses: [...state.horseDayStatuses.filter((status) =>
+          status.id !== action.payload.id && !(status.stableId === action.payload.stableId &&
+            status.horseId === action.payload.horseId && status.date === action.payload.date),
+        ), action.payload],
+      };
+    }
+    case 'FEED_PLAN_UPSERT': {
+      const existingIndex = state.feedPlans.findIndex((plan) => plan.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.feedPlans];
+        next[existingIndex] = action.payload;
+        return { ...state, feedPlans: next };
+      }
+      return { ...state, feedPlans: [...state.feedPlans, action.payload] };
+    }
+    case 'FEED_PLAN_DELETE': {
+      return {
+        ...state,
+        feedPlans: state.feedPlans.filter((plan) => plan.id !== action.payload.id),
+      };
+    }
+    case 'FEED_CHECK_UPSERT': {
+      return { ...state, feedChecks: [...state.feedChecks.filter((check) =>
+        check.id !== action.payload.id && !(check.stableId === action.payload.stableId &&
+          check.horseId === action.payload.horseId && check.date === action.payload.date && check.slot === action.payload.slot),
+      ), action.payload] };
+    }
+    case 'FEED_CHECK_DELETE': {
+      return {
+        ...state,
+        feedChecks: state.feedChecks.filter((check) => check.id !== action.payload.id),
+      };
+    }
+    case 'PLANNED_RIDE_UPSERT': {
+      const existingIndex = state.plannedRides.findIndex((ride) => ride.id === action.payload.id);
+      if (existingIndex >= 0) {
+        const next = [...state.plannedRides];
+        next[existingIndex] = action.payload;
+        return { ...state, plannedRides: next };
+      }
+      return { ...state, plannedRides: [...state.plannedRides, action.payload] };
+    }
+    case 'PLANNED_RIDE_DELETE': {
+      return {
+        ...state,
+        plannedRides: state.plannedRides.filter((ride) => ride.id !== action.payload.id),
+      };
+    }
+    case 'EXTERNAL_CONTACT_UPSERT': {
+      const existingIndex = state.externalContacts.findIndex(
+        (contact) => contact.id === action.payload.id,
+      );
+      if (existingIndex >= 0) {
+        const next = [...state.externalContacts];
+        next[existingIndex] = action.payload;
+        return { ...state, externalContacts: next };
+      }
+      return { ...state, externalContacts: [...state.externalContacts, action.payload] };
+    }
+    case 'EXTERNAL_CONTACT_DELETE': {
+      return {
+        ...state,
+        externalContacts: state.externalContacts.filter(
+          (contact) => contact.id !== action.payload.id,
+        ),
+      };
+    }
+    case 'CARE_EVENT_UPSERT': {
+      const existingIndex = state.careEvents.findIndex(
+        (event) => event.id === action.payload.id,
+      );
+      if (existingIndex >= 0) {
+        const next = [...state.careEvents];
+        next[existingIndex] = action.payload;
+        return { ...state, careEvents: next };
+      }
+      return { ...state, careEvents: [...state.careEvents, action.payload] };
+    }
+    case 'CARE_EVENT_DELETE': {
+      return {
+        ...state,
+        careEvents: state.careEvents.filter((event) => event.id !== action.payload.id),
       };
     }
     case 'STATE_HYDRATE': {
@@ -1503,6 +2320,14 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         sessionUserId,
         groups,
         horseDayStatuses: action.payload.horseDayStatuses ?? state.horseDayStatuses,
+        horseResponsibilities: action.payload.horseResponsibilities ?? state.horseResponsibilities,
+        stableAlerts: action.payload.stableAlerts ?? state.stableAlerts,
+        feedPlans: action.payload.feedPlans ?? state.feedPlans,
+        feedChecks: action.payload.feedChecks ?? state.feedChecks,
+        plannedRides: action.payload.plannedRides ?? state.plannedRides,
+        externalContacts: action.payload.externalContacts ?? state.externalContacts,
+        careEvents: action.payload.careEvents ?? state.careEvents,
+        blockedUserIds: action.payload.blockedUserIds ?? state.blockedUserIds,
       };
     }
     case 'STATE_RESET':
@@ -1623,6 +2448,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         stables,
         currentStableId: nextStableId,
         assignments: state.assignments.filter((assignment) => assignment.stableId !== action.payload.id),
+        stableAlerts: state.stableAlerts.filter((alert) => alert.stableId !== action.payload.id),
         dayEvents: state.dayEvents.filter((event) => event.stableId !== action.payload.id),
         arenaBookings: state.arenaBookings.filter((booking) => booking.stableId !== action.payload.id),
         arenaStatuses: state.arenaStatuses.filter((status) => status.stableId !== action.payload.id),
@@ -1630,6 +2456,13 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         paddocks: state.paddocks.filter((paddock) => paddock.stableId !== action.payload.id),
         horses: state.horses.filter((horse) => horse.stableId !== action.payload.id),
         horseDayStatuses: state.horseDayStatuses.filter((status) => status.stableId !== action.payload.id),
+        feedPlans: state.feedPlans.filter((plan) => plan.stableId !== action.payload.id),
+        feedChecks: state.feedChecks.filter((check) => check.stableId !== action.payload.id),
+        plannedRides: state.plannedRides.filter((ride) => ride.stableId !== action.payload.id),
+        externalContacts: state.externalContacts.filter(
+          (contact) => contact.stableId !== action.payload.id,
+        ),
+        careEvents: state.careEvents.filter((event) => event.stableId !== action.payload.id),
         groups,
         posts,
       };
@@ -1668,6 +2501,18 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         horses: state.horses.filter((horse) => horse.id !== action.payload.id),
         rideLogs: state.rideLogs.filter((log) => log.horseId !== action.payload.id),
         horseDayStatuses: state.horseDayStatuses.filter((status) => status.horseId !== action.payload.id),
+        feedPlans: state.feedPlans.filter((plan) => plan.horseId !== action.payload.id),
+        feedChecks: state.feedChecks.filter((check) => check.horseId !== action.payload.id),
+        plannedRides: state.plannedRides.filter((ride) => ride.horseId !== action.payload.id),
+        stableAlerts: state.stableAlerts.map((alert) =>
+          alert.horseId === action.payload.id ? { ...alert, horseId: undefined } : alert,
+        ),
+        careEvents: state.careEvents
+          .map((event) => ({
+            ...event,
+            horseIds: event.horseIds.filter((horseId) => horseId !== action.payload.id),
+          }))
+          .filter((event) => event.horseIds.length > 0),
         groups,
         posts,
       };
@@ -2130,7 +2975,7 @@ async function resolveBlob(image: UploadableImage, contentType: string) {
     return response.blob();
   }
 
-  const response = await fetch(image.uri);
+  const response = await createTimeoutFetch((input, init) => fetch(input, init))(image.uri);
   return response.blob();
 }
 
@@ -2190,9 +3035,47 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [hydrating, setHydrating] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [refreshError, setRefreshError] = React.useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const refreshRequestId = React.useRef(0);
+  const pendingDataWrites = React.useRef(new Set<string>());
+  const dataWriteVersion = React.useRef(0);
+  const defaultPassesStableId = React.useRef('');
+  const autoAssignmentAttempts = React.useRef(new Map<string, string>());
   const pendingOwnerStableErrorShown = React.useRef(false);
+  // Surfaces a failed background write to the user instead of swallowing it in a
+  // console.warn. Debounced so a burst of failed writes shows one toast, not many.
+  // The toast tells the user the optimistic change did not persist so they can reload.
+  const persistErrorAt = React.useRef(0);
+  const reportPersistError = React.useCallback(
+    (context: string, error: unknown) => {
+      console.warn(context, error);
+      // qaDemo is a backend-free demo seeded entirely from local state — every write
+      // "fails" because there is no live Supabase session. Optimistic state is the
+      // source of truth there, so don't alarm with persist-error toasts.
+      if (isQaDemoMode) return;
+      const now = Date.now();
+      if (now - persistErrorAt.current > 4000) {
+        persistErrorAt.current = now;
+        showToast('Kunde inte spara ändringen. Ladda om för att se senaste data.', 'error');
+      }
+    },
+    [showToast],
+  );
+  // Stable ref so persist callbacks can report errors without listing reportPersistError
+  // in every dependency array. Persist calls run async after commit, so the effect-synced
+  // ref is always current by the time it is invoked.
+  const reportPersistErrorRef = React.useRef(reportPersistError);
+  const trackDataWrite = React.useCallback((operation: Promise<unknown>) =>
+    trackPendingWrite(operation, pendingDataWrites.current,
+      () => { dataWriteVersion.current += 1; },
+      (error) => reportPersistErrorRef.current('[stable save] Kunde inte spara ändringen', error)), []);
+  React.useEffect(() => {
+    reportPersistErrorRef.current = reportPersistError;
+  }, [reportPersistError]);
   const recurringDurationById = React.useRef(new Map<string, number>());
+  const pendingInviteDrafts = React.useRef(new Map<string, { code: string; rows: Record<string, unknown>[] }>());
+  const pendingRecurringBatches = React.useRef(new Map<string, Assignment[]>());
+  const pendingAssignmentClaimIdsRef = React.useRef(new Set<string>());
 
   React.useEffect(() => {
     stateRef.current = state;
@@ -2211,42 +3094,198 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistAssignmentInsert = React.useCallback(
-    async (assignment: Assignment) => {
-      if (!user) return { error: new Error('Missing session') };
-      const { error } = await supabase
-        .from('assignments')
-        .insert(buildAssignmentInsertPayload(assignment));
-      if (error) {
-        console.warn('Kunde inte spara pass', error);
+    async (assignment: Assignment): Promise<{ error: unknown; reason?: string }> => {
+      if (isQaDemoMode) return { error: null };
+      const writeKey = `assignment:${assignment.id}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { error: new Error('Passet sparas redan.') };
       }
-      return { error };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const payload = buildAssignmentInsertPayload(assignment);
+        const { data, error } = await supabase.from('assignments')
+          .insert(payload)
+          .select('id')
+          .abortSignal(controller.signal);
+        if (error?.code === '23505') {
+          // The first INSERT may have succeeded while its acknowledgement was lost.
+          const { data: existing, error: readError } = await supabase.from('assignments')
+            .select('*')
+            .eq('id', assignment.id)
+            .eq('stable_id', assignment.stableId)
+            .abortSignal(controller.signal)
+            .single();
+          if (readError) throw readError;
+          const matches = existing && Object.entries(payload).every(([key, value]) =>
+            JSON.stringify(existing[key] ?? null) === JSON.stringify(value ?? null),
+          );
+          if (!matches) {
+            const reason = 'Passet har redan sparats med andra uppgifter. Uppdatera schemat och öppna passet för att redigera.';
+            console.warn('[assignment create] Befintligt pass matchar inte utkastet', { assignmentId: assignment.id });
+            return { error: new Error(reason), reason };
+          }
+          return { error: null };
+        }
+        if (error) throw error;
+        if (!data?.some((row) => row.id === assignment.id)) {
+          throw new Error('Servern bekräftade inte det nya passet.');
+        }
+        return { error: null };
+      } catch (error) {
+        console.warn('[assignment create] Kunde inte skapa pass', error);
+        return { error };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(writeKey);
+      }
     },
     [user],
   );
 
   const persistAssignmentBatchInsert = React.useCallback(
     async (assignmentsToInsert: Assignment[]) => {
-      if (!user) return { error: new Error('Missing session') };
-      const payload = assignmentsToInsert.map(buildAssignmentInsertPayload);
-      const { error } = await supabase.from('assignments').insert(payload);
-      if (error) {
-        console.warn('Kunde inte spara återkommande pass', error);
+      if (isQaDemoMode) return { error: null };
+      const keys = assignmentsToInsert.map((assignment) => `assignment:${assignment.id}`);
+      if (keys.some((key) => pendingDataWrites.current.has(key))) return { error: new Error('Passen sparas redan.') };
+      keys.forEach((key) => pendingDataWrites.current.add(key));
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const payload = assignmentsToInsert.map(buildAssignmentInsertPayload);
+        const { data, error } = await supabase.from('assignments').insert(payload).select('id').abortSignal(controller.signal);
+        if (error?.code === '23505') {
+          const { data: existing, error: readError } = await supabase.from('assignments').select('*')
+            .in('id', assignmentsToInsert.map((assignment) => assignment.id)).abortSignal(controller.signal);
+          if (readError) throw readError;
+          const matches = payload.every((row) => {
+            const saved = existing?.find((item) => item.id === row.id);
+            return saved && Object.entries(row).every(([key, value]) => JSON.stringify(saved[key] ?? null) === JSON.stringify(value ?? null));
+          });
+          if (!matches) throw new Error('Befintliga pass matchar inte serien. Uppdatera schemat.');
+          return { error: null };
+        }
+        if (error) throw error;
+        if (!assignmentsToInsert.every((assignment) => data?.some((row) => row.id === assignment.id))) {
+          throw new Error('Servern bekräftade inte hela serien.');
+        }
+        return { error: null };
+      } catch (error) {
+        console.warn('[assignment series] Kunde inte skapa återkommande pass', error);
+        return { error };
+      } finally {
+        clearTimeout(timeout);
+        keys.forEach((key) => pendingDataWrites.current.delete(key));
       }
-      return { error };
     },
     [user],
   );
 
   const persistAssignmentUpdate = React.useCallback(
-    async (assignmentId: string, updates: Partial<Assignment>, overrides?: Record<string, unknown>) => {
-      if (!user) return;
-      const payload = {
-        ...buildAssignmentUpdatePayload(updates),
-        ...(overrides ?? {}),
-      };
-      const { error } = await supabase.from('assignments').update(payload).eq('id', assignmentId);
+    async (assignmentId: string, updates: Partial<Assignment>, overrides?: Record<string, unknown>, reportFailure = true) => {
+      if (isQaDemoMode) return { error: null };
+      const writeKey = `assignment:${assignmentId}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { error: new Error('Passet sparas redan.') };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const existing = stateRef.current.assignments.find((assignment) => assignment.id === assignmentId);
+        if (!existing) throw new Error('Passet kunde inte hittas.');
+        const payload = {
+          ...buildAssignmentUpdatePayload(updates),
+          ...(overrides ?? {}),
+        };
+        let query = supabase.from('assignments').update(payload)
+          .eq('id', assignmentId)
+          .eq('stable_id', existing.stableId)
+          .eq('status', existing.status);
+        query = existing.assigneeId
+          ? query.eq('assignee_id', existing.assigneeId)
+          : query.is('assignee_id', null);
+        const { data, error } = await query.select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === assignmentId)) {
+          throw new Error('Servern bekräftade inte passändringen. Passet kan ha ändrats av någon annan.');
+        }
+        return { error: null };
+      } catch (error) {
+        if (reportFailure) reportPersistError('[assignment update] Kunde inte uppdatera pass', error);
+        else console.warn('[assignment update] Kunde inte uppdatera pass', error);
+        return { error };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(writeKey);
+      }
+    },
+    [user, reportPersistError],
+  );
+
+  const persistAssignmentClaim = React.useCallback(
+    async (assignmentId: string, updates: Partial<Assignment>) => {
+      if (isQaDemoMode) return { claimed: true, error: null };
+      if (!user) {
+        const error = new Error('Missing session');
+        reportPersistError('[assignment claim] Session saknas', error);
+        return { claimed: false, error };
+      }
+
+      const { data, error } = await supabase
+        .from('assignments')
+        .update(buildAssignmentUpdatePayload(updates))
+        .eq('id', assignmentId)
+        .eq('status', 'open')
+        .is('assignee_id', null)
+        .select('id');
       if (error) {
-        console.warn('Kunde inte uppdatera pass', error);
+        reportPersistError('[assignment claim] Kunde inte ta pass', error);
+      }
+      return { claimed: Boolean(data?.length), error };
+    },
+    [user, reportPersistError],
+  );
+
+  const persistOwnAssignmentUpdate = React.useCallback(
+    async (assignment: Assignment, updates: Partial<Assignment>): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const writeKey = `assignment:${assignment.id}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Passet sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('assignments')
+          .update(buildAssignmentUpdatePayload(updates))
+          .eq('id', assignment.id)
+          .eq('stable_id', assignment.stableId)
+          .eq('status', 'assigned')
+          .eq('assignee_id', user.id)
+          .select('id')
+          .abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === assignment.id)) {
+          return { success: false, reason: 'Passet har ändrats av någon annan. Uppdatera schemat och försök igen.' };
+        }
+        return { success: true };
+      } catch (error) {
+        console.warn('[assignment update] Kunde inte uppdatera eget pass', error);
+        return { success: false, reason: 'Passet kunde inte uppdateras. Försök igen.' };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(writeKey);
       }
     },
     [user],
@@ -2254,10 +3293,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentDelete = React.useCallback(
     async (assignmentId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
-      if (error) {
-        console.warn('Kunde inte ta bort pass', error);
+      if (isQaDemoMode) return { error: null };
+      const writeKey = `assignment:${assignmentId}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { error: new Error('Passet sparas redan.') };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const existing = stateRef.current.assignments.find((assignment) => assignment.id === assignmentId);
+        if (!existing) throw new Error('Passet kunde inte hittas.');
+        let query = supabase.from('assignments').delete()
+          .eq('id', assignmentId)
+          .eq('stable_id', existing.stableId)
+          .eq('status', existing.status);
+        query = existing.assigneeId
+          ? query.eq('assignee_id', existing.assigneeId)
+          : query.is('assignee_id', null);
+        const { data, error } = await query.select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === assignmentId)) {
+          throw new Error('Servern bekräftade inte borttagningen. Passet kan ha ändrats av någon annan.');
+        }
+        return { error: null };
+      } catch (error) {
+        console.warn('[assignment delete] Kunde inte ta bort pass', error);
+        return { error };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(writeKey);
       }
     },
     [user],
@@ -2274,512 +3341,1031 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         action,
       });
       if (error) {
-        console.warn('Kunde inte spara passhistorik', error);
+        reportPersistError('Kunde inte spara passhistorik', error);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistPaddockUpsert = React.useCallback(
-    async (paddock: Paddock, imageInput: PaddockImage | null | undefined) => {
-      if (!user) return;
+    async (paddock: Paddock, imageInput: PaddockImage | null | undefined, existing: boolean): Promise<ActionResult<Paddock>> => {
+      if (isQaDemoMode) return { success: true, data: paddock };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
       try {
-        let imageUrl: string | null | undefined;
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const payload: Record<string, unknown> = {
+          id: paddock.id, stable_id: paddock.stableId, name: paddock.name,
+          horse_names: paddock.horseNames, season: paddock.season ?? 'yearRound', updated_at: paddock.updatedAt,
+        };
         if (imageInput === null) {
-          imageUrl = null;
-        } else if (paddock.image) {
-          const uploadable = getUploadableImage(paddock.image);
+          payload.image_url = null;
+        } else if (imageInput) {
+          const uploadable = getUploadableImage(imageInput);
           if (uploadable) {
-            if (isRemoteUri(uploadable.uri)) {
-              imageUrl = uploadable.uri;
-            } else {
-              const uploadResult = await uploadImageToStorage('paddocks', paddock.stableId, uploadable);
-              imageUrl = uploadResult.publicUrl;
-            }
+            payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
+              : (await uploadImageToStorage('paddocks', paddock.stableId, uploadable)).publicUrl;
           }
         }
-
-        const payload: Record<string, unknown> = {
-          id: paddock.id,
-          stable_id: paddock.stableId,
-          name: paddock.name,
-          horse_names: paddock.horseNames,
-          season: paddock.season ?? 'yearRound',
-          updated_at: paddock.updatedAt,
-        };
-        if (imageUrl !== undefined) {
-          payload.image_url = imageUrl;
+        const query = existing
+          ? supabase.from('paddocks').update(payload).eq('id', paddock.id).eq('stable_id', paddock.stableId)
+          : supabase.from('paddocks').upsert(payload);
+        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        if (error || data?.id !== paddock.id || data.stable_id !== paddock.stableId
+          || data.name !== paddock.name || JSON.stringify(data.horse_names) !== JSON.stringify(paddock.horseNames)
+          || data.season !== (paddock.season ?? 'yearRound')
+          || ('image_url' in payload && data.image_url !== payload.image_url)) {
+          throw error ?? new Error('Servern bekräftade inte hagen.');
         }
-
-        const { error } = await supabase.from('paddocks').upsert(payload);
-        if (error) {
-          console.warn('Kunde inte spara hage', error);
-          return;
-        }
-
-        if (imageUrl && paddock.image?.uri !== imageUrl) {
-          dispatch({
-            type: 'PADDOCK_UPSERT',
-            payload: { ...paddock, image: { uri: imageUrl } },
-          });
-        }
+        return { success: true, data: {
+          id: data.id, stableId: data.stable_id, name: data.name, horseNames: data.horse_names,
+          season: data.season, updatedAt: data.updated_at,
+          image: data.image_url ? { uri: data.image_url } : undefined,
+        } };
       } catch (error) {
-        console.warn('Kunde inte spara hage', error);
-      }
+        console.warn('[paddock save] Kunde inte spara hage', error);
+        return { success: false, reason: 'Hagen kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistPaddockDelete = React.useCallback(
-    async (paddockId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('paddocks').delete().eq('id', paddockId);
-      if (error) {
-        console.warn('Kunde inte ta bort hage', error);
-      }
+    async (paddock: Paddock): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('paddocks').delete().eq('id', paddock.id)
+          .eq('stable_id', paddock.stableId).select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === paddock.id)) throw new Error('Servern bekräftade inte borttagningen av hagen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[paddock delete] Kunde inte ta bort hage', error);
+        return { success: false, reason: 'Hagen kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistHorseUpsert = React.useCallback(
-    async (horse: Horse) => {
-      if (!user) return;
+    async (horse: Horse, input: UpsertHorseInput, existing: boolean): Promise<ActionResult<Horse>> => {
+      if (isQaDemoMode) return { success: true, data: horse };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
       try {
-        let imageUrl: string | null | undefined;
-        if (horse.image) {
-          const uploadable = getUploadableImage(horse.image);
+        if (!user) throw new Error('Session saknas.');
+        const payload: Record<string, unknown> = { id: horse.id, stable_id: horse.stableId };
+        if (!existing || 'name' in input) payload.name = horse.name;
+        const fields = {
+          ownerUserId: 'owner_user_id', boxNumber: 'box_number', canSleepInside: 'can_sleep_inside',
+          gender: 'gender', age: 'age', note: 'note',
+        } as const;
+        for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+          if (key in input) payload[fields[key]] = horse[key] ?? null;
+        }
+        if ('image' in input) {
+          const uploadable = input.image ? getUploadableImage(input.image) : null;
           if (uploadable) {
-            if (isRemoteUri(uploadable.uri)) {
-              imageUrl = uploadable.uri;
-            } else {
-              const uploadResult = await uploadImageToStorage('avatars', horse.stableId, uploadable);
-              imageUrl = uploadResult.publicUrl;
-            }
+            payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
+              : (await uploadImageToStorage('avatars', horse.stableId, uploadable)).publicUrl;
+          } else if (!input.image) {
+            payload.image_url = null;
           }
         }
-
-        const payload: Record<string, unknown> = {
-          id: horse.id,
-          stable_id: horse.stableId,
-          name: horse.name,
-          owner_user_id: horse.ownerUserId ?? null,
-          box_number: horse.boxNumber ?? null,
-          can_sleep_inside: horse.canSleepInside ?? null,
-          gender: horse.gender ?? null,
-          age: horse.age ?? null,
-          note: horse.note ?? null,
-        };
-        if (imageUrl !== undefined) {
-          payload.image_url = imageUrl;
+        const query = existing
+          ? supabase.from('horses').update(payload).eq('id', horse.id).eq('stable_id', horse.stableId)
+          : supabase.from('horses').upsert(payload);
+        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        if (error || data?.id !== horse.id || data.stable_id !== horse.stableId) {
+          throw error ?? new Error('Servern bekräftade inte hästen.');
         }
-
-        const { error } = await supabase.from('horses').upsert(payload);
-        if (error) {
-          console.warn('Kunde inte spara häst', error);
-          return;
-        }
-
-        const currentUri =
-          horse.image && typeof horse.image === 'object' && 'uri' in horse.image
-            ? (horse.image as { uri?: string }).uri
-            : undefined;
-        if (imageUrl && imageUrl !== currentUri) {
-          dispatch({
-            type: 'HORSE_UPSERT',
-            payload: { ...horse, image: { uri: imageUrl } },
-          });
-        }
+        return { success: true, data: {
+          id: data.id, stableId: data.stable_id, name: data.name,
+          ownerUserId: data.owner_user_id ?? undefined, boxNumber: data.box_number ?? undefined,
+          canSleepInside: data.can_sleep_inside ?? undefined, gender: data.gender ?? undefined,
+          age: data.age ?? undefined, note: data.note ?? undefined,
+          image: data.image_url ? { uri: data.image_url } : undefined,
+        } };
       } catch (error) {
-        console.warn('Kunde inte spara häst', error);
-      }
+        console.warn('[horse save] Kunde inte spara häst', error);
+        return { success: false, reason: 'Hästen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistHorseDelete = React.useCallback(
-    async (horseId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('horses').delete().eq('id', horseId);
-      if (error) {
-        console.warn('Kunde inte ta bort häst', error);
-      }
+    async (horse: Horse): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('horses').delete().eq('id', horse.id)
+          .eq('stable_id', horse.stableId).select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === horse.id)) throw new Error('Servern bekräftade inte borttagningen av hästen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[horse delete] Kunde inte ta bort häst', error);
+        return { success: false, reason: 'Hästen kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistHorseDayStatusUpsert = React.useCallback(
-    async (status: HorseDayStatus) => {
-      if (!user) return;
-      const { error } = await supabase.from('horse_day_statuses').upsert(
-        {
-          id: status.id,
-          stable_id: status.stableId,
-          horse_id: status.horseId,
-          date: status.date,
-          day_status: status.dayStatus ?? null,
-          night_status: status.nightStatus ?? null,
-          checked: status.checked ?? null,
-          water: status.water ?? null,
-          hay: status.hay ?? null,
-        },
-        { onConflict: 'stable_id,horse_id,date' },
-      );
-      if (error) {
-        console.warn('Kunde inte spara häststatus', error);
+    async (status: HorseDayStatus, updates: UpdateHorseDayStatusInput['updates']): Promise<HorseDayStatus> => {
+      if (isQaDemoMode) return status;
+      if (!user) throw new Error('Session saknas.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        // Send only edited fields so another phone's water/hay mark is preserved.
+        const { data, error } = await supabase.from('horse_day_statuses').upsert(
+          {
+            id: status.id,
+            stable_id: status.stableId,
+            horse_id: status.horseId,
+            date: status.date,
+            ...('dayStatus' in updates ? { day_status: updates.dayStatus ?? null } : {}),
+            ...('nightStatus' in updates ? { night_status: updates.nightStatus ?? null } : {}),
+            ...('checked' in updates ? { checked: updates.checked ?? null } : {}),
+            ...('water' in updates ? { water: updates.water ?? null } : {}),
+            ...('hay' in updates ? { hay: updates.hay ?? null } : {}),
+          },
+          { onConflict: 'stable_id,horse_id,date' },
+        ).select('*').abortSignal(controller.signal).single();
+        if (error) throw error;
+        if (!data?.id || data.horse_id !== status.horseId || data.date !== status.date) {
+          throw new Error('Servern bekräftade inte häststatus.');
+        }
+        return {
+          id: data.id, stableId: data.stable_id, horseId: data.horse_id, date: data.date,
+          dayStatus: data.day_status ?? undefined, nightStatus: data.night_status ?? undefined,
+          checked: data.checked ?? undefined, water: data.water ?? undefined, hay: data.hay ?? undefined,
+        };
+      } finally {
+        clearTimeout(timeout);
       }
+    },
+    [user],
+  );
+
+  const persistFeedPlanUpsert = React.useCallback(
+    async (plan: FeedPlanItem): Promise<FeedPlanItem> => {
+      if (isQaDemoMode) return plan;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const { data, error } = await supabase.from('feed_plans').upsert({
+          id: plan.id,
+          stable_id: plan.stableId,
+          horse_id: plan.horseId ?? null,
+          slot: plan.slot,
+          label: plan.label,
+          amount: plan.amount ?? null,
+          note: plan.note ?? null,
+          is_stable_default: plan.isStableDefault,
+          active: plan.active,
+          updated_at: new Date().toISOString(),
+        }).select('*').abortSignal(controller.signal).single();
+        if (error) throw error;
+        if (!data || data.id !== plan.id || data.stable_id !== plan.stableId) {
+          throw new Error('Servern bekräftade inte foderplanen.');
+        }
+        return {
+          id: data.id, stableId: data.stable_id, horseId: data.horse_id ?? undefined,
+          slot: data.slot, label: data.label, amount: data.amount ?? undefined,
+          note: data.note ?? undefined, isStableDefault: data.is_stable_default ?? false,
+          active: data.active ?? true,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    [user],
+  );
+
+  const persistFeedPlanDelete = React.useCallback(
+    async (plan: FeedPlanItem): Promise<void> => {
+      if (isQaDemoMode) return;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const { data, error } = await supabase.from('feed_plans').delete()
+          .eq('id', plan.id).eq('stable_id', plan.stableId)
+          .select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === plan.id)) {
+          throw new Error('Servern bekräftade inte borttagningen av foderplanen.');
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    [user],
+  );
+
+  const persistFeedCheckUpsert = React.useCallback(
+    async (check: FeedCheck, input: UpsertFeedCheckInput): Promise<FeedCheck> => {
+      if (isQaDemoMode) return check;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const { data, error } = await supabase.from('feed_checks').upsert(
+          {
+            id: check.id,
+            stable_id: check.stableId,
+            horse_id: check.horseId,
+            date: check.date,
+            slot: check.slot,
+            ...(input.checked !== undefined ? {
+              checked_by_user_id: check.checkedByUserId ?? null,
+              checked_at: check.checkedAt ?? null,
+            } : {}),
+            ...(input.deviationNote !== undefined ? { deviation_note: check.deviationNote ?? null } : {}),
+          },
+          { onConflict: 'horse_id,date,slot' },
+        ).select('*').abortSignal(controller.signal).single();
+        if (error) throw error;
+        if (!data?.id || data.horse_id !== check.horseId || data.date !== check.date || data.slot !== check.slot) {
+          throw new Error('Servern bekräftade inte foderkollen.');
+        }
+        return {
+          id: data.id,
+          stableId: data.stable_id,
+          horseId: data.horse_id,
+          date: data.date,
+          slot: data.slot,
+          checkedByUserId: data.checked_by_user_id ?? undefined,
+          checkedAt: data.checked_at ?? undefined,
+          deviationNote: data.deviation_note ?? undefined,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    [user],
+  );
+
+  const persistPlannedRideUpsert = React.useCallback(
+    async (ride: PlannedRide, previous?: PlannedRide, updates?: UpdatePlannedRideInput['updates']): Promise<PlannedRide> => {
+      if (isQaDemoMode) return ride;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const completing = Boolean(previous && !updates && ride.status === 'done');
+      const payload = {
+        id: ride.id, stable_id: ride.stableId, horse_id: ride.horseId,
+        rider_user_id: ride.riderUserId ?? null, date: ride.date, time: ride.time ?? null,
+        ride_type_id: ride.rideTypeId ?? null, note: ride.note ?? null, status: ride.status,
+        completed_ride_log_id: ride.completedRideLogId ?? null,
+      };
+      const fields = completing ? {
+        status: 'done', completed_ride_log_id: ride.completedRideLogId,
+      } : updates ? {
+        ...('date' in updates ? { date: ride.date } : {}),
+        ...('time' in updates ? { time: ride.time ?? null } : {}),
+        ...('rideTypeId' in updates ? { ride_type_id: ride.rideTypeId ?? null } : {}),
+        ...('note' in updates ? { note: ride.note ?? null } : {}),
+        ...('riderUserId' in updates ? { rider_user_id: ride.riderUserId ?? null } : {}),
+        ...('status' in updates ? { status: ride.status } : {}),
+      } : payload;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const write = { ...fields, updated_at: new Date().toISOString() };
+        let query;
+        if (previous) {
+          query = supabase.from('planned_rides').update(write)
+            .eq('id', ride.id).eq('stable_id', ride.stableId).eq('status', previous.status);
+          query = previous.completedRideLogId
+            ? query.eq('completed_ride_log_id', previous.completedRideLogId)
+            : query.is('completed_ride_log_id', null);
+          if (completing) {
+            query = query.eq('horse_id', previous.horseId).eq('date', previous.date);
+            query = previous.rideTypeId ? query.eq('ride_type_id', previous.rideTypeId) : query.is('ride_type_id', null);
+          }
+        } else {
+          query = supabase.from('planned_rides').insert(write);
+        }
+        const result = await query.select('*').abortSignal(controller.signal).single();
+        let data = result.data;
+        const recoverCreate = !previous && result.error?.code === '23505';
+        const recoverCompletion = completing && ((!result.error && !data) || result.error?.code === 'PGRST116');
+        if (recoverCreate || recoverCompletion) {
+          const recovered = await supabase.from('planned_rides').select('*')
+            .eq('id', ride.id).eq('stable_id', ride.stableId).abortSignal(controller.signal).single();
+          if (recovered.error) throw recovered.error;
+          data = recovered.data;
+        } else if (result.error) {
+          throw result.error;
+        }
+        if (!data || data.id !== ride.id || data.stable_id !== ride.stableId ||
+            !Object.entries(fields).every(([key, value]) => JSON.stringify(data[key] ?? null) === JSON.stringify(value ?? null))) {
+          throw new Error('Ridpasset har ändrats eller avbokats, eller kunde inte bekräftas. Uppdatera sidan.');
+        }
+        return {
+          id: data.id, stableId: data.stable_id, horseId: data.horse_id,
+          riderUserId: data.rider_user_id ?? undefined, date: data.date,
+          time: data.time ?? undefined, rideTypeId: data.ride_type_id ?? undefined,
+          note: data.note ?? undefined, status: data.status,
+          completedRideLogId: data.completed_ride_log_id ?? undefined, createdAt: data.created_at,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    [user],
+  );
+
+  const persistPlannedRideDelete = React.useCallback(
+    async (ride: PlannedRide): Promise<void> => {
+      if (isQaDemoMode) return;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        let query = supabase.from('planned_rides').delete().eq('id', ride.id)
+          .eq('stable_id', ride.stableId).eq('status', ride.status);
+        query = ride.completedRideLogId
+          ? query.eq('completed_ride_log_id', ride.completedRideLogId)
+          : query.is('completed_ride_log_id', null);
+        const { data, error } = await query.select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === ride.id)) throw new Error('Servern bekräftade inte borttagningen av ridpasset.');
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    [user],
+  );
+
+  const persistExternalContactUpsert = React.useCallback(
+    async (contact: ExternalContact): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('external_contacts').upsert({
+          id: contact.id, stable_id: contact.stableId, name: contact.name, type: contact.type,
+          phone: contact.phone ?? null, email: contact.email ?? null, note: contact.note ?? null,
+          updated_at: new Date().toISOString(),
+        }).select('id').abortSignal(controller.signal).single();
+        if (error || data?.id !== contact.id) throw error ?? new Error('Servern bekräftade inte kontakten.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[contacts save] Kunde inte spara kontakt', error);
+        return { success: false, reason: 'Kontakten kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
+    },
+    [user],
+  );
+
+  const persistExternalContactDelete = React.useCallback(
+    async (contactId: string): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('external_contacts').delete().eq('id', contactId)
+          .select('id').abortSignal(controller.signal).single();
+        if (error || data?.id !== contactId) throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[contacts delete] Kunde inte ta bort kontakt', error);
+        return { success: false, reason: 'Kontakten kunde inte tas bort. Uppdatera eller försök igen.' };
+      } finally { clearTimeout(timeout); }
+    },
+    [user],
+  );
+
+  const persistCareEventUpsert = React.useCallback(
+    async (event: CareEvent, previous?: CareEvent, updates?: Partial<CareEvent>): Promise<CareEvent> => {
+      if (isQaDemoMode) return event;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const payload = {
+        id: event.id, stable_id: event.stableId, horse_ids: event.horseIds,
+        type: event.type, title: event.title, date: event.date, time: event.time ?? null,
+        contact_id: event.contactId ?? null, responsible_user_id: event.responsibleUserId ?? null,
+        status: event.status, note: event.note ?? null, completed_at: event.completedAt ?? null,
+      };
+      const fields = previous && updates ? {
+        ...('horseIds' in updates ? { horse_ids: event.horseIds } : {}),
+        ...('type' in updates ? { type: event.type } : {}),
+        ...('title' in updates ? { title: event.title } : {}),
+        ...('date' in updates ? { date: event.date } : {}),
+        ...('time' in updates ? { time: event.time ?? null } : {}),
+        ...('contactId' in updates ? { contact_id: event.contactId ?? null } : {}),
+        ...('responsibleUserId' in updates ? { responsible_user_id: event.responsibleUserId ?? null } : {}),
+        ...('status' in updates ? { status: event.status } : {}),
+        ...('note' in updates ? { note: event.note ?? null } : {}),
+        ...('completedAt' in updates ? { completed_at: event.completedAt ?? null } : {}),
+      } : payload;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const write = { ...fields, updated_at: new Date().toISOString() };
+        const query = previous
+          ? supabase.from('care_events').update(write).eq('id', event.id).eq('stable_id', event.stableId).eq('status', previous.status)
+          : supabase.from('care_events').insert(write);
+        const result = await query.select('*').abortSignal(controller.signal).single();
+        let data = result.data;
+        const recoverCreate = !previous && result.error?.code === '23505';
+        const recoverStatus = Boolean(previous && updates?.status && previous.status !== updates.status && result.error?.code === 'PGRST116');
+        if (recoverCreate || recoverStatus) {
+          const recovered = await supabase.from('care_events').select('*')
+            .eq('id', event.id).eq('stable_id', event.stableId).abortSignal(controller.signal).single();
+          if (recovered.error) throw recovered.error;
+          data = recovered.data;
+        } else if (result.error) {
+          throw result.error;
+        }
+        if (!data || data.id !== event.id || data.stable_id !== event.stableId ||
+            !Object.entries(fields).every(([key, value]) => {
+              if (key === 'completed_at' && value && data[key]) {
+                return recoverStatus || new Date(data[key]).getTime() === new Date(value as string).getTime();
+              }
+              return JSON.stringify(data[key] ?? null) === JSON.stringify(value ?? null);
+            })) {
+          throw new Error('Vårdhändelsen har ändrats eller sparats med andra uppgifter. Uppdatera sidan innan du försöker igen.');
+        }
+        return {
+          id: data.id, stableId: data.stable_id, horseIds: data.horse_ids,
+          type: data.type, title: data.title, date: data.date, time: data.time ?? undefined,
+          contactId: data.contact_id ?? undefined, responsibleUserId: data.responsible_user_id ?? undefined,
+          status: data.status, note: data.note ?? undefined,
+          completedAt: data.completed_at ?? undefined, createdAt: data.created_at,
+        };
+      } finally { clearTimeout(timeout); }
+    },
+    [user],
+  );
+
+  const persistCareEventDelete = React.useCallback(
+    async (event: CareEvent): Promise<void> => {
+      if (isQaDemoMode) return;
+      if (!user) throw new Error('Session saknas. Logga in igen.');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const { data, error } = await supabase.from('care_events').delete().eq('id', event.id)
+          .eq('stable_id', event.stableId).eq('status', event.status).select('id').abortSignal(controller.signal);
+        if (error) throw error;
+        if (!data?.some((row) => row.id === event.id)) throw new Error('Servern bekräftade inte borttagningen av vårdhändelsen.');
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistDayEventInsert = React.useCallback(
-    async (event: DayEvent) => {
-      if (!user) return;
-      const { error } = await supabase.from('day_events').insert({
-        id: event.id,
-        stable_id: event.stableId,
-        date: event.date,
-        label: event.label,
-        tone: event.tone,
-      });
-      if (error) {
-        console.warn('Kunde inte spara dagsnotis', error);
-      }
+    async (event: DayEvent): Promise<ActionResult<DayEvent>> => {
+      if (isQaDemoMode) return { success: true, data: event };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const payload = { id: event.id, stable_id: event.stableId, date: event.date, label: event.label, tone: event.tone };
+        let { data, error } = await supabase.from('day_events').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('day_events').select('*').eq('id', event.id)
+            .eq('stable_id', event.stableId).abortSignal(controller.signal).single());
+        }
+        if (error || !data || Object.entries(payload).some(([key, value]) => data[key] !== value)) throw error ?? new Error('Servern bekräftade inte uppgifterna.');
+        return { success: true, data: event };
+      } catch (error) {
+        console.warn('[day event save] Kunde inte spara', error);
+        return { success: false, reason: 'Uppgifterna kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistDayEventDelete = React.useCallback(
-    async (eventId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('day_events').delete().eq('id', eventId);
-      if (error) {
-        console.warn('Kunde inte ta bort dagsnotis', error);
-      }
+    async (event: DayEvent): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('day_events').delete().eq('id', event.id)
+          .eq('stable_id', event.stableId).select('id').abortSignal(controller.signal);
+        if (error || !data?.some(row => row.id === event.id)) throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[day event delete] Kunde inte ta bort', error);
+        return { success: false, reason: 'Uppgifterna kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistArenaBookingInsert = React.useCallback(
-    async (booking: ArenaBooking) => {
-      if (!user) return;
-      const { error } = await supabase.from('arena_bookings').insert({
-        id: booking.id,
-        stable_id: booking.stableId,
-        date: booking.date,
-        start_time: booking.startTime,
-        end_time: booking.endTime,
-        purpose: booking.purpose,
-        note: booking.note ?? null,
-        booked_by_user_id: booking.bookedByUserId,
-      });
-      if (error) {
-        console.warn('Kunde inte spara ridhusbokning', error);
-      }
+    async (booking: ArenaBooking): Promise<ActionResult<ArenaBooking>> => {
+      if (isQaDemoMode) return { success: true, data: booking };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const payload = { id: booking.id, stable_id: booking.stableId, date: booking.date,
+          start_time: booking.startTime, end_time: booking.endTime, purpose: booking.purpose,
+          note: booking.note ?? null, booked_by_user_id: booking.bookedByUserId };
+        let { data, error } = await supabase.from('arena_bookings').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('arena_bookings').select('*').eq('id', booking.id)
+            .eq('stable_id', booking.stableId).abortSignal(controller.signal).single());
+        }
+        if (error || !data || Object.entries(payload).some(([key, value]) =>
+          (key === 'start_time' || key === 'end_time' ? String(data[key]).slice(0, 5) : data[key]) !== value)) {
+          throw error ?? new Error('Servern bekräftade inte bokningen.');
+        }
+        return { success: true, data: booking };
+      } catch (error) {
+        console.warn('[arena booking save] Kunde inte spara ridhusbokning', error);
+        return { success: false, reason: 'Bokningen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistArenaBookingUpdate = React.useCallback(
-    async (bookingId: string, updates: Partial<ArenaBooking>) => {
-      if (!user) return;
-      const payload: Record<string, unknown> = {};
-      if (hasOwnProperty(updates, 'date')) {
-        payload.date = updates.date;
-      }
-      if (hasOwnProperty(updates, 'startTime')) {
-        payload.start_time = updates.startTime;
-      }
-      if (hasOwnProperty(updates, 'endTime')) {
-        payload.end_time = updates.endTime;
-      }
-      if (hasOwnProperty(updates, 'purpose')) {
-        payload.purpose = updates.purpose;
-      }
-      if (hasOwnProperty(updates, 'note')) {
-        payload.note = updates.note ?? null;
-      }
-      if (!Object.keys(payload).length) {
-        return;
-      }
-      const { error } = await supabase.from('arena_bookings').update(payload).eq('id', bookingId);
-      if (error) {
-        console.warn('Kunde inte uppdatera ridhusbokning', error);
-      }
+    async (booking: ArenaBooking, updates: Partial<ArenaBooking>): Promise<ActionResult<ArenaBooking>> => {
+      if (isQaDemoMode) return { success: true, data: { ...booking, ...updates } };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const fields = { date: 'date', startTime: 'start_time', endTime: 'end_time', purpose: 'purpose', note: 'note' } as const;
+        const payload: Record<string, unknown> = {};
+        for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+          if (hasOwnProperty(updates, key)) payload[fields[key]] = updates[key] ?? null;
+        }
+        if (!Object.keys(payload).length) return { success: true, data: booking };
+        const { data, error } = await supabase.from('arena_bookings').update(payload).eq('id', booking.id)
+          .eq('stable_id', booking.stableId).select('*').abortSignal(controller.signal).single();
+        if (error || data?.id !== booking.id || data.stable_id !== booking.stableId) throw error ?? new Error('Servern bekräftade inte bokningen.');
+        return { success: true, data: { id: data.id, stableId: data.stable_id, date: data.date,
+          startTime: String(data.start_time).slice(0, 5), endTime: String(data.end_time).slice(0, 5),
+          purpose: data.purpose, note: data.note ?? undefined, bookedByUserId: data.booked_by_user_id } };
+      } catch (error) {
+        console.warn('[arena booking update] Kunde inte uppdatera ridhusbokning', error);
+        return { success: false, reason: 'Bokningen kunde inte uppdateras. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistArenaBookingDelete = React.useCallback(
-    async (bookingId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('arena_bookings').delete().eq('id', bookingId);
-      if (error) {
-        console.warn('Kunde inte ta bort ridhusbokning', error);
-      }
+    async (booking: ArenaBooking): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('arena_bookings').delete().eq('id', booking.id)
+          .eq('stable_id', booking.stableId).select('id').abortSignal(controller.signal);
+        if (error || !data?.some(row => row.id === booking.id)) throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[arena booking delete] Kunde inte ta bort ridhusbokning', error);
+        return { success: false, reason: 'Bokningen kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistArenaStatusInsert = React.useCallback(
-    async (status: ArenaStatus) => {
-      if (!user) return;
-      const { error } = await supabase.from('arena_statuses').insert({
-        id: status.id,
-        stable_id: status.stableId,
-        date: status.date,
-        label: status.label,
-        created_by_user_id: status.createdByUserId,
-      });
-      if (error) {
-        console.warn('Kunde inte spara ridhusstatus', error);
-      }
+    async (status: ArenaStatus): Promise<ActionResult<ArenaStatus>> => {
+      if (isQaDemoMode) return { success: true, data: status };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const payload = { id: status.id, stable_id: status.stableId, date: status.date, label: status.label, created_by_user_id: status.createdByUserId };
+        let { data, error } = await supabase.from('arena_statuses').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('arena_statuses').select('*').eq('id', status.id)
+            .eq('stable_id', status.stableId).abortSignal(controller.signal).single());
+        }
+        if (error || !data || Object.entries(payload).some(([key, value]) => data[key] !== value)) throw error ?? new Error('Servern bekräftade inte uppgifterna.');
+        return { success: true, data: status };
+      } catch (error) {
+        console.warn('[arena status save] Kunde inte spara', error);
+        return { success: false, reason: 'Uppgifterna kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistArenaStatusDelete = React.useCallback(
-    async (statusId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('arena_statuses').delete().eq('id', statusId);
-      if (error) {
-        console.warn('Kunde inte ta bort ridhusstatus', error);
-      }
+    async (status: ArenaStatus): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('arena_statuses').delete().eq('id', status.id)
+          .eq('stable_id', status.stableId).select('id').abortSignal(controller.signal);
+        if (error || !data?.some(row => row.id === status.id)) throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[arena status delete] Kunde inte ta bort', error);
+        return { success: false, reason: 'Uppgifterna kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistRideLogInsert = React.useCallback(
-    async (log: RideLogEntry) => {
-      if (!user) return;
-      const { error } = await supabase.from('ride_logs').insert({
-        id: log.id,
-        stable_id: log.stableId,
-        horse_id: log.horseId,
-        date: log.date,
-        ride_type_id: log.rideTypeId,
-        length: log.length ?? null,
-        note: log.note ?? null,
+    async (log: RideLogEntry, confirm = false): Promise<RideLogEntry | undefined> => {
+      if (confirm && isQaDemoMode) return log;
+      if (!user) {
+        if (confirm) throw new Error('Session saknas. Logga in igen.');
+        return;
+      }
+      const payload = {
+        id: log.id, stable_id: log.stableId, horse_id: log.horseId, date: log.date,
+        ride_type_id: log.rideTypeId, length: log.length ?? null, note: log.note ?? null,
         created_by_user_id: log.createdByUserId,
-      });
-      if (error) {
-        console.warn('Kunde inte spara ridpass', error);
+      };
+      if (!confirm) {
+        const { error } = await supabase.from('ride_logs').insert(payload);
+        if (error) reportPersistError('Kunde inte spara ridpass', error);
+        return;
+      }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const result = await supabase.from('ride_logs').insert(payload)
+          .select('*').abortSignal(controller.signal).single();
+        let data = result.data;
+        if (result.error?.code === '23505') {
+          const recovered = await supabase.from('ride_logs').select('*')
+            .eq('id', log.id).eq('stable_id', log.stableId).abortSignal(controller.signal).single();
+          if (recovered.error) throw recovered.error;
+          data = recovered.data;
+        } else if (result.error) {
+          throw result.error;
+        }
+        if (!data || !Object.entries(payload).every(([key, value]) =>
+          JSON.stringify(data[key] ?? null) === JSON.stringify(value ?? null))) {
+          throw new Error('Ridloggen kunde inte bekräftas med samma uppgifter och ryttare. Uppdatera sidan.');
+        }
+        return {
+          id: data.id, stableId: data.stable_id, horseId: data.horse_id, date: data.date,
+          rideTypeId: data.ride_type_id, length: data.length ?? undefined,
+          note: data.note ?? undefined, createdByUserId: data.created_by_user_id,
+        };
+      } finally {
+        clearTimeout(timeout);
       }
     },
-    [user],
+    [user, reportPersistError],
   );
 
   const persistRideLogDelete = React.useCallback(
-    async (rideLogId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('ride_logs').delete().eq('id', rideLogId);
-      if (error) {
-        console.warn('Kunde inte ta bort ridpass', error);
-      }
+    async (log: RideLogEntry): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('ride_logs').delete().eq('id', log.id)
+          .eq('stable_id', log.stableId).select('id').abortSignal(controller.signal);
+        if (error || !data?.some(row => row.id === log.id)) throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        return { success: true };
+      } catch (error) {
+        console.warn('[ride log delete] Kunde inte ta bort ridpass', error);
+        return { success: false, reason: 'Ridpasset kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistAlertInsert = React.useCallback(
-    async (alert: AlertMessage) => {
-      if (!user) return;
-      const { error } = await supabase.from('alerts').insert({
-        id: alert.id,
-        stable_id: alert.stableId,
-        message: alert.message,
-        type: alert.type,
-      });
-      if (error) {
-        console.warn('Kunde inte spara notis', error);
-      }
+    async (alert: AlertMessage): Promise<ActionResult<AlertMessage>> => {
+      if (isQaDemoMode) return { success: true, data: alert };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const payload = { id: alert.id, stable_id: alert.stableId, message: alert.message, type: alert.type };
+        let { data, error } = await supabase.from('alerts').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('alerts').select('*').eq('id', alert.id)
+            .eq('stable_id', alert.stableId).abortSignal(controller.signal).single());
+        }
+        if (error || !data || Object.entries(payload).some(([key, value]) => data[key] !== value)) {
+          throw error ?? new Error('Servern bekräftade inte händelsen.');
+        }
+        return { success: true, data: { ...alert, createdAt: data.created_at ?? alert.createdAt } };
+      } catch (error) {
+        console.warn('[stable event save] Kunde inte spara händelse', error);
+        return { success: false, reason: 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
+    },
+    [user],
+  );
+
+  const persistStableAlertUpsert = React.useCallback(
+    async (alert: StableAlert, resolveOnly = false): Promise<ActionResult<StableAlert>> => {
+      if (isQaDemoMode) return { success: true, data: alert };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const payload = {
+          id: alert.id, stable_id: alert.stableId, title: alert.title, body: alert.body ?? null,
+          severity: alert.severity, horse_id: alert.horseId ?? null, paddock_id: alert.paddockId ?? null,
+          assignment_id: alert.assignmentId ?? null, created_by_user_id: alert.createdByUserId,
+          created_at: alert.createdAt, resolved_at: null,
+        };
+        const query = resolveOnly
+          ? supabase.from('stable_alerts').update({ resolved_at: alert.resolvedAt })
+            .eq('id', alert.id).eq('stable_id', alert.stableId).is('resolved_at', null)
+          : supabase.from('stable_alerts').insert(payload);
+        let { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        if ((!resolveOnly && error?.code === '23505') || (resolveOnly && error?.code === 'PGRST116')) {
+          ({ data, error } = await supabase.from('stable_alerts').select('*')
+            .eq('id', alert.id).eq('stable_id', alert.stableId).abortSignal(controller.signal).single());
+        }
+        if (error || data?.id !== alert.id || data.stable_id !== alert.stableId
+          || (resolveOnly ? !data.resolved_at : Object.entries(payload)
+            .some(([key, value]) => key !== 'created_at' && key !== 'resolved_at' && data[key] !== value))) {
+          throw error ?? new Error('Servern bekräftade inte notisen.');
+        }
+        return { success: true, data: {
+          ...alert, title: data.title, body: data.body ?? undefined, severity: data.severity,
+          createdAt: data.created_at, resolvedAt: data.resolved_at ?? undefined,
+          horseId: data.horse_id ?? undefined, paddockId: data.paddock_id ?? undefined,
+          assignmentId: data.assignment_id ?? undefined,
+        } };
+      } catch (error) {
+        console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error);
+        return { success: false, reason: resolveOnly
+          ? 'Notisen kunde inte markeras som löst. Försök igen.'
+          : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistDefaultPassToggle = React.useCallback(
-    async (input: { userId: string; stableId: string; weekday: WeekdayIndex; slot: AssignmentSlot; enabled: boolean }) => {
-      if (!user) return;
-      if (!input.stableId) return;
-      if (input.enabled) {
-        const { error } = await supabase.from('default_passes').insert({
-          user_id: input.userId,
-          stable_id: input.stableId,
-          weekday: input.weekday,
-          slot: input.slot,
-        });
-        if (error && error.code !== '23505') {
-          console.warn('Kunde inte spara standardpass', error);
+    async (input: { userId: string; stableId: string; weekday: WeekdayIndex; slot: AssignmentSlot; enabled: boolean }): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || !input.stableId) throw new Error('Session eller stall saknas.');
+        const payload = { user_id: input.userId, stable_id: input.stableId, weekday: input.weekday, slot: input.slot };
+        const read = () => supabase.from('default_passes').select('*').eq('user_id', input.userId)
+          .eq('stable_id', input.stableId).eq('weekday', input.weekday).eq('slot', input.slot).abortSignal(controller.signal);
+        if (input.enabled) {
+          let { data, error } = await supabase.from('default_passes').insert(payload).select('*').abortSignal(controller.signal).single();
+          if (error?.code === '23505') ({ data, error } = await read().single());
+          if (error || !data || Object.entries(payload).some(([key, value]) => data[key] !== value)) throw error ?? new Error('Servern bekräftade inte standardpasset.');
+        } else {
+          const { data, error } = await supabase.from('default_passes').delete().eq('user_id', input.userId)
+            .eq('stable_id', input.stableId).eq('weekday', input.weekday).eq('slot', input.slot).select('*').abortSignal(controller.signal);
+          if (error) throw error;
+          if (!data?.some(row => Object.entries(payload).every(([key, value]) => row[key] === value))) {
+            const remaining = await read().maybeSingle();
+            if (remaining.error || remaining.data) throw remaining.error ?? new Error('Standardpasset finns fortfarande kvar.');
+          }
         }
-        return;
-      }
-
-      const { error } = await supabase
-        .from('default_passes')
-        .delete()
-        .eq('user_id', input.userId)
-        .eq('stable_id', input.stableId)
-        .eq('weekday', input.weekday)
-        .eq('slot', input.slot);
-      if (error) {
-        console.warn('Kunde inte ta bort standardpass', error);
-      }
+        return { success: true };
+      } catch (error) {
+        console.warn('[default pass save] Kunde inte spara standardpass', error);
+        return { success: false, reason: 'Standardpasset kunde inte sparas. Ditt tidigare val gäller fortfarande. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistGroupInsert = React.useCallback(
-    async (group: Group) => {
-      if (!user) return;
-      const { error } = await supabase.from('groups').insert({
-        id: group.id,
-        stable_id: group.stableId ?? null,
-        farm_id: group.farmId ?? null,
-        horse_id: group.horseId ?? null,
-        name: group.name,
-        type: group.type,
-        created_by_user_id: group.createdByUserId ?? null,
-        created_at: group.createdAt,
-      });
-      if (error) {
-        console.warn('Kunde inte spara grupp', error);
-      }
+    async (group: Group): Promise<ActionResult<Group>> => {
+      if (isQaDemoMode) return { success: true, data: group };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || group.createdByUserId !== user.id || !group.stableId) throw new Error('Session eller stall saknas.');
+        const payload = {
+          id: group.id, stable_id: group.stableId, farm_id: group.farmId ?? null,
+          horse_id: group.horseId ?? null, name: group.name, type: group.type,
+          created_by_user_id: user.id, created_at: group.createdAt,
+        };
+        let { data, error } = await supabase.from('groups').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('groups').select('*').eq('id', group.id).abortSignal(controller.signal).single());
+          if (error || !data || data.id !== group.id || data.stable_id !== group.stableId
+            || data.created_by_user_id !== user.id || data.type !== 'custom') throw error ?? new Error('Gruppen kunde inte verifieras.');
+          // Same request after a lost acknowledgement; only the draft name may change.
+          if (data.name !== group.name) {
+            ({ data, error } = await supabase.from('groups').update({ name: group.name }).eq('id', group.id)
+              .eq('stable_id', group.stableId).eq('created_by_user_id', user.id)
+              .select('*').abortSignal(controller.signal).single());
+          }
+        }
+        if (error || !data || data.id !== group.id || data.stable_id !== group.stableId
+          || data.created_by_user_id !== user.id || data.name !== group.name || data.type !== 'custom') {
+          throw error ?? new Error('Servern bekräftade inte gruppen.');
+        }
+        return { success: true, data: { ...group, name: data.name, createdAt: data.created_at ?? group.createdAt } };
+      } catch (error) {
+        console.warn('[group create] Kunde inte spara grupp', error);
+        return { success: false, reason: 'Gruppen kunde inte sparas. Namnet finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistGroupUpdate = React.useCallback(
-    async (groupId: string, updates: Partial<Group>) => {
-      if (!user) return;
-      const payload: Record<string, unknown> = {};
-      if (hasOwnProperty(updates, 'name')) {
-        payload.name = updates.name;
-      }
-      if (!Object.keys(payload).length) {
-        return;
-      }
-      const { error } = await supabase.from('groups').update(payload).eq('id', groupId);
-      if (error) {
-        console.warn('Kunde inte uppdatera grupp', error);
-      }
+    async (groupId: string, updates: Partial<Group>, stableId: string): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('groups').update({ name: updates.name }).eq('id', groupId)
+          .eq('stable_id', stableId).select('*').abortSignal(controller.signal).single();
+        if (error || data?.id !== groupId || data?.stable_id !== stableId || data?.name !== updates.name) {
+          throw error ?? new Error('Servern bekräftade inte gruppnamnet.');
+        }
+        return { success: true };
+      } catch (error) {
+        console.warn('[group rename] Kunde inte uppdatera grupp', error);
+        return { success: false, reason: 'Gruppnamnet kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistGroupDelete = React.useCallback(
-    async (groupId: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('groups').delete().eq('id', groupId);
-      if (error) {
-        console.warn('Kunde inte ta bort grupp', error);
-      }
+    async (groupId: string, stableId: string): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('groups').delete().eq('id', groupId)
+          .eq('stable_id', stableId).select('id,stable_id').abortSignal(controller.signal);
+        if (error || !data?.some((row) => row.id === groupId && row.stable_id === stableId)) {
+          throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        }
+        return { success: true };
+      } catch (error) {
+        console.warn('[group delete] Kunde inte ta bort grupp', error);
+        return { success: false, reason: 'Gruppen kunde inte tas bort. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
+  const postUploadCacheRef = React.useRef(new Map<string, { source: string; path: string }>());
   const persistPostInsert = React.useCallback(
-    async (post: Post, rawImage?: string) => {
-      if (!user || !post.stableId) return;
+    async (post: Post, rawImage?: string): Promise<ActionResult<Post>> => {
+      if (isQaDemoMode) return { success: true, data: post };
+      const controller = new AbortController();
+      let timeout: ReturnType<typeof setTimeout>;
       try {
-        let imagePath: string | null | undefined;
-        if (rawImage) {
-          const uploadable = getUploadableImage(rawImage);
-          if (uploadable) {
-            if (!hasUriScheme(uploadable.uri)) {
-              const normalized = normalizePostImagePath(uploadable.uri);
-              imagePath = normalized || null;
+        if (!user || !post.stableId) throw new Error('Session eller stall saknas.');
+        const authorId = user.id;
+        const persist = async (): Promise<Post> => {
+          let imagePath: string | null = null;
+          if (rawImage) {
+            const cached = postUploadCacheRef.current.get(post.id);
+            if (cached?.source === rawImage) {
+              imagePath = cached.path;
             } else {
-              const lower = uploadable.uri.trim().toLowerCase();
-              const isHttp = lower.startsWith('http://') || lower.startsWith('https://');
-              if (isHttp) {
-                console.warn('Post image måste vara lokal fil eller storage path.', {
-                  uri: uploadable.uri,
-                });
+              const uploadable = getUploadableImage(rawImage);
+              if (!uploadable) throw new Error('Bilden kunde inte läsas. Välj bilden igen.');
+              if (!hasUriScheme(uploadable.uri)) {
+                imagePath = normalizePostImagePath(uploadable.uri) || null;
+              } else if (/^https?:\/\//i.test(uploadable.uri)) {
+                throw new Error('Välj en bild från enheten.');
               } else {
-                try {
-                  imagePath = await uploadPostImage({
-                    stableId: post.stableId,
-                    userId: user.id,
-                    postId: post.id,
-                    image: uploadable,
-                  });
-                } catch (error) {
-                  console.warn('Kunde inte ladda upp postbild', error);
-                  imagePath = null;
-                }
+                imagePath = await uploadPostImage({
+                  stableId: post.stableId!, userId: authorId, postId: post.id, image: uploadable,
+                });
               }
+              if (!imagePath) throw new Error('Bilden kunde inte laddas upp.');
+              if (controller.signal.aborted) throw new Error('Publiceringen tog för lång tid.');
+              postUploadCacheRef.current.set(post.id, { source: rawImage, path: imagePath });
             }
           }
-        }
-        const imageReference = imagePath ?? null;
-        const hasImage = Boolean(imagePath);
-
-        const { error } = await supabase.from('posts').insert({
-          id: post.id,
-          stable_id: post.stableId,
-          user_id: user.id,
-          content: post.content ?? null,
-          group_ids: post.groupIds ?? [],
-          media_type: hasImage ? 'image' : 'text',
-          image_url: imageReference,
-        });
-        if (error) {
-          console.warn('Kunde inte spara inlägg', error);
-          return;
-        }
-
-        if (hasImage) {
-          invalidateSignedUrl(imageReference as string);
-          const signedUrl = imagePath ? await getSignedPostImageUrl(imagePath) : null;
-          const updates: Partial<Post> = { imagePath: imageReference as string };
-          if (signedUrl) {
-            updates.imageSignedUrl = signedUrl;
-            updates.image = signedUrl;
+          if (controller.signal.aborted) throw new Error('Publiceringen tog för lång tid.');
+          const payload = {
+            id: post.id, stable_id: post.stableId, user_id: authorId, content: post.content ?? null,
+            group_ids: post.groupIds ?? [], media_type: imagePath ? 'image' : 'text', image_url: imagePath,
+          };
+          const result = await supabase.from('posts').insert(payload).select('*').abortSignal(controller.signal).single();
+          let data = result.data;
+          if (result.error?.code === '23505') {
+            const recovered = await supabase.from('posts').select('*').eq('id', post.id)
+              .eq('stable_id', post.stableId).eq('user_id', authorId).abortSignal(controller.signal).single();
+            if (recovered.error) throw recovered.error;
+            data = recovered.data;
+            if (!data || data.id !== post.id || data.stable_id !== post.stableId || data.user_id !== authorId) {
+              throw new Error('Det tidigare inlägget kunde inte bekräftas.');
+            }
+            const changes = { content: payload.content, group_ids: payload.group_ids, media_type: payload.media_type, image_url: payload.image_url };
+            if (Object.entries(changes).some(([key, value]) => JSON.stringify(data[key] ?? null) !== JSON.stringify(value))) {
+              const updated = await supabase.from('posts').update(changes).eq('id', post.id)
+                .eq('stable_id', post.stableId).eq('user_id', authorId).select('*').abortSignal(controller.signal).single();
+              if (updated.error) throw updated.error;
+              data = updated.data;
+            }
+          } else if (result.error) throw result.error;
+          if (!data || !Object.entries(payload).every(([key, value]) => JSON.stringify(data[key] ?? null) === JSON.stringify(value))) {
+            throw new Error('Servern bekräftade inte inlägget med samma uppgifter.');
           }
-          dispatch({
-            type: 'POST_UPDATE',
-            payload: { id: post.id, updates },
-          });
-        }
+          return { ...post, createdAt: data.created_at, content: data.content,
+            groupIds: data.group_ids, imagePath: data.image_url ?? undefined,
+            image: rawImage && hasUriScheme(rawImage) ? rawImage : undefined };
+        };
+        const deadline = new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => { controller.abort(); reject(new Error('Publiceringen tog för lång tid.')); }, 15_000);
+        });
+        return { success: true, data: await Promise.race([persist(), deadline]) };
       } catch (error) {
-        console.warn('Kunde inte spara inlägg', error);
-      }
+        console.warn('[post publish] Kunde inte publicera inlägg', error);
+        return { success: false, reason: 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout!); }
     },
     [user],
   );
 
   const persistPostLikeToggle = React.useCallback(
-    async (postId: string, userId: string, enabled: boolean) => {
-      if (!user) return;
-      if (enabled) {
-        const { error } = await supabase.from('likes').insert({ user_id: userId, post_id: postId });
-        if (error && error.code !== '23505') {
-          console.warn('Kunde inte gilla inlägg', error);
+    async (postId: string, userId: string, enabled: boolean): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || user.id !== userId) throw new Error('Session saknas. Logga in igen.');
+        if (enabled) {
+          let { data, error } = await supabase.from('likes').insert({ user_id: userId, post_id: postId })
+            .select('post_id,user_id').abortSignal(controller.signal).single();
+          if (error?.code === '23505') {
+            ({ data, error } = await supabase.from('likes').select('post_id,user_id')
+              .eq('post_id', postId).eq('user_id', userId).abortSignal(controller.signal).single());
+          }
+          if (error || data?.post_id !== postId || data?.user_id !== userId) throw error ?? new Error('Servern bekräftade inte gillningen.');
+        } else {
+          const { data, error } = await supabase.from('likes').delete().eq('user_id', userId).eq('post_id', postId)
+            .select('post_id,user_id').abortSignal(controller.signal);
+          if (error) throw error;
+          if (!data?.some(row => row.post_id === postId && row.user_id === userId)) {
+            const remaining = await supabase.from('likes').select('post_id,user_id')
+              .eq('post_id', postId).eq('user_id', userId).abortSignal(controller.signal).maybeSingle();
+            if (remaining.error || remaining.data) throw remaining.error ?? new Error('Gillningen finns kvar.');
+            const visiblePost = await supabase.from('posts').select('id').eq('id', postId).abortSignal(controller.signal).single();
+            if (visiblePost.error || visiblePost.data?.id !== postId) throw visiblePost.error ?? new Error('Inlägget kunde inte bekräftas.');
+          }
         }
-        return;
-      }
-
-      const { error } = await supabase
-        .from('likes')
-        .delete()
-        .eq('user_id', userId)
-        .eq('post_id', postId);
-      if (error) {
-        console.warn('Kunde inte ta bort gillning', error);
-      }
+        return { success: true };
+      } catch (error) {
+        console.warn('[post like] Kunde inte spara gillning', error);
+        return { success: false, reason: 'Gillningen kunde inte sparas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistPostCommentInsert = React.useCallback(
-    async (postId: string, userId: string, text: string) => {
-      if (!user) return;
-      const { error } = await supabase.from('comments').insert({
-        user_id: userId,
-        post_id: postId,
-        content: text,
-      });
-      if (error) {
-        console.warn('Kunde inte spara kommentar', error);
-      }
+    async (comment: PostComment): Promise<ActionResult<PostComment>> => {
+      if (isQaDemoMode) return { success: true, data: comment };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || user.id !== comment.authorId) throw new Error('Session saknas. Logga in igen.');
+        const payload = { id: comment.id, user_id: comment.authorId, post_id: comment.postId, content: comment.text };
+        let { data, error } = await supabase.from('comments').insert(payload).select('*').abortSignal(controller.signal).single();
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('comments').select('*').eq('id', comment.id)
+            .eq('post_id', comment.postId).eq('user_id', comment.authorId).abortSignal(controller.signal).single());
+          if (error || data?.id !== comment.id || data?.post_id !== comment.postId || data?.user_id !== comment.authorId) {
+            throw error ?? new Error('Den tidigare kommentaren kunde inte bekräftas.');
+          }
+          if (data.content !== comment.text) {
+            ({ data, error } = await supabase.from('comments').update({ content: comment.text }).eq('id', comment.id)
+              .eq('post_id', comment.postId).eq('user_id', comment.authorId).select('*').abortSignal(controller.signal).single());
+          }
+        }
+        if (error || !data || Object.entries(payload).some(([key, value]) => data[key] !== value) || !data.created_at) {
+          throw error ?? new Error('Servern bekräftade inte kommentaren.');
+        }
+        return { success: true, data: { ...comment, text: data.content, createdAt: data.created_at } };
+      } catch (error) {
+        console.warn('[post comment] Kunde inte spara kommentar', error);
+        return { success: false, reason: 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
@@ -2787,29 +4373,67 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const persistPostDelete = React.useCallback(
     async (postId: string) => {
       if (!user) return { error: null };
-      const { error } = await supabase.from('posts').delete().eq('id', postId);
+      // .select('id') returns the deleted rows so we can detect an RLS-blocked delete
+      // (0 rows, no error) and surface it as a failure instead of silently diverging.
+      const { data, error } = await supabase.from('posts').delete().eq('id', postId).select('id');
       if (error) {
-        console.warn('Kunde inte ta bort inlägg', error);
+        reportPersistErrorRef.current('Kunde inte ta bort inlägg', error);
+        return { error };
       }
-      return { error };
+      if (!data || data.length === 0) {
+        const blocked = new Error('Inlägget kunde inte tas bort (behörighet saknas).');
+        reportPersistErrorRef.current('Kunde inte ta bort inlägg', blocked);
+        return { error: blocked };
+      }
+      return { error: null };
     },
     [user],
   );
 
   const persistFarmUpsert = React.useCallback(
-    async (farm: Farm) => {
-      if (!user) return;
-      const payload = {
-        id: farm.id,
-        name: farm.name,
-        location: farm.location ?? null,
-        has_indoor_arena: farm.hasIndoorArena ?? null,
-        arena_note: farm.arenaNote ?? null,
-      };
-      const result = await supabase.from('farms').upsert(payload);
-      if (result.error) {
-        console.warn('Kunde inte spara gård', result.error);
-      }
+    async (farm: Farm, input: UpsertFarmInput, existing: boolean): Promise<ActionResult<Farm>> => {
+      if (isQaDemoMode) return { success: true, data: farm };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas. Logga in igen.');
+        const columns = { name: 'name', location: 'location', hasIndoorArena: 'has_indoor_arena', arenaNote: 'arena_note' } as const;
+        const updates: Record<string, unknown> = {};
+        for (const key of Object.keys(columns) as (keyof typeof columns)[]) {
+          if (Object.prototype.hasOwnProperty.call(input, key)) updates[columns[key]] = farm[key] ?? null;
+        }
+        const payload = existing ? updates : {
+          id: farm.id, created_by: user.id, name: farm.name, location: farm.location ?? null,
+          has_indoor_arena: farm.hasIndoorArena ?? false, arena_note: farm.arenaNote ?? null,
+        };
+        const query = existing
+          ? supabase.from('farms').update(payload).eq('id', farm.id).eq('created_by', user.id)
+          : supabase.from('farms').insert(payload);
+        let { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        let expected = payload;
+        if (!existing && error?.code === '23505') {
+          ({ data, error } = await supabase.from('farms').select('*').eq('id', farm.id).abortSignal(controller.signal).single());
+          if (error) throw error;
+          if (data?.id !== farm.id || data.created_by !== user.id) throw new Error('Gården tillhör en annan användare.');
+          expected = updates;
+          if (Object.entries(updates).some(([key, value]) => (data[key] ?? null) !== value)) {
+            ({ data, error } = await supabase.from('farms').update(updates).eq('id', farm.id).eq('created_by', user.id)
+              .select('*').abortSignal(controller.signal).single());
+          }
+        }
+        if (error) throw error;
+        if (data?.id !== farm.id || data.created_by !== user.id
+          || Object.entries(expected).some(([key, value]) => (data[key] ?? null) !== value)) {
+          throw new Error('Servern bekräftade inte gården.');
+        }
+        return { success: true, data: {
+          id: data.id, name: data.name, location: data.location ?? undefined,
+          hasIndoorArena: data.has_indoor_arena ?? false, arenaNote: data.arena_note ?? undefined,
+        } };
+      } catch (error) {
+        console.warn('[farm save] Kunde inte spara gård', error);
+        return { success: false, reason: 'Gården kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
@@ -2819,101 +4443,150 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const result = await supabase.from('farms').delete().eq('id', farmId);
       if (result.error) {
-        console.warn('Kunde inte ta bort gård', result.error);
+        reportPersistErrorRef.current('Kunde inte ta bort gård', result.error);
       }
     },
     [user],
   );
 
   const persistStableUpsert = React.useCallback(
-    async (stable: Stable, isNew: boolean, ownerId: string) => {
-      if (!user) return;
-      const payload: Record<string, unknown> = {
-        id: stable.id,
-        name: stable.name,
-        description: stable.description ?? null,
-        location: stable.location ?? null,
-        farm_id: stable.farmId ?? null,
-        settings: stable.settings ?? null,
-        ride_types: stable.rideTypes ?? [],
-      };
-      if (isNew) {
-        payload.created_by = ownerId;
-      }
-      const result = await supabase.from('stables').upsert(payload);
-      if (result.error) {
-        console.warn('Kunde inte spara stall', result.error);
-        return;
-      }
-
-      if (isNew) {
-        const { error: memberError } = await supabase.from('stable_members').upsert(
-          {
-            stable_id: stable.id,
-            user_id: ownerId,
-            role: 'admin',
-            access: 'owner',
-            rider_role: 'owner',
-          },
-          { onConflict: 'stable_id,user_id' },
-        );
-        if (memberError) {
-          console.warn('Kunde inte koppla admin till stallet', memberError);
+    async (stable: Stable, isNew: boolean, ownerId: string, input?: UpsertStableInput): Promise<ActionResult<Stable>> => {
+      if (isQaDemoMode) return { success: true, data: stable };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || user.id !== ownerId) throw new Error('Session saknas. Logga in igen.');
+        const serialize = (value: unknown) => JSON.stringify(value, (_key, entry) =>
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
+        const payload: Record<string, unknown> = {
+          id: stable.id, name: stable.name, description: stable.description ?? null,
+          location: stable.location ?? null, farm_id: stable.farmId ?? null,
+          settings: stable.settings ?? null, ride_types: stable.rideTypes ?? [],
+          ...(isNew ? { created_by: ownerId } : {}),
+        };
+        const query = isNew ? supabase.from('stables').insert(payload)
+          : supabase.from('stables').update(payload).eq('id', stable.id);
+        let { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        let expected = payload;
+        if (isNew && error?.code === '23505') {
+          ({ data, error } = await supabase.from('stables').select('*').eq('id', stable.id)
+            .abortSignal(controller.signal).single());
+          if (error) throw error;
+          if (data?.id !== stable.id || data.created_by !== ownerId) throw new Error('Stallet tillhör en annan användare.');
+          // A retained draft may be corrected after the original INSERT was committed.
+          // Preserve fields the draft never supplied, including remotely updated settings.
+          const requested = input ?? { name: stable.name };
+          const correction: Record<string, unknown> = { name: stable.name };
+          const columns = { description: 'description', location: 'location', farmId: 'farm_id', rideTypes: 'ride_types' } as const;
+          for (const key of Object.keys(columns) as (keyof typeof columns)[]) {
+            if (Object.prototype.hasOwnProperty.call(requested, key)) correction[columns[key]] = payload[columns[key]];
+          }
+          if (requested.settings) {
+            const previous = resolveStableSettings({ ...stable, settings: data.settings ?? undefined });
+            correction.settings = {
+              dayLogic: requested.settings.dayLogic ?? previous.dayLogic,
+              eventVisibility: { ...previous.eventVisibility, ...requested.settings.eventVisibility },
+              arena: { ...previous.arena, ...requested.settings.arena },
+              onboarding: { ...previous.onboarding, ...requested.settings.onboarding },
+            };
+          }
+          expected = { id: stable.id, created_by: ownerId, ...correction };
+          if (Object.entries(correction).some(([key, value]) => serialize(data[key]) !== serialize(value))) {
+            ({ data, error } = await supabase.from('stables').update(correction).eq('id', stable.id).eq('created_by', ownerId)
+              .select('*').abortSignal(controller.signal).single());
+          }
         }
-        const { error: conversationError } = await supabase.from('conversations').insert({
-          stable_id: stable.id,
-          title: stable.name,
-          is_group: true,
-          created_by_user_id: ownerId,
-        });
-        if (conversationError && conversationError.code !== '23505') {
-          console.warn('Kunde inte skapa gruppkonversation', conversationError);
+        if (error) throw error;
+        if (!data || Object.entries(expected).some(([key, value]) => serialize(data[key]) !== serialize(value))) {
+          throw new Error('Servern bekräftade inte samma stall.');
         }
-      }
+        if (isNew) {
+          const member = { stable_id: stable.id, user_id: ownerId, role: 'admin', access: 'owner', rider_role: 'owner' };
+          let memberResult = await supabase.from('stable_members').insert(member).select('*')
+            .abortSignal(controller.signal).single();
+          if (memberResult.error?.code === '23505') {
+            memberResult = await supabase.from('stable_members').select('*').eq('stable_id', stable.id).eq('user_id', ownerId)
+              .abortSignal(controller.signal).single();
+          }
+          if (memberResult.error) throw memberResult.error;
+          if (!memberResult.data || Object.entries(member).some(([key, value]) => memberResult.data[key] !== value)) {
+            throw new Error('Servern bekräftade inte ägarbehörigheten.');
+          }
+          const conversation = { id: stable.id, stable_id: stable.id, title: stable.name, is_group: true, created_by_user_id: ownerId };
+          let chatResult = await supabase.from('conversations').insert(conversation).select('*')
+            .abortSignal(controller.signal).single();
+          if (chatResult.error?.code === '23505') {
+            chatResult = await supabase.from('conversations').select('*').eq('stable_id', stable.id).eq('is_group', true)
+              .abortSignal(controller.signal).single();
+          }
+          if (chatResult.error) throw chatResult.error;
+          if (!chatResult.data?.id || chatResult.data.stable_id !== stable.id || chatResult.data.is_group !== true
+            || chatResult.data.created_by_user_id !== ownerId) throw new Error('Servern bekräftade inte stallchatten.');
+        }
+        return { success: true, data: {
+          id: data.id, name: data.name, description: data.description ?? undefined,
+          location: data.location ?? undefined, farmId: data.farm_id ?? undefined,
+          settings: data.settings ?? undefined, rideTypes: data.ride_types ?? [],
+        } };
+      } catch (error) {
+        console.warn('[stable create] Kunde inte spara stall och ägarbehörighet', error);
+        return { success: false, reason: 'Stallet kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistStableUpdate = React.useCallback(
-    async (stableId: string, updates: Partial<Stable>) => {
-      if (!user) return;
-      const payload: Record<string, unknown> = {};
-      if (hasOwnProperty(updates, 'name')) {
-        payload.name = updates.name;
-      }
-      if (hasOwnProperty(updates, 'description')) {
-        payload.description = updates.description ?? null;
-      }
-      if (hasOwnProperty(updates, 'location')) {
-        payload.location = updates.location ?? null;
-      }
-      if (hasOwnProperty(updates, 'farmId')) {
-        payload.farm_id = updates.farmId ?? null;
-      }
-      if (hasOwnProperty(updates, 'settings')) {
-        payload.settings = updates.settings ?? null;
-      }
-      if (hasOwnProperty(updates, 'rideTypes')) {
-        payload.ride_types = updates.rideTypes ?? [];
-      }
-      if (!Object.keys(payload).length) {
-        return;
-      }
-      const result = await supabase.from('stables').update(payload).eq('id', stableId);
-      if (result.error) {
-        console.warn('Kunde inte uppdatera stall', result.error);
-        return;
-      }
-      if (hasOwnProperty(updates, 'name')) {
-        const { error: conversationError } = await supabase
-          .from('conversations')
-          .update({ title: updates.name ?? null })
-          .eq('stable_id', stableId)
-          .eq('is_group', true);
-        if (conversationError) {
-          console.warn('Kunde inte uppdatera stallchatten', conversationError);
+    async (stableId: string, updates: Partial<Stable>, existing: Stable): Promise<ActionResult<Stable>> => {
+      if (isQaDemoMode) return { success: true, data: { ...existing, ...updates } };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data: before, error: readError } = await supabase.from('stables').select('*')
+          .eq('id', stableId).abortSignal(controller.signal).single();
+        if (readError || !before) throw readError ?? new Error('Stallet kunde inte hämtas.');
+        const serialize = (value: unknown) => JSON.stringify(value, (_key, entry) =>
+          entry && typeof entry === 'object' && !Array.isArray(entry)
+            ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
+        const columns = { name: 'name', description: 'description', location: 'location', farmId: 'farm_id', settings: 'settings', rideTypes: 'ride_types' } as const;
+        const payload: Record<string, unknown> = {};
+        for (const key of Object.keys(columns) as (keyof typeof columns)[]) {
+          if (!hasOwnProperty(updates, key)) continue;
+          const column = columns[key];
+          const desired = updates[key] ?? (key === 'rideTypes' ? [] : null);
+          const previous = key === 'settings' ? resolveStableSettings(existing) : existing[key] ?? (key === 'rideTypes' ? [] : null);
+          const currentValue = key === 'settings' ? resolveStableSettings({ ...existing, settings: before.settings })
+            : before[column] ?? (key === 'rideTypes' ? [] : null);
+          if (serialize(currentValue) !== serialize(previous) && serialize(currentValue) !== serialize(desired)) {
+            return { success: false, reason: 'Stallet har ändrats på en annan telefon. Uppdatera stalldata och försök igen. Ditt utkast finns kvar.' };
+          }
+          payload[column] = desired;
         }
-      }
+        if (!Object.keys(payload).length) return { success: true, data: existing };
+        let query = supabase.from('stables').update(payload).eq('id', stableId);
+        // Compare the raw database values so a second writer cannot change them
+        // between the read above and this update (including JSON settings).
+        for (const column of Object.keys(payload)) {
+          const value = before[column];
+          query = value == null ? query.is(column, null)
+            : query.eq(column, typeof value === 'object' ? JSON.stringify(value) : value);
+        }
+        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        if (error || data?.id !== stableId) throw error ?? new Error('Stallet ändrades innan sparningen bekräftades.');
+        if (hasOwnProperty(updates, 'name')) {
+          const { error: conversationError } = await supabase.from('conversations').update({ title: data.name })
+            .eq('stable_id', stableId).eq('is_group', true).abortSignal(controller.signal);
+          if (conversationError) console.warn('[stable settings] Kunde inte uppdatera chattnamnet', conversationError);
+        }
+        return { success: true, data: { ...existing, name: data.name, description: data.description ?? undefined,
+          location: data.location ?? undefined, farmId: data.farm_id ?? undefined,
+          rideTypes: data.ride_types ?? [], settings: resolveStableSettings({ ...existing, settings: data.settings }) } };
+      } catch (error) {
+        console.warn('[stable settings] Kunde inte spara stallinställningar', error);
+        return { success: false, reason: 'Stalluppgifterna kunde inte sparas. Ditt utkast finns kvar. Uppdatera stalldata och försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
@@ -2923,37 +4596,66 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) return;
       const result = await supabase.from('stables').delete().eq('id', stableId);
       if (result.error) {
-        console.warn('Kunde inte ta bort stall', result.error);
+        reportPersistErrorRef.current('Kunde inte ta bort stall', result.error);
       }
     },
     [user],
   );
 
   const persistStableInvite = React.useCallback(
-    async (input: AddMemberInput, stableIds: string[], inviteCode?: string) => {
-      if (!user) return;
-      const code = inviteCode ?? null;
-      const invites = stableIds.map((stableId) => ({
-        stable_id: stableId,
-        email: input.email.trim(),
-        role: input.role,
-        custom_role: input.customRole?.trim() || null,
-        access: input.access ?? 'view',
-        rider_role: input.role === 'rider' ? input.riderRole ?? 'medryttare' : null,
-        horse_ids: stableId === input.stableId ? input.horseIds ?? [] : [],
-        code,
-      }));
-      const { error } = await supabase.from('stable_invites').insert(invites);
-      if (error) {
-        console.warn('Kunde inte skicka inbjudan', error);
+    async (input: AddMemberInput, stableIds: string[]): Promise<ActionResult<InviteConfirmation>> => {
+      const key = JSON.stringify([user?.id, input, stableIds]);
+      let draft = pendingInviteDrafts.current.get(key);
+      if (!draft) {
+        const code = generateInviteCode();
+        const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+        draft = { code, rows: stableIds.map((stableId) => ({
+          id: generateId(), stable_id: stableId, email: input.email.trim().toLowerCase(),
+          role: input.role, custom_role: input.customRole?.trim() || null, access: input.access ?? 'view',
+          rider_role: input.role === 'rider' ? input.riderRole ?? 'medryttare' : null,
+          horse_ids: (input.horseIds ?? []).filter((id) => {
+            const horse = stateRef.current.horses.find((entry) => entry.id === id);
+            return horse ? horse.stableId === stableId : stableId === input.stableId;
+          }),
+          code: stableId === input.stableId ? code : generateInviteCode(), expires_at: expiresAt,
+        })) };
+        pendingInviteDrafts.current.set(key, draft);
       }
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!isQaDemoMode) {
+          if (!user) throw new Error('Session saknas.');
+          let { data, error } = await supabase.from('stable_invites').insert(draft.rows)
+            .select('*').abortSignal(controller.signal);
+          if (error?.code === '23505') {
+            ({ data, error } = await supabase.from('stable_invites').select('*')
+              .in('id', draft.rows.map((row) => String(row.id))).abortSignal(controller.signal));
+          }
+          if (error || data?.length !== draft.rows.length || draft.rows.some((expected) => {
+            const row = data?.find((item) => item.id === expected.id);
+            return !row || row.accepted_at || Object.entries(expected).some(([field, value]) =>
+              field !== 'expires_at' && JSON.stringify(row[field]) !== JSON.stringify(value));
+          })) throw error ?? new Error('Servern bekräftade inte alla inbjudningar.');
+        }
+        pendingInviteDrafts.current.delete(key);
+        return { success: true, data: { inviteCode: draft.code,
+          codes: draft.rows.map((row) => ({ stableId: String(row.stable_id), code: String(row.code) })) } };
+      } catch (error) {
+        console.warn('[invite create] Kunde inte skapa inbjudan', error);
+        return { success: false, reason: 'Inbjudan kunde inte skapas. Uppgifterna finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistStableMemberUpdate = React.useCallback(
-    async (stableId: string, userId: string, updates: Partial<StableMembership>) => {
-      if (!user) return;
+    async (stableId: string, userId: string, updates: Partial<StableMembership>): Promise<ActionResult<StableMembership>> => {
+      if (isQaDemoMode) {
+        const existing = stateRef.current.users[userId]?.membership.find((entry) => entry.stableId === stableId);
+        return existing ? { success: true, data: { ...existing, ...updates } }
+          : { success: false, reason: 'Medlemmen är inte kopplad till stallet.' };
+      }
       const payload: Record<string, unknown> = {};
       if (hasOwnProperty(updates, 'role')) {
         payload.role = updates.role;
@@ -2971,72 +4673,125 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         payload.rider_role = updates.riderRole ?? null;
       }
       if (!Object.keys(payload).length) {
-        return;
+        return { success: false, reason: 'Ingen medlemsändring att spara.' };
       }
-      const { error } = await supabase
-        .from('stable_members')
-        .update(payload)
-        .eq('stable_id', stableId)
-        .eq('user_id', userId);
-      if (error) {
-        console.warn('Kunde inte uppdatera medlem', error);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('stable_members').update(payload)
+          .eq('stable_id', stableId).eq('user_id', userId)
+          .select('*').abortSignal(controller.signal).single();
+        if (error || data?.stable_id !== stableId || data?.user_id !== userId) {
+          throw error ?? new Error('Servern bekräftade inte medlemsändringen.');
+        }
+        return { success: true, data: {
+          stableId: data.stable_id, role: data.role, access: data.access ?? undefined,
+          customRole: data.custom_role ?? undefined, horseIds: data.horse_ids ?? [],
+          riderRole: data.rider_role ?? undefined,
+        } };
+      } catch (error) {
+        console.warn('[member update] Kunde inte uppdatera medlem', error);
+        return { success: false, reason: 'Medlemsändringen kunde inte sparas. Uppdatera eller försök igen.' };
+      } finally {
+        clearTimeout(timeout);
       }
     },
     [user],
   );
 
   const persistStableMemberDelete = React.useCallback(
-    async (stableId: string, userId: string) => {
-      if (!user) return;
-      const { error } = await supabase
-        .from('stable_members')
-        .delete()
-        .eq('stable_id', stableId)
-        .eq('user_id', userId);
-      if (error) {
-        console.warn('Kunde inte ta bort medlem', error);
+    async (stableId: string, userId: string): Promise<ActionResult> => {
+      if (isQaDemoMode) return { success: true };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const { data, error } = await supabase.from('stable_members').delete()
+          .eq('stable_id', stableId).eq('user_id', userId)
+          .select('stable_id,user_id').abortSignal(controller.signal);
+        if (error || !data?.some((row) => row.stable_id === stableId && row.user_id === userId)) {
+          throw error ?? new Error('Servern bekräftade inte borttagningen.');
+        }
+        return { success: true };
+      } catch (error) {
+        console.warn('[member delete] Kunde inte ta bort medlem', error);
+        return { success: false, reason: 'Medlemmen kunde inte tas bort. Uppdatera eller försök igen.' };
+      } finally {
+        clearTimeout(timeout);
       }
     },
     [user],
   );
 
   const persistProfileUpdate = React.useCallback(
-    async (userId: string, updates: Record<string, unknown>) => {
-      if (!user) return;
-      const { error } = await supabase.from('profiles').update(updates).eq('id', userId);
-      if (error) {
-        if (
-          error.code === 'PGRST204' &&
-          typeof error.message === 'string' &&
-          error.message.includes('onboarding_dismissed')
-        ) {
-          return;
+    async (userId: string, updates: Record<string, unknown>): Promise<ActionResult<Record<string, unknown>>> => {
+      if (isQaDemoMode) return { success: true, data: { id: userId, ...updates } };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user || user.id !== userId) throw new Error('Session saknas. Logga in igen.');
+        const { data, error } = await supabase.from('profiles').update(updates).eq('id', userId)
+          .select('*').abortSignal(controller.signal).single();
+        if (error) {
+          if (error.code === 'PGRST204' && error.message?.includes('onboarding_dismissed') && Object.keys(updates).length === 1) {
+            return { success: false, reason: 'Introduktionsstatus kunde inte sparas.' };
+          }
+          throw error;
         }
-        console.warn('Kunde inte uppdatera profil', error);
-      }
+        if (!data || data.id !== userId || !Object.entries(updates).every(([key, value]) => (data[key] ?? null) === value)) {
+          throw new Error('Servern bekräftade inte profiluppgifterna.');
+        }
+        return { success: true, data };
+      } catch (error) {
+        console.warn('[profile save] Kunde inte uppdatera profil', error);
+        return { success: false, reason: 'Profilen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const persistConversationMessage = React.useCallback(
-    async (message: ConversationMessage) => {
-      if (!user) return;
-      const { error } = await supabase.from('messages').insert({
-        id: message.id,
-        conversation_id: message.conversationId,
-        author_id: message.authorId,
-        text: message.text,
-        status: message.status ?? null,
-      });
-      if (error) {
-        console.warn('Kunde inte spara meddelande', error);
-      }
+    async (message: ConversationMessage): Promise<ActionResult<ConversationMessage>> => {
+      if (isQaDemoMode) return { success: true, data: message };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      try {
+        if (!user) throw new Error('Session saknas.');
+        const payload = {
+          id: message.id, conversation_id: message.conversationId,
+          author_id: message.authorId, text: message.text, status: 'sent',
+        };
+        let { data, error } = await supabase.from('messages').insert(payload)
+          .select('*').abortSignal(controller.signal).single();
+        // A lost acknowledgement may leave the message saved. Retry the same ID safely.
+        if (error?.code === '23505') {
+          ({ data, error } = await supabase.from('messages').select('*')
+            .eq('id', message.id).eq('conversation_id', message.conversationId)
+            .eq('author_id', message.authorId).abortSignal(controller.signal).single());
+        }
+        if (error || data?.id !== message.id || data.conversation_id !== message.conversationId
+          || data.author_id !== message.authorId || data.text !== message.text) {
+          throw error ?? new Error('Servern bekräftade inte meddelandet.');
+        }
+        return { success: true, data: { ...message, timestamp: data.created_at ?? message.timestamp } };
+      } catch (error) {
+        console.warn('[chat send] Kunde inte skicka meddelande', error);
+        return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
+      } finally { clearTimeout(timeout); }
     },
     [user],
   );
 
   const loadAppData = React.useCallback(
     async (options: RefreshOptions = {}): Promise<ActionResult> => {
+      if (pendingDataWrites.current.size) {
+        const reason = 'En ändring sparas. Vänta ett ögonblick och uppdatera igen.';
+        setRefreshError(reason);
+        if (options.reason === 'init') setHydrating(false);
+        return { success: false, reason };
+      }
+      const writeVersion = dataWriteVersion.current;
       const requestId = ++refreshRequestId.current;
       const reason = options.reason ?? 'manual';
       const isInit = reason === 'init';
@@ -3046,7 +4801,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       } else {
         setRefreshing(true);
       }
-      setRefreshError(null);
 
       const fail = (message: string): ActionResult => {
         if (requestId === refreshRequestId.current) {
@@ -3056,6 +4810,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
 
       try {
+        if (isQaDemoMode) {
+          if (requestId === refreshRequestId.current) {
+            dispatch({ type: 'STATE_HYDRATE', payload: createQaDemoState() });
+            setLastRefreshedAt(new Date().toISOString());
+            setRefreshError(null);
+          }
+          return { success: true };
+        }
+
         const sessionResult = await supabase.auth.getSession();
         const sessionUser = sessionResult.data.session?.user ?? null;
         const authUser = sessionUser ?? user;
@@ -3068,7 +4831,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const sessionUserId = sessionUser?.id ?? authUser.id;
 
         const pendingOwnerStable = await loadPendingOwnerStable();
-        if (pendingOwnerStable) {
+        const authEmail = (authUser.email ?? '').trim().toLowerCase();
+        // Only claim a pending stable that was requested by THIS account. Guards
+        // against an abandoned signup being claimed by a different user on the
+        // same device. A mismatch is left in storage for the right user to claim.
+        if (pendingOwnerStable && pendingOwnerStable.email === authEmail) {
           const stablePayload = {
             id: pendingOwnerStable.id,
             name: pendingOwnerStable.name,
@@ -3134,37 +4901,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (stableIds.length === 0) {
           const profilesResult = await supabase.from('profiles').select('*').eq('id', authUser.id).single();
           const profile = profilesResult.data;
-          if (!profile) {
-            // Still hydrate with minimal user data so app doesn't hang in loading state
-            if (requestId === refreshRequestId.current) {
-              dispatch({
-                type: 'STATE_HYDRATE',
-                payload: {
-                  users: {
-                    [authUser.id]: {
-                      id: authUser.id,
-                      name: authUser.user_metadata?.full_name || 'Okänd',
-                      email: '',
-                      membership: [],
-                      horses: [],
-                      location: '',
-                      phone: '',
-                      responsibilities: [],
-                      defaultPasses: [],
-                      awayNotices: [],
-                      onboardingDismissed: false,
-                    },
-                  },
-                  stables: [],
-                  farms: [],
-                  horses: [],
-                  currentStableId: '',
-                  currentUserId: authUser.id,
-                  sessionUserId,
-                },
-              });
-            }
-            return fail('Kunde inte hämta profilen.');
+          if (profilesResult.error || !profile) {
+            console.warn('[stable refresh] Kunde inte hämta profilen', profilesResult.error);
+            return fail('Kunde inte hämta profilen. Försök igen.');
           }
           const draftDefaultPasses = await loadDefaultPassDraft(authUser.id);
           const userProfile: UserProfile = {
@@ -3197,7 +4936,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 arenaStatuses: [],
                 rideLogs: [],
                 horseDayStatuses: [],
+                feedPlans: [],
+                feedChecks: [],
+                plannedRides: [],
+                externalContacts: [],
+                careEvents: [],
                 alerts: [],
+                stableAlerts: [],
                 ridingSchedule: [],
                 competitionEvents: [],
                 posts: [],
@@ -3214,6 +4959,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               },
             });
           }
+          if (requestId === refreshRequestId.current) {
+            setLastRefreshedAt(new Date().toISOString());
+            setRefreshError(null);
+          }
           return { success: true };
         }
         const previousStableId = stateRef.current.currentStableId;
@@ -3228,6 +4977,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           .from('stable_members')
           .select('*')
           .in('stable_id', stableIds);
+        if (allMembershipResult.error) {
+          console.warn('[stable refresh] Kunde inte hämta stallmedlemmar', allMembershipResult.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
         const membership = allMembershipResult.data ?? myMembership;
 
         const [
@@ -3243,12 +4996,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           rideLogsResult,
           horseDayStatusesResult,
           alertsResult,
+          stableAlertsResult,
           ridingDaysResult,
           competitionEventsResult,
           groupsResult,
           defaultPassesResult,
           awayNoticesResult,
           conversationsResult,
+          feedPlansResult,
+          feedChecksResult,
+          plannedRidesResult,
+          externalContactsResult,
+          careEventsResult,
+          blockedUsersResult,
         ] = await Promise.all([
           supabase.from('stables').select('*').in('id', stableIds),
           supabase.from('farms').select('*'),
@@ -3262,13 +5022,37 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('ride_logs').select('*').in('stable_id', stableIds),
           supabase.from('horse_day_statuses').select('*').in('stable_id', stableIds),
           supabase.from('alerts').select('*').in('stable_id', stableIds),
+          supabase.from('stable_alerts').select('*').in('stable_id', stableIds),
           supabase.from('riding_days').select('*').in('stable_id', stableIds),
           supabase.from('competition_events').select('*').in('stable_id', stableIds),
           supabase.from('groups').select('*').in('stable_id', stableIds),
           supabase.from('default_passes').select('*').in('stable_id', stableIds),
           supabase.from('away_notices').select('*').in('stable_id', stableIds),
           supabase.from('conversations').select('*'),
+          supabase.from('feed_plans').select('*').in('stable_id', stableIds),
+          supabase.from('feed_checks').select('*').in('stable_id', stableIds),
+          supabase.from('planned_rides').select('*').in('stable_id', stableIds),
+          supabase.from('external_contacts').select('*').in('stable_id', stableIds),
+          supabase.from('care_events').select('*').in('stable_id', stableIds),
+          supabase.from('blocked_users').select('blocked_user_id').eq('blocker_user_id', authUser.id),
         ]);
+
+        const failedRead = [
+          stablesResult, farmsResult, horsesResult, paddocksResult, assignmentsResult,
+          assignmentHistoryResult, dayEventsResult, arenaBookingsResult, arenaStatusesResult,
+          rideLogsResult, horseDayStatusesResult, alertsResult, stableAlertsResult, ridingDaysResult,
+          competitionEventsResult, groupsResult, defaultPassesResult, awayNoticesResult,
+          conversationsResult, feedPlansResult, feedChecksResult, plannedRidesResult,
+          externalContactsResult, careEventsResult, blockedUsersResult,
+        ].find((result) => result.error);
+        if (failedRead?.error) {
+          console.warn('[stable refresh] Kunde inte hämta stalldata', failedRead.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
+
+        const blockedUserIds = (blockedUsersResult.data ?? [])
+          .map((row) => row.blocked_user_id as string)
+          .filter(Boolean);
 
         const stableRows = stablesResult.data ?? [];
         const farmRows = farmsResult.data ?? [];
@@ -3282,6 +5066,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const rideLogRows = rideLogsResult.data ?? [];
         const horseStatusRows = horseDayStatusesResult.data ?? [];
         const alertRows = alertsResult.data ?? [];
+        const stableAlertRows = stableAlertsResult.data ?? [];
         const ridingDayRows = ridingDaysResult.data ?? [];
         const competitionRows = competitionEventsResult.data ?? [];
         const groupRows = groupsResult.data ?? [];
@@ -3325,6 +5110,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               .select('*')
               .in('conversation_id', privateConversationIds)
           : { data: [] as { conversation_id: string; user_id: string }[] };
+        if ('error' in conversationMembersResult && conversationMembersResult.error) {
+          console.warn('[stable refresh] Kunde inte hämta chattmedlemmar', conversationMembersResult.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
         const conversationMemberRows = conversationMembersResult.data ?? [];
         const membersByConversation = conversationMemberRows.reduce<Record<string, string[]>>(
           (acc, row) => {
@@ -3336,16 +5125,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           {},
         );
 
-        const profileIds = new Set<string>([authUser.id]);
-        membership.forEach((row) => profileIds.add(row.user_id));
-        conversationMemberRows.forEach((row) => profileIds.add(row.user_id));
-        const profilesResult = await supabase
-          .from('profiles')
-          .select('*')
-          .in('id', Array.from(profileIds));
+        // PII-safe: co-member name/avatar/location come from get_member_directory()
+        // (phone masked for non-admins). The base profiles table is self-only RLS, so a
+        // direct `.from('profiles').select('*')` would only ever return our own row.
+        const profilesResult = await supabase.rpc('get_member_directory');
+        if (profilesResult.error) {
+          console.warn('[stable refresh] Kunde inte hämta medlemmar', profilesResult.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
 
-        const profiles = profilesResult.data ?? [];
-        const profilesById = profiles.reduce<Record<string, (typeof profiles)[number]>>(
+        type DirectoryRow = {
+          id: string;
+          username: string | null;
+          full_name: string | null;
+          avatar_url: string | null;
+          location: string | null;
+          responsibilities: string[] | null;
+          onboarding_dismissed: boolean | null;
+          phone: string | null;
+        };
+        const profiles = (profilesResult.data ?? []) as DirectoryRow[];
+        const profilesById = profiles.reduce<Record<string, DirectoryRow>>(
           (acc, profile) => {
             acc[profile.id] = profile;
             return acc;
@@ -3411,6 +5211,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
 
         defaultPassRows.forEach((entry) => {
+          // UserProfile defaults describe the selected stable, just like the profile UI.
+          if (entry.stable_id !== selectedStableId) return;
           const target = userMap[entry.user_id];
           if (!target) return;
           target.defaultPasses = [
@@ -3447,7 +5249,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               .limit(POSTS_PAGE_SIZE)
           : { data: [] as any[] };
         if ('error' in postsResult && postsResult.error) {
-          console.warn('Kunde inte hämta inlägg', postsResult.error);
+          console.warn('[stable refresh] Kunde inte hämta inlägg', postsResult.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
         }
         const postRows = postsResult.data ?? [];
         const postIds = postRows.map((post) => post.id);
@@ -3457,6 +5260,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           postIds.length ? supabase.from('comments').select('*').in('post_id', postIds) : Promise.resolve({ data: [] }),
         ]);
 
+        const failedPostRead = [likesResult, commentsResult].find((result) => 'error' in result && result.error);
+        if (failedPostRead && 'error' in failedPostRead) {
+          console.warn('[stable refresh] Kunde inte hämta inläggsaktivitet', failedPostRead.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
         const likes = likesResult.data ?? [];
         const comments = commentsResult.data ?? [];
 
@@ -3533,6 +5341,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               .in('conversation_id', conversationIds)
               .order('created_at', { ascending: true })
           : { data: [] as any[] };
+        if ('error' in messagesResult && messagesResult.error) {
+          console.warn('[stable refresh] Kunde inte hämta meddelanden', messagesResult.error);
+          return fail('Kunde inte uppdatera stalldata. Försök igen.');
+        }
         const messageRows = messagesResult.data ?? [];
         const conversations = messageRows.reduce<Record<string, ConversationMessage[]>>((acc, row) => {
           const list = acc[row.conversation_id] ?? [];
@@ -3712,12 +5524,94 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           hay: row.hay ?? undefined,
         }));
 
+        const feedPlanRows = feedPlansResult.data ?? [];
+        const feedCheckRows = feedChecksResult.data ?? [];
+        const formattedFeedPlans: FeedPlanItem[] = feedPlanRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id ?? undefined,
+          slot: row.slot,
+          label: row.label,
+          amount: row.amount ?? undefined,
+          note: row.note ?? undefined,
+          isStableDefault: row.is_stable_default ?? false,
+          active: row.active ?? true,
+        }));
+        const formattedFeedChecks: FeedCheck[] = feedCheckRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          date: row.date,
+          slot: row.slot,
+          checkedByUserId: row.checked_by_user_id ?? undefined,
+          checkedAt: row.checked_at ?? undefined,
+          deviationNote: row.deviation_note ?? undefined,
+        }));
+
+        const plannedRideRows = plannedRidesResult.data ?? [];
+        const formattedPlannedRides: PlannedRide[] = plannedRideRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseId: row.horse_id,
+          riderUserId: row.rider_user_id ?? undefined,
+          date: row.date,
+          time: row.time ?? undefined,
+          rideTypeId: row.ride_type_id ?? undefined,
+          note: row.note ?? undefined,
+          status: row.status ?? 'planned',
+          completedRideLogId: row.completed_ride_log_id ?? undefined,
+          createdAt: row.created_at,
+        }));
+
+        const externalContactRows = externalContactsResult.data ?? [];
+        const formattedExternalContacts: ExternalContact[] = externalContactRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          name: row.name,
+          type: row.type,
+          phone: row.phone ?? undefined,
+          email: row.email ?? undefined,
+          note: row.note ?? undefined,
+          createdAt: row.created_at,
+        }));
+
+        const careEventRows = careEventsResult.data ?? [];
+        const formattedCareEvents: CareEvent[] = careEventRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          horseIds: row.horse_ids ?? [],
+          type: row.type,
+          title: row.title,
+          date: row.date,
+          time: row.time ?? undefined,
+          contactId: row.contact_id ?? undefined,
+          responsibleUserId: row.responsible_user_id ?? undefined,
+          status: row.status ?? 'planned',
+          note: row.note ?? undefined,
+          completedAt: row.completed_at ?? undefined,
+          createdAt: row.created_at,
+        }));
+
         const formattedAlerts: AlertMessage[] = alertRows.map((row) => ({
           id: row.id,
           stableId: row.stable_id,
           message: row.message,
           type: row.type,
           createdAt: row.created_at,
+        }));
+
+        const formattedStableAlerts: StableAlert[] = stableAlertRows.map((row) => ({
+          id: row.id,
+          stableId: row.stable_id,
+          title: row.title,
+          body: row.body ?? undefined,
+          severity: row.severity ?? 'info',
+          horseId: row.horse_id ?? undefined,
+          paddockId: row.paddock_id ?? undefined,
+          assignmentId: row.assignment_id ?? undefined,
+          createdByUserId: row.created_by_user_id,
+          createdAt: row.created_at,
+          resolvedAt: row.resolved_at ?? undefined,
         }));
 
         const formattedRidingDays: RidingDay[] = ridingDayRows.map((row) => ({
@@ -3750,7 +5644,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (requestId !== refreshRequestId.current) {
           return { success: false, reason: 'Avbruten uppdatering.' };
         }
+        if (writeVersion !== dataWriteVersion.current || pendingDataWrites.current.size) {
+          return fail('En ändring sparas. Uppdatera igen om ett ögonblick.');
+        }
 
+        defaultPassesStableId.current = selectedStableId;
+        autoAssignmentAttempts.current.clear();
         dispatch({
           type: 'STATE_HYDRATE',
           payload: {
@@ -3765,7 +5664,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             arenaStatuses: formattedArenaStatuses,
             rideLogs: formattedRideLogs,
             horseDayStatuses: formattedHorseStatuses,
+            feedPlans: formattedFeedPlans,
+            feedChecks: formattedFeedChecks,
+            plannedRides: formattedPlannedRides,
+            externalContacts: formattedExternalContacts,
+            careEvents: formattedCareEvents,
             alerts: formattedAlerts,
+            stableAlerts: formattedStableAlerts,
             ridingSchedule: formattedRidingDays,
             competitionEvents: formattedCompetitionEvents,
             posts,
@@ -3780,8 +5685,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             currentStableId: selectedStableId,
             currentUserId: authUser.id,
             sessionUserId,
+            blockedUserIds,
           },
         });
+        setLastRefreshedAt(new Date().toISOString());
+        setRefreshError(null);
         return { success: true };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Ett okänt fel inträffade.';
@@ -3797,8 +5705,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const refreshData = React.useCallback(
-    async (options: RefreshOptions = {}): Promise<ActionResult> =>
-      loadAppData({ ...options, reason: options.reason ?? 'manual' }),
+    async (options: RefreshOptions = {}): Promise<ActionResult> => {
+      const request = loadAppData({ ...options, reason: options.reason ?? 'manual' });
+      const requestId = refreshRequestId.current;
+      let timeout: ReturnType<typeof setTimeout>;
+      const deadline = new Promise<ActionResult>((resolve) => {
+        timeout = setTimeout(() => {
+          const reason = 'Det tar för lång tid att hämta stalldata. Kontrollera anslutningen och försök igen.';
+          if (requestId === refreshRequestId.current) {
+            refreshRequestId.current += 1;
+            setRefreshError(reason);
+            setHydrating(false);
+            setRefreshing(false);
+          }
+          resolve({ success: false, reason });
+        }, 20_000);
+      });
+      try {
+        return await Promise.race([request, deadline]);
+      } finally {
+        clearTimeout(timeout!);
+      }
+    },
     [loadAppData],
   );
 
@@ -3809,19 +5737,43 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       setHydrating(false);
       setRefreshing(false);
       setRefreshError(null);
+      setLastRefreshedAt(null);
       return;
     }
 
-    void loadAppData({ reason: 'init' });
+    if (stateRef.current.sessionUserId && stateRef.current.sessionUserId !== user.id) {
+      dispatch({ type: 'STATE_RESET' });
+      defaultPassesStableId.current = '';
+      autoAssignmentAttempts.current.clear();
+    }
+    void refreshData({ reason: 'init' });
 
     return () => {
       refreshRequestId.current += 1;
     };
-  }, [loadAppData, user]);
+  }, [refreshData, user]);
+
+  React.useEffect(() => {
+    if (!user || isQaDemoMode) return;
+    const updateIfActive = () => {
+      if (hydrating || refreshing || pendingDataWrites.current.size) return;
+      if (Platform.OS === 'web' && typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (AppState.currentState && AppState.currentState !== 'active') return;
+      void refreshData();
+    };
+    const interval = setInterval(updateIfActive, 60_000);
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') updateIfActive();
+    });
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
+  }, [user, hydrating, refreshing, refreshData]);
 
   // Realtime subscription for new messages
   React.useEffect(() => {
-    if (!user) return;
+    if (!user || isQaDemoMode) return;
 
     const channel = supabase
       .channel('messages-realtime')
@@ -3860,6 +5812,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             unreadCount: (existingPreview.unreadCount ?? 0) + 1,
           };
 
+          dataWriteVersion.current += 1;
           dispatch({
             type: 'CONVERSATION_APPEND',
             payload: { conversationId: row.conversation_id, message, preview },
@@ -3887,29 +5840,37 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
     const applyDraft = async () => {
       const draft = await loadDefaultPassDraft(userId);
-      if (cancelled || !draft.length) {
-        return;
-      }
-      const currentUser = stateRef.current.users[userId];
-      if (!currentUser) {
-        return;
-      }
-      if (currentUser.defaultPasses.length === 0) {
-        dispatch({
-          type: 'USER_UPDATE',
-          payload: { id: userId, updates: { defaultPasses: draft } },
-        });
-      }
-      draft.forEach((entry) => {
-        void persistDefaultPassToggle({
-          userId,
-          stableId,
-          weekday: entry.weekday,
-          slot: entry.slot,
-          enabled: true,
-        });
-      });
-      await clearDefaultPassDraft(userId);
+      if (cancelled || !draft.length) return;
+      const key = `default:${stableId}:${userId}`;
+      if (pendingDataWrites.current.has(key)) return;
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const results = await Promise.all(draft.map(entry => persistDefaultPassToggle({
+          userId, stableId, weekday: entry.weekday, slot: entry.slot, enabled: true,
+        })));
+        const failed = results.find(result => !result.success);
+        const confirmed = draft.filter((_entry, index) => results[index].success);
+        if (failed && !failed.success) {
+          const remaining = draft.filter((_entry, index) => !results[index].success);
+          if (confirmed.length && !(await saveDefaultPassDraft(userId, remaining))) {
+            reportPersistErrorRef.current('[default pass draft] Kunde inte spara återstående standardpass', new Error('Telefonens lokala lagring kunde inte uppdateras.'));
+            return;
+          }
+          reportPersistErrorRef.current('[default pass draft] Kunde inte synka lokala standardpass', new Error(failed.reason));
+        }
+        if (confirmed.length && !cancelled && stateRef.current.currentStableId === stableId) {
+          const latest = stateRef.current.users[userId];
+          if (latest) {
+            const merged = [...latest.defaultPasses];
+            for (const entry of confirmed) {
+              if (!merged.some(value => value.weekday === entry.weekday && value.slot === entry.slot)) merged.push(entry);
+            }
+            dispatch({ type: 'USER_UPDATE', payload: { id: userId, updates: { defaultPasses: merged } } });
+          }
+        }
+        if (!failed) await clearDefaultPassDraft(userId);
+      } finally { pendingDataWrites.current.delete(key); }
     };
 
     void applyDraft();
@@ -3920,105 +5881,47 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [hydrating, persistDefaultPassToggle, refreshing, state.currentStableId, state.currentUserId]);
 
   React.useEffect(() => {
-    if (hydrating || refreshing) {
-      return;
-    }
+    if (hydrating || refreshing || pendingDataWrites.current.size) return;
+    const current = stateRef.current;
+    if (!isQaDemoMode && defaultPassesStableId.current !== current.currentStableId) return;
+    if (!resolvePermissions(current, current.currentStableId, current.currentUserId).canManageAssignments) return;
     const todayIso = toISODate(new Date());
     const users = Object.values(state.users).sort((a, b) => a.id.localeCompare(b.id));
 
     state.assignments.forEach((assignment) => {
-      if (assignment.status === 'completed') {
-        return;
-      }
-
-      if (assignment.date < todayIso) {
-        return;
-      }
-
+      if (assignment.stableId !== current.currentStableId || assignment.status === 'completed' || assignment.date < todayIso) return;
+      if (pendingDataWrites.current.has(`assignment:${assignment.id}`)) return;
       const weekday = getWeekdayIndex(assignment.date);
-      const candidates = users.filter((user) => hasDefaultPass(user, weekday, assignment.slot));
-
-      if (assignment.status === 'open' && !assignment.assigneeId) {
-        if (candidates.length !== 1) {
-          return;
-        }
-
+      const candidates = users.filter((user) =>
+        resolvePermissions(current, assignment.stableId, user.id).canClaimAssignments &&
+        hasDefaultPass(user, weekday, assignment.slot),
+      );
+      let updates: Partial<Assignment> | undefined;
+      if (assignment.status === 'open' && !assignment.assigneeId && candidates.length === 1) {
         const candidate = candidates[0];
-        if (assignment.declinedByUserIds?.includes(candidate.id)) {
-          return;
+        if (!assignment.declinedByUserIds?.includes(candidate.id)) {
+          updates = { status: 'assigned', assigneeId: candidate.id, assignedVia: 'default' };
         }
-
-        dispatch({
-          type: 'ASSIGNMENT_UPDATE',
-          payload: {
-            id: assignment.id,
-            silent: true,
-            updates: {
-              status: 'assigned',
-              assigneeId: candidate.id,
-              assignedVia: 'default',
-            },
-          },
-        });
-        void persistAssignmentUpdate(assignment.id, {
-          status: 'assigned',
-          assigneeId: candidate.id,
-          assignedVia: 'default',
-        });
-        return;
-      }
-
-      if (assignment.status === 'assigned' && assignment.assignedVia === 'default' && assignment.assigneeId) {
-        const owner = state.users[assignment.assigneeId];
-        if (!owner) {
-          dispatch({
-            type: 'ASSIGNMENT_UPDATE',
-            payload: {
-              id: assignment.id,
-              silent: true,
-              updates: {
-                status: 'open',
-                assigneeId: undefined,
-                assignedVia: undefined,
-              },
-            },
-          });
-          void persistAssignmentUpdate(assignment.id, {
-            status: 'open',
-            assigneeId: undefined,
-            assignedVia: undefined,
-          });
-          return;
-        }
-
-        const shouldOwn = candidates.length === 1 && candidates[0].id === owner.id;
-        const declined = assignment.declinedByUserIds?.includes(owner.id);
-
-        if (!shouldOwn || declined) {
-          dispatch({
-            type: 'ASSIGNMENT_UPDATE',
-            payload: {
-              id: assignment.id,
-              silent: true,
-              updates: {
-                status: 'open',
-                assigneeId: undefined,
-                assignedVia: undefined,
-              },
-            },
-          });
-          void persistAssignmentUpdate(assignment.id, {
-            status: 'open',
-            assigneeId: undefined,
-            assignedVia: undefined,
-          });
+      } else if (assignment.status === 'assigned' && assignment.assignedVia === 'default' && assignment.assigneeId) {
+        const shouldOwn = candidates.length === 1 && candidates[0].id === assignment.assigneeId;
+        if (!shouldOwn || assignment.declinedByUserIds?.includes(assignment.assigneeId)) {
+          updates = { status: 'open', assigneeId: undefined, assignedVia: undefined };
         }
       }
+      if (!updates) return;
+      const signature = JSON.stringify([assignment, updates]);
+      if (autoAssignmentAttempts.current.get(assignment.id) === signature) return;
+      autoAssignmentAttempts.current.set(assignment.id, signature);
+      const confirmedUpdates = updates;
+      void persistAssignmentUpdate(assignment.id, confirmedUpdates).then(({ error }) => {
+        if (error) return;
+        dispatch({ type: 'ASSIGNMENT_UPDATE', payload: { id: assignment.id, silent: true, updates: confirmedUpdates } });
+      });
     });
-  }, [hydrating, persistAssignmentUpdate, refreshing, state.assignments, state.users]);
+  }, [hydrating, persistAssignmentUpdate, refreshing, state.assignments, state.users, state.currentStableId, state.currentUserId]);
 
   const derived = React.useMemo(() => {
-    const { assignments, alerts, currentUserId, currentStableId, horses } = state;
+    const { assignments, alerts, currentUserId, currentStableId, horses, stableAlerts } = state;
     const currentUser = state.users[currentUserId];
     const membership = state.users[currentUserId]?.membership?.find((m) => m.stableId === currentStableId);
     const currentAccess = membership?.access ?? 'view';
@@ -4050,7 +5953,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return endMinutes !== null ? formatMinutesToTime(endMinutes) : null;
     };
     const cleanAssignmentNote = (note?: string) => stripAssignmentNoteMetadata(note);
-    const stableAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
+    const stableEventAlerts = alerts.filter((alert) => alert.stableId === currentStableId);
+    const activeImportantAlerts = stableAlerts.filter(
+      (alert) =>
+        alert.stableId === currentStableId &&
+        !alert.resolvedAt &&
+        alert.severity !== 'info',
+    );
     const completed = activeAssignments.filter((assignment) => assignment.status === 'completed').length;
     const open = activeAssignments.filter((assignment) => assignment.status === 'open').length;
     const isFirstTimeOnboarding =
@@ -4081,7 +5990,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       total: activeAssignments.length,
       completed,
       open,
-      alerts: stableAlerts.length,
+      alerts: activeImportantAlerts.length || stableEventAlerts.length,
       openSlotLabels: formatSlotList(activeAssignments, 'open'),
       nextUpdateLabel: formatNextUpdate(activeAssignments),
     };
@@ -4149,57 +6058,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     return { success: true, data: updated };
   }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
 
-  const claimNextOpenAssignment = React.useCallback((): ActionResult<Assignment> => {
-    const current = stateRef.current;
-    const assignment = findNextOpenAssignment(current);
-    if (!assignment) {
-      return { success: false, reason: 'Alla pass är redan bemannade.' };
-    }
-    const accessCheck = ensurePermission(assignment.stableId, (permissions) => permissions.canClaimAssignments);
-    if (!accessCheck.success) {
-      return accessCheck;
-    }
-
-    const declinedByUserIds = assignment.declinedByUserIds?.filter(
-      (id) => id !== current.currentUserId,
-    );
-
-    dispatch({
-      type: 'ASSIGNMENT_UPDATE',
-      payload: {
-        id: assignment.id,
-        updates: {
-          status: 'assigned',
-          assigneeId: current.currentUserId,
-          assignedVia: 'manual',
-          declinedByUserIds,
-        },
-      },
-    });
-
-    const updated: Assignment = {
-      ...assignment,
-      status: 'assigned',
-      assigneeId: current.currentUserId,
-      assignedVia: 'manual',
-      declinedByUserIds,
-    };
-    void persistAssignmentUpdate(assignment.id, {
-      status: 'assigned',
-      assigneeId: current.currentUserId,
-      assignedVia: 'manual',
-      declinedByUserIds,
-    });
-    void persistAssignmentHistory(updated, 'assigned');
-
-    return {
-      success: true,
-      data: updated,
-    };
-  }, [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate]);
-
   const claimAssignment = React.useCallback(
-    (assignmentId: string): ActionResult<Assignment> => {
+    async (assignmentId: string): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const assignment = current.assignments.find((item) => item.id === assignmentId);
       if (!assignment) {
@@ -4213,24 +6073,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (assignment.status !== 'open') {
         return { success: false, reason: 'Passet är redan bemannat.' };
       }
+      if (pendingAssignmentClaimIdsRef.current.has(assignmentId)) {
+        return { success: false, reason: 'Passet håller redan på att tas.' };
+      }
+      if (pendingDataWrites.current.has(`assignment:${assignmentId}`)) {
+        return { success: false, reason: 'Passet sparas redan. Vänta ett ögonblick.' };
+      }
 
       const declinedByUserIds = assignment.declinedByUserIds?.filter(
         (id) => id !== current.currentUserId,
       );
-
-      dispatch({
-        type: 'ASSIGNMENT_UPDATE',
-        payload: {
-          id: assignment.id,
-          updates: {
-            status: 'assigned',
-            assigneeId: current.currentUserId,
-            assignedVia: 'manual',
-            declinedByUserIds,
-          },
-        },
-      });
-
       const updated: Assignment = {
         ...assignment,
         status: 'assigned',
@@ -4238,24 +6090,64 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         assignedVia: 'manual',
         declinedByUserIds,
       };
-      void persistAssignmentUpdate(assignment.id, {
+      const updates: Partial<Assignment> = {
         status: 'assigned',
         assigneeId: current.currentUserId,
         assignedVia: 'manual',
         declinedByUserIds,
-      });
-      void persistAssignmentHistory(updated, 'assigned');
-
-      return {
-        success: true,
-        data: updated,
       };
+
+      pendingAssignmentClaimIdsRef.current.add(assignmentId);
+      pendingDataWrites.current.add(`assignment:${assignmentId}`);
+      dataWriteVersion.current += 1;
+      try {
+        const persisted = await persistAssignmentClaim(assignment.id, updates);
+        pendingDataWrites.current.delete(`assignment:${assignmentId}`);
+        if (persisted.error) {
+          await refreshData({ reason: 'manual' });
+          return {
+            success: false,
+            reason: 'Det gick inte att ta passet just nu. Försök igen.',
+          };
+        }
+        if (!persisted.claimed) {
+          const refreshed = await refreshData({ reason: 'manual' });
+          return {
+            success: false,
+            reason: refreshed.success
+              ? 'Någon annan hann ta passet. Schemat har uppdaterats.'
+              : 'Någon annan hann ta passet. Ladda om schemat för senaste läget.',
+          };
+        }
+
+        dispatch({
+          type: 'ASSIGNMENT_UPDATE',
+          payload: { id: assignment.id, updates },
+        });
+        void persistAssignmentHistory(updated, 'assigned');
+
+        return {
+          success: true,
+          data: updated,
+        };
+      } finally {
+        pendingAssignmentClaimIdsRef.current.delete(assignmentId);
+        pendingDataWrites.current.delete(`assignment:${assignmentId}`);
+      }
     },
-    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
+    [ensurePermission, persistAssignmentClaim, persistAssignmentHistory, refreshData],
   );
 
+  const claimNextOpenAssignment = React.useCallback(async (): Promise<ActionResult<Assignment>> => {
+    const assignment = findNextOpenAssignment(stateRef.current);
+    if (!assignment) {
+      return { success: false, reason: 'Alla pass är redan bemannade.' };
+    }
+    return claimAssignment(assignment.id);
+  }, [claimAssignment]);
+
   const declineAssignment = React.useCallback(
-    (assignmentId: string): ActionResult<Assignment> => {
+    async (assignmentId: string): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const assignment = current.assignments.find((item) => item.id === assignmentId);
       if (!assignment) {
@@ -4272,6 +6164,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       const declined = new Set(assignment.declinedByUserIds ?? []);
       declined.add(current.currentUserId);
+
+      const saved = await persistOwnAssignmentUpdate(assignment, {
+        status: 'open',
+        assigneeId: undefined,
+        assignedVia: undefined,
+        declinedByUserIds: Array.from(declined),
+      });
+      if (!saved.success) return saved;
 
       dispatch({
         type: 'ASSIGNMENT_UPDATE',
@@ -4293,12 +6193,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         assignedVia: undefined,
         declinedByUserIds: Array.from(declined),
       };
-      void persistAssignmentUpdate(assignment.id, {
-        status: 'open',
-        assigneeId: undefined,
-        assignedVia: undefined,
-        declinedByUserIds: Array.from(declined),
-      });
       void persistAssignmentHistory(updated, 'declined');
 
       return {
@@ -4306,11 +6200,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         data: updated,
       };
     },
-    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
+    [ensurePermission, persistAssignmentHistory, persistOwnAssignmentUpdate],
   );
 
   const completeAssignment = React.useCallback(
-    (assignmentId: string): ActionResult<Assignment> => {
+    async (assignmentId: string): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const assignment = current.assignments.find((item) => item.id === assignmentId);
       if (!assignment) {
@@ -4326,6 +6220,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const completedAt = new Date().toISOString();
+
+      const saved = await persistOwnAssignmentUpdate(assignment, { status: 'completed', completedAt });
+      if (!saved.success) return saved;
 
       dispatch({
         type: 'ASSIGNMENT_UPDATE',
@@ -4343,10 +6240,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         status: 'completed',
         completedAt,
       };
-      void persistAssignmentUpdate(assignment.id, {
-        status: 'completed',
-        completedAt,
-      });
       void persistAssignmentHistory(updated, 'completed');
 
       return {
@@ -4354,11 +6247,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         data: updated,
       };
     },
-    [ensurePermission, persistAssignmentHistory, persistAssignmentUpdate],
+    [ensurePermission, persistAssignmentHistory, persistOwnAssignmentUpdate],
   );
 
   const createAssignment = React.useCallback(
-    (input: CreateAssignmentInput): ActionResult<Assignment> => {
+    async (input: CreateAssignmentInput): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageAssignments);
@@ -4367,6 +6260,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       if (!input.date) {
         return { success: false, reason: 'Datum måste anges.' };
+      }
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      }
+      if (input.time?.trim() && !isValidTime(input.time.trim())) {
+        return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
       }
 
       const slot = input.slot;
@@ -4378,7 +6277,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
 
       const assignment: Assignment = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         date: input.date,
         stableId,
         label,
@@ -4391,12 +6290,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         assignedVia: input.assignToCurrentUser ? 'manual' : undefined,
       };
 
-      dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
-      void persistAssignmentInsert(assignment).then((result) => {
-        if (!result?.error) {
-          void persistAssignmentHistory(assignment, 'created');
-        }
-      });
+      const saved = await persistAssignmentInsert(assignment);
+      if (saved.error) return { success: false, reason: saved.reason ?? 'Passet kunde inte skapas. Försök igen.' };
+      if (stateRef.current.assignments.some((item) => item.id === assignment.id)) {
+        dispatch({ type: 'ASSIGNMENT_UPDATE', payload: { id: assignment.id, updates: assignment, silent: true } });
+      } else {
+        dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
+      }
+      void persistAssignmentHistory(assignment, 'created');
 
       return { success: true, data: assignment };
     },
@@ -4423,11 +6324,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!title) {
         return { success: false, reason: 'Titel saknas.' };
       }
-      if (!input.dateFrom || !input.dateTo) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.dateFrom) || !isValidISODate(input.dateTo)) {
+        return { success: false, reason: 'Ange giltiga datum i formatet ÅÅÅÅ-MM-DD.' };
       }
-      if (!startTime) {
-        return { success: false, reason: 'Ange starttid.' };
+      if (!isValidTime(startTime)) {
+        return { success: false, reason: 'Ange en giltig starttid i formatet HH:MM.' };
       }
       if (!input.weekdays.length) {
         return { success: false, reason: 'Välj minst en veckodag.' };
@@ -4465,7 +6366,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           );
         });
 
-      const assignmentsToCreate: Assignment[] = [];
+      const generatedAssignments: Assignment[] = [];
       let skippedCount = 0;
       const status: AssignmentStatus = input.assignToCurrentUser ? 'assigned' : 'open';
       const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
@@ -4491,7 +6392,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             continue;
           }
           existingKeys.add(key);
-          assignmentsToCreate.push({
+          generatedAssignments.push({
             id: generateId(),
             date: isoDate,
             stableId,
@@ -4502,30 +6403,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             status,
             assigneeId,
             assignedVia,
+            note: `Slut: ${addMinutesToTime(startTime, durationMinutes)}`,
           });
         }
       }
 
+      const batchKey = JSON.stringify([stableId, current.currentUserId, input]);
+      const assignmentsToCreate = pendingRecurringBatches.current.get(batchKey) ?? generatedAssignments;
       if (!assignmentsToCreate.length) {
         return { success: true, data: { createdCount: 0, skippedCount } };
       }
 
-      assignmentsToCreate.forEach((assignment) =>
-        dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment }),
-      );
+      pendingRecurringBatches.current.set(batchKey, assignmentsToCreate);
+      const { error } = await persistAssignmentBatchInsert(assignmentsToCreate);
+      if (error) return { success: false, reason: 'Kunde inte skapa återkommande pass. Försök igen eller uppdatera schemat.' };
+      pendingRecurringBatches.current.delete(batchKey);
       assignmentsToCreate.forEach((assignment) => {
+        if (!stateRef.current.assignments.some((existing) => existing.id === assignment.id)) {
+          dispatch({ type: 'ASSIGNMENT_ADD', payload: assignment });
+        }
         recurringDurationById.current.set(assignment.id, durationMinutes);
       });
-      const { error } = await persistAssignmentBatchInsert(assignmentsToCreate);
-      if (error) {
-        assignmentsToCreate.forEach((assignment) =>
-          dispatch({ type: 'ASSIGNMENT_REMOVE', payload: { id: assignment.id } }),
-        );
-        assignmentsToCreate.forEach((assignment) => {
-          recurringDurationById.current.delete(assignment.id);
-        });
-        return { success: false, reason: 'Kunde inte skapa återkommande pass.' };
-      }
       assignmentsToCreate.forEach((assignment) => {
         void persistAssignmentHistory(assignment, 'created');
       });
@@ -4539,7 +6437,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const updateAssignment = React.useCallback(
-    (input: UpdateAssignmentInput): ActionResult<Assignment> => {
+    async (input: UpdateAssignmentInput): Promise<ActionResult<Assignment>> => {
       const current = stateRef.current;
       const existing = current.assignments.find((item) => item.id === input.id);
 
@@ -4549,6 +6447,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const accessCheck = ensurePermission(existing.stableId, (permissions) => permissions.canManageAssignments);
       if (!accessCheck.success) {
         return accessCheck;
+      }
+      if (input.date !== undefined && !isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      }
+      if (input.time?.trim() && !isValidTime(input.time.trim())) {
+        return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
       }
 
       const slot = input.slot ?? existing.slot;
@@ -4613,6 +6517,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
       }
 
+      const { error } = await persistAssignmentUpdate(existing.id, updates, undefined, false);
+      if (error) return { success: false, reason: 'Passet kunde inte uppdateras. Försök igen.' };
+
       dispatch({
         type: 'ASSIGNMENT_UPDATE',
         payload: {
@@ -4622,7 +6529,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       });
 
       const updated = { ...existing, ...updates };
-      void persistAssignmentUpdate(existing.id, updates);
       if (updates.status) {
         const action: AssignmentHistoryAction =
           updates.status === 'completed'
@@ -4639,7 +6545,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const deleteAssignment = React.useCallback(
-    (assignmentId: string): ActionResult => {
+    async (assignmentId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.assignments.find((item) => item.id === assignmentId);
       if (!existing) {
@@ -4650,15 +6556,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
 
+      const { error } = await persistAssignmentDelete(assignmentId);
+      if (error) return { success: false, reason: 'Passet kunde inte tas bort. Försök igen.' };
       dispatch({ type: 'ASSIGNMENT_REMOVE', payload: { id: assignmentId } });
-      void persistAssignmentDelete(assignmentId);
       return { success: true };
     },
     [ensurePermission, persistAssignmentDelete],
   );
 
   const addEvent = React.useCallback(
-    (message: string, type: AlertMessage['type'] = 'info'): ActionResult<AlertMessage> => {
+    async (message: string, type: AlertMessage['type'] = 'info', requestId?: string): Promise<ActionResult<AlertMessage>> => {
       const current = stateRef.current;
       const accessCheck = ensurePermission(
         current.currentStableId,
@@ -4667,22 +6574,115 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
+      if (!message.trim()) return { success: false, reason: 'Skriv en kort uppdatering.' };
       const alert: AlertMessage = {
-        id: generateId(),
+        id: requestId ?? generateId(),
         stableId: current.currentStableId,
-        message,
+        message: message.trim(),
         type,
         createdAt: new Date().toISOString(),
       };
-      dispatch({ type: 'ALERT_ADD', payload: alert });
-      void persistAlertInsert(alert);
-      return { success: true, data: alert };
+      const key = `event:${alert.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Händelsen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistAlertInsert(alert);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte händelsen. Försök igen.' };
+        dispatch({ type: 'ALERT_ADD', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistAlertInsert],
   );
 
+  const ensureStableAlertAccess = React.useCallback(
+    (stableId: string) =>
+      ensurePermission(
+        stableId,
+        (permissions) =>
+          permissions.canManageAssignments ||
+          permissions.canManageDayEvents ||
+          permissions.canManageOnboarding,
+      ),
+    [ensurePermission],
+  );
+
+  const createStableAlert = React.useCallback(
+    async (input: CreateStableAlertInput): Promise<ActionResult<StableAlert>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensureStableAlertAccess(stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const title = input.title.trim();
+      if (!title) {
+        return { success: false, reason: 'Skriv vad som är viktigt.' };
+      }
+      const alert: StableAlert = {
+        id: input.requestId ?? generateId(),
+        stableId,
+        title,
+        body: input.body?.trim() || undefined,
+        severity: input.severity ?? 'important',
+        horseId: input.horseId,
+        paddockId: input.paddockId,
+        assignmentId: input.assignmentId,
+        createdByUserId: current.currentUserId,
+        createdAt: new Date().toISOString(),
+      };
+      const key = `stable-alert:${alert.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Notisen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistStableAlertUpsert(alert);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte notisen. Försök igen.' };
+        dispatch({ type: 'STABLE_ALERT_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
+    },
+    [ensureStableAlertAccess, persistStableAlertUpsert],
+  );
+
+  const resolveStableAlert = React.useCallback(
+    async (alertId: string): Promise<ActionResult<StableAlert>> => {
+      const current = stateRef.current;
+      const existing = current.stableAlerts.find((alert) => alert.id === alertId);
+      if (!existing) {
+        return { success: false, reason: 'Notisen kunde inte hittas.' };
+      }
+      const accessCheck = ensureStableAlertAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (existing.resolvedAt) {
+        return { success: false, reason: 'Notisen är redan löst.' };
+      }
+      const next: StableAlert = {
+        ...existing,
+        resolvedAt: new Date().toISOString(),
+      };
+      const key = `stable-alert:${next.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Notisen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistStableAlertUpsert(next, true);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte notisen. Försök igen.' };
+        dispatch({ type: 'STABLE_ALERT_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
+    },
+    [ensureStableAlertAccess, persistStableAlertUpsert],
+  );
+
   const toggleDefaultPass = React.useCallback(
-    (weekday: WeekdayIndex, slot: AssignmentSlot): ActionResult<UserProfile> => {
+    async (weekday: WeekdayIndex, slot: AssignmentSlot): Promise<ActionResult<UserProfile>> => {
       const current = stateRef.current;
       const user = current.users[current.currentUserId];
       if (!user) {
@@ -4697,30 +6697,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         ? user.defaultPasses.filter((entry) => !(entry.weekday === weekday && entry.slot === slot))
         : [...user.defaultPasses, { weekday, slot }];
 
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: {
-          id: user.id,
-          updates: {
-            defaultPasses: nextDefaultPasses,
-          },
-        },
-      });
-
-      if (!stableId) {
-        void saveDefaultPassDraft(user.id, nextDefaultPasses);
-        return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
-      }
-
-      void persistDefaultPassToggle({
-        userId: user.id,
-        stableId,
-        weekday,
-        slot,
-        enabled: !exists,
-      });
-
-      return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
+      if (stableId && defaultPassesStableId.current !== stableId) return { success: false, reason: 'Standardpassen för stallet hämtas fortfarande. Vänta ett ögonblick.' };
+      const key = `default:${stableId}:${user.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Standardpassen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        if (!stableId) {
+          if (!(await saveDefaultPassDraft(user.id, nextDefaultPasses))) return { success: false, reason: 'Standardpassen kunde inte sparas på telefonen. Försök igen.' };
+        } else {
+          const result = await persistDefaultPassToggle({ userId: user.id, stableId, weekday, slot, enabled: !exists });
+          if (!result.success) return result;
+        }
+        // These preferences in state always belong to the currently selected stable.
+        if (stateRef.current.currentStableId === stableId) {
+          const latest = stateRef.current.users[user.id] ?? user;
+          const remaining = latest.defaultPasses.filter(entry => !(entry.weekday === weekday && entry.slot === slot));
+          const saved = exists ? remaining : [...remaining, { weekday, slot }];
+          dispatch({ type: 'USER_UPDATE', payload: { id: user.id, updates: { defaultPasses: saved } } });
+          return { success: true, data: { ...latest, defaultPasses: saved } };
+        }
+        return { success: true, data: user };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [persistDefaultPassToggle],
   );
@@ -4730,47 +6728,31 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, []);
 
   const sendConversationMessage = React.useCallback(
-    (conversationId: string, text: string): ActionResult<ConversationMessage> => {
-      if (!text.trim()) {
-        return { success: false, reason: 'Meddelandet kan inte vara tomt.' };
-      }
-
+    async (conversationId: string, text: string, requestId?: string): Promise<ActionResult<ConversationMessage>> => {
+      if (!text.trim()) return { success: false, reason: 'Meddelandet kan inte vara tomt.' };
       const current = stateRef.current;
-      if (!current.currentUserId) {
-        return { success: false, reason: 'Ingen inloggad användare.' };
-      }
-      const timestamp = new Date().toISOString();
-      const message: ConversationMessage = {
-        id: generateId(),
-        conversationId,
-        authorId: current.currentUserId,
-        text: text.trim(),
-        timestamp,
-        status: 'sent',
-      };
-
+      if (!current.currentUserId) return { success: false, reason: 'Ingen inloggad användare.' };
       const existingPreview = current.messages.find((msg) => msg.id === conversationId);
-      const preview: MessagePreview = {
-        ...(existingPreview ?? {
-          id: conversationId,
-          title: 'Konversation',
-          subtitle: '',
-          description: '',
-          timeAgo: '',
-        }),
-        stableId: existingPreview?.stableId ?? current.currentStableId,
-        description: text.trim(),
-        timeAgo: formatTimeAgo(timestamp),
-        unreadCount: 0,
+      if (!existingPreview) return { success: false, reason: 'Konversationen kunde inte hittas. Uppdatera och försök igen.' };
+      const message: ConversationMessage = {
+        id: requestId ?? generateId(), conversationId, authorId: current.currentUserId,
+        text: text.trim(), timestamp: new Date().toISOString(), status: 'sent',
       };
-
-      dispatch({
-        type: 'CONVERSATION_APPEND',
-        payload: { conversationId, message, preview },
-      });
-      void persistConversationMessage(message);
-
-      return { success: true, data: message };
+      const key = `message:${message.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Meddelandet skickas redan.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistConversationMessage(message);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
+        const preview: MessagePreview = {
+          ...existingPreview, description: result.data.text,
+          timeAgo: formatTimeAgo(result.data.timestamp), unreadCount: 0,
+        };
+        dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, message: result.data, preview } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [persistConversationMessage],
   );
@@ -4780,6 +6762,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const current = stateRef.current;
       if (!current.currentUserId) {
         return { success: false, reason: 'Ingen inloggad användare.' };
+      }
+      if (current.blockedUserIds.includes(otherUserId)) {
+        return {
+          success: false,
+          reason: 'Du har blockerat den här användaren. Häv blockeringen för att chatta.',
+        };
       }
 
       // Look through conversations for an existing private chat with this user
@@ -4794,32 +6782,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
       }
 
-      // Create new conversation
-      const { data: conversationData, error: convError } = await supabase
-        .from('conversations')
-        .insert({
-          is_group: false,
-          created_by_user_id: current.currentUserId,
-        })
-        .select('id')
-        .single();
+      // Create new conversation. qaDemo is backend-free, so fabricate a local id and
+      // skip the Supabase round-trip (which would otherwise fail and block the chat).
+      let conversationId: string;
+      if (isQaDemoMode) {
+        conversationId = generateId();
+      } else {
+        const { data: conversationData, error: convError } = await supabase
+          .from('conversations')
+          .insert({
+            is_group: false,
+            created_by_user_id: current.currentUserId,
+          })
+          .select('id')
+          .single();
 
-      if (convError || !conversationData) {
-        return { success: false, reason: 'Kunde inte skapa konversation.' };
-      }
+        if (convError || !conversationData) {
+          return { success: false, reason: 'Kunde inte skapa konversation.' };
+        }
 
-      const conversationId = conversationData.id;
+        conversationId = conversationData.id;
 
-      // Add both users as conversation members
-      const { error: memberError } = await supabase
-        .from('conversation_members')
-        .insert([
-          { conversation_id: conversationId, user_id: current.currentUserId },
-          { conversation_id: conversationId, user_id: otherUserId },
-        ]);
+        // Add both users as conversation members
+        const { error: memberError } = await supabase
+          .from('conversation_members')
+          .insert([
+            { conversation_id: conversationId, user_id: current.currentUserId },
+            { conversation_id: conversationId, user_id: otherUserId },
+          ]);
 
-      if (memberError) {
-        console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
+        if (memberError) {
+          console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
+        }
       }
 
       // Add preview to local state
@@ -4846,7 +6840,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const upsertPaddock = React.useCallback(
-    (input: UpsertPaddockInput): ActionResult<Paddock> => {
+    async (input: UpsertPaddockInput): Promise<ActionResult<Paddock>> => {
       const current = stateRef.current;
       const name = input.name.trim();
       const stableId = input.stableId || current.currentStableId;
@@ -4863,6 +6857,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const existing = input.id
         ? current.paddocks.find((paddock) => paddock.id === input.id)
         : undefined;
+
+      if (existing && existing.stableId !== stableId) return { success: false, reason: 'Hagen tillhör ett annat stall.' };
 
       const id = existing?.id ?? input.id ?? generateId();
       const updatedAt = new Date().toISOString();
@@ -4881,14 +6877,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         season,
       };
 
-      dispatch({ type: 'PADDOCK_UPSERT', payload: paddock });
-      void persistPaddockUpsert(paddock, input.image);
-      return { success: true, data: paddock };
+      const writeKey = `paddock:${id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Hagen sparas redan. Vänta och försök igen.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistPaddockUpsert(paddock, input.image, Boolean(existing));
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte hagen. Försök igen.' };
+        dispatch({ type: 'PADDOCK_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(writeKey); }
+
     },
     [ensurePermission, persistPaddockUpsert],
   );
 
-  const deletePaddock = React.useCallback((paddockId: string): ActionResult => {
+  const deletePaddock = React.useCallback(async (paddockId: string): Promise<ActionResult> => {
     const current = stateRef.current;
     const existing = current.paddocks.find((paddock) => paddock.id === paddockId);
     if (!existing) {
@@ -4899,13 +6904,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return accessCheck;
     }
 
-    dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
-    void persistPaddockDelete(paddockId);
-    return { success: true };
+    const writeKey = `paddock:${paddockId}`;
+    if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Hagen sparas redan. Vänta och försök igen.' };
+    pendingDataWrites.current.add(writeKey);
+    dataWriteVersion.current += 1;
+    try {
+      const result = await persistPaddockDelete(existing);
+      if (!result.success) return result;
+      dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
+      return result;
+    } finally { pendingDataWrites.current.delete(writeKey); }
+
   }, [ensurePermission, persistPaddockDelete]);
 
   const updateHorseDayStatus = React.useCallback(
-    (input: UpdateHorseDayStatusInput): ActionResult<HorseDayStatus> => {
+    async (input: UpdateHorseDayStatusInput): Promise<ActionResult<HorseDayStatus>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canUpdateHorseStatus);
@@ -4916,8 +6929,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!horse || horse.stableId !== stableId) {
         return { success: false, reason: 'Hästen kunde inte hittas.' };
       }
-      if (!input.date) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
       }
 
       const existing = current.horseDayStatuses.find(
@@ -4940,15 +6953,201 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         ...input.updates,
       };
 
-      dispatch({ type: 'HORSE_DAY_STATUS_UPSERT', payload: next });
-      void persistHorseDayStatusUpsert(next);
-      return { success: true, data: next };
+      const writeKey = `status:${stableId}:${input.horseId}:${input.date}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Häststatus sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistHorseDayStatusUpsert(next, input.updates);
+        dispatch({ type: 'HORSE_DAY_STATUS_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[horse status] Kunde inte spara häststatus', error);
+        return { success: false, reason: 'Häststatus kunde inte sparas. Försök igen.' };
+      } finally {
+        pendingDataWrites.current.delete(writeKey);
+      }
     },
     [ensurePermission, persistHorseDayStatusUpsert],
   );
 
+  const upsertFeedPlan = React.useCallback(
+    async (input: UpsertFeedPlanInput): Promise<ActionResult<FeedPlanItem>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const label = input.label.trim();
+      if (!label) {
+        return { success: false, reason: 'Foderplanen måste ha en titel.' };
+      }
+      const horseId = input.horseId ?? undefined;
+      const horse = horseId ? current.horses.find((entry) => entry.id === horseId) : undefined;
+      if (horseId && (!horse || horse.stableId !== stableId)) {
+        return { success: false, reason: 'Hästen kunde inte hittas.' };
+      }
+      const isHorseOwner =
+        Boolean(horse) && horse?.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(stableId, (permissions) => {
+        if (input.isStableDefault) {
+          return permissions.canManageHorses || permissions.canManageOnboarding;
+        }
+        if (isHorseOwner) {
+          return true;
+        }
+        return permissions.canManageHorses || permissions.canManageOnboarding;
+      });
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const existing = input.id
+        ? current.feedPlans.find((plan) => plan.id === input.id)
+        : undefined;
+      const id = existing?.id ?? input.id ?? generateId();
+      const plan: FeedPlanItem = {
+        id,
+        stableId,
+        horseId: input.isStableDefault ? undefined : horseId ?? existing?.horseId,
+        slot: input.slot,
+        label,
+        amount: input.amount?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        isStableDefault: input.isStableDefault,
+        active: input.active ?? existing?.active ?? true,
+      };
+
+      const writeKey = `feed-plan:${stableId}:${plan.isStableDefault ? 'default' : plan.horseId}:${plan.slot}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Foderplanen sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistFeedPlanUpsert(plan);
+        dispatch({ type: 'FEED_PLAN_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[feed plan save] Kunde inte spara foderplan', error);
+        return { success: false, reason: 'Foderplanen kunde inte sparas. Försök igen.' };
+      } finally {
+        pendingDataWrites.current.delete(writeKey);
+      }
+    },
+    [ensurePermission, persistFeedPlanUpsert],
+  );
+
+  const deleteFeedPlan = React.useCallback(
+    async (feedPlanId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const existing = current.feedPlans.find((plan) => plan.id === feedPlanId);
+      if (!existing) {
+        return { success: false, reason: 'Foderplanen kunde inte hittas.' };
+      }
+      const horse = existing.horseId
+        ? current.horses.find((entry) => entry.id === existing.horseId)
+        : undefined;
+      const isHorseOwner = Boolean(horse) && horse?.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(existing.stableId, (permissions) => {
+        if (existing.isStableDefault) {
+          return permissions.canManageHorses || permissions.canManageOnboarding;
+        }
+        if (isHorseOwner) {
+          return true;
+        }
+        return permissions.canManageHorses || permissions.canManageOnboarding;
+      });
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+
+      const writeKey = `feed-plan:${existing.stableId}:${existing.isStableDefault ? 'default' : existing.horseId}:${existing.slot}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Foderplanen sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        await persistFeedPlanDelete(existing);
+        dispatch({ type: 'FEED_PLAN_DELETE', payload: { id: feedPlanId } });
+        return { success: true };
+      } catch (error) {
+        console.warn('[feed plan delete] Kunde inte ta bort foderplan', error);
+        return { success: false, reason: 'Foderplanen kunde inte tas bort. Försök igen.' };
+      } finally {
+        pendingDataWrites.current.delete(writeKey);
+      }
+    },
+    [ensurePermission, persistFeedPlanDelete],
+  );
+
+  const upsertFeedCheck = React.useCallback(
+    async (input: UpsertFeedCheckInput): Promise<ActionResult<FeedCheck>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const horse = current.horses.find((entry) => entry.id === input.horseId);
+      if (!horse || horse.stableId !== stableId) {
+        return { success: false, reason: 'Hästen kunde inte hittas.' };
+      }
+      const isHorseOwner = horse.ownerUserId === current.currentUserId;
+      const accessCheck = ensurePermission(
+        stableId,
+        (permissions) => permissions.canUpdateHorseStatus || isHorseOwner,
+      );
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      }
+      const existing = current.feedChecks.find(
+        (check) =>
+          check.horseId === input.horseId &&
+          check.date === input.date &&
+          check.slot === input.slot,
+      );
+      const id = existing?.id ?? generateId();
+      const checked = input.checked ?? Boolean(existing?.checkedAt);
+      const trimmedNote = input.deviationNote?.trim();
+      const deviationNote =
+        input.deviationNote === undefined
+          ? existing?.deviationNote
+          : trimmedNote || undefined;
+      const checkedAt = checked
+        ? existing?.checkedAt ?? new Date().toISOString()
+        : undefined;
+      const next: FeedCheck = {
+        id,
+        stableId,
+        horseId: input.horseId,
+        date: input.date,
+        slot: input.slot,
+        checkedByUserId: checked ? existing?.checkedByUserId ?? current.currentUserId : undefined,
+        checkedAt,
+        deviationNote,
+      };
+
+      const writeKey = `feed:${stableId}:${input.horseId}:${input.date}:${input.slot}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Foderkollen sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistFeedCheckUpsert(next, input);
+        dispatch({ type: 'FEED_CHECK_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[feed check] Kunde inte spara foderkoll', error);
+        return { success: false, reason: 'Foderkollen kunde inte sparas. Försök igen.' };
+      } finally {
+        pendingDataWrites.current.delete(writeKey);
+      }
+    },
+    [ensurePermission, persistFeedCheckUpsert],
+  );
+
   const addDayEvent = React.useCallback(
-    (input: CreateDayEventInput): ActionResult<DayEvent> => {
+    async (input: CreateDayEventInput): Promise<ActionResult<DayEvent>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageDayEvents);
@@ -4959,26 +7158,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!label) {
         return { success: false, reason: 'Händelsen måste ha en titel.' };
       }
-      if (!input.date) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
       }
 
       const event: DayEvent = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         stableId,
         date: input.date,
         label,
         tone: input.tone ?? 'info',
       };
-      dispatch({ type: 'DAY_EVENT_ADD', payload: event });
-      void persistDayEventInsert(event);
-      return { success: true, data: event };
+      const key = `day event:${event.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Sparning pågår. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistDayEventInsert(event);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte uppgifterna. Försök igen.' };
+        dispatch({ type: 'DAY_EVENT_ADD', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistDayEventInsert],
   );
 
   const removeDayEvent = React.useCallback(
-    (eventId: string): ActionResult => {
+    async (eventId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.dayEvents.find((event) => event.id === eventId);
       if (!existing) {
@@ -4988,15 +7195,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      dispatch({ type: 'DAY_EVENT_DELETE', payload: { id: eventId } });
-      void persistDayEventDelete(eventId);
-      return { success: true };
+      const key = `day event:${eventId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Sparning pågår. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistDayEventDelete(existing);
+        if (!result.success) return result;
+        dispatch({ type: 'DAY_EVENT_DELETE', payload: { id: eventId } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistDayEventDelete],
   );
 
   const addArenaBooking = React.useCallback(
-    (input: CreateArenaBookingInput): ActionResult<ArenaBooking> => {
+    async (input: CreateArenaBookingInput): Promise<ActionResult<ArenaBooking>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageArenaBookings);
@@ -5007,17 +7221,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!purpose) {
         return { success: false, reason: 'Bokningen måste ha ett syfte.' };
       }
-      if (!input.date) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
       }
-      if (!input.startTime || !input.endTime) {
-        return { success: false, reason: 'Ange start och sluttid.' };
+      if (!isValidTime(input.startTime) || !isValidTime(input.endTime)) {
+        return { success: false, reason: 'Ange start och sluttid i formatet HH:MM.' };
       }
       if (input.startTime >= input.endTime) {
         return { success: false, reason: 'Sluttiden måste vara efter starttiden.' };
       }
       const hasOverlap = current.arenaBookings.some((booking) => {
-        if (booking.stableId !== stableId || booking.date !== input.date) {
+        if (booking.id === input.requestId || booking.stableId !== stableId || booking.date !== input.date) {
           return false;
         }
         return input.startTime < booking.endTime && booking.startTime < input.endTime;
@@ -5027,7 +7241,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const booking: ArenaBooking = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         stableId,
         date: input.date,
         startTime: input.startTime,
@@ -5036,15 +7250,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: input.note?.trim() || undefined,
         bookedByUserId: current.currentUserId,
       };
-      dispatch({ type: 'ARENA_BOOKING_ADD', payload: booking });
-      void persistArenaBookingInsert(booking);
-      return { success: true, data: booking };
+      const key = `arena:${booking.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Bokningen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistArenaBookingInsert(booking);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte bokningen. Försök igen.' };
+        dispatch({ type: 'ARENA_BOOKING_ADD', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistArenaBookingInsert],
   );
 
   const updateArenaBooking = React.useCallback(
-    (input: { id: string; updates: Partial<ArenaBooking> }): ActionResult<ArenaBooking> => {
+    async (input: { id: string; updates: Partial<ArenaBooking> }): Promise<ActionResult<ArenaBooking>> => {
       const current = stateRef.current;
       const existing = current.arenaBookings.find((booking) => booking.id === input.id);
       if (!existing) {
@@ -5056,10 +7278,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const updates = {
         ...input.updates,
-        purpose: input.updates.purpose?.trim() ?? existing.purpose,
-        note: input.updates.note?.trim() ?? existing.note,
+        ...('purpose' in input.updates ? { purpose: input.updates.purpose?.trim() ?? '' } : {}),
+        ...('note' in input.updates ? { note: input.updates.note?.trim() || undefined } : {}),
       };
-      const updated = { ...existing, ...updates };
+      const updated = { ...existing, ...updates, id: existing.id, stableId: existing.stableId, bookedByUserId: existing.bookedByUserId };
+      if (!updated.purpose || !isValidISODate(updated.date) || !isValidTime(updated.startTime) || !isValidTime(updated.endTime) || updated.startTime >= updated.endTime) {
+        return { success: false, reason: 'Ange syfte, giltigt datum och en sluttid efter starttiden.' };
+      }
       const hasOverlap = current.arenaBookings.some((booking) => {
         if (booking.id === existing.id) {
           return false;
@@ -5072,15 +7297,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (hasOverlap) {
         return { success: false, reason: 'Tiden krockar med en annan bokning' };
       }
-      dispatch({ type: 'ARENA_BOOKING_UPDATE', payload: { id: input.id, updates } });
-      void persistArenaBookingUpdate(input.id, updates);
-      return { success: true, data: updated };
+      const key = `arena:${existing.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Bokningen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistArenaBookingUpdate(existing, updates);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte bokningen. Försök igen.' };
+        dispatch({ type: 'ARENA_BOOKING_UPDATE', payload: { id: existing.id, updates: result.data } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistArenaBookingUpdate],
   );
 
   const removeArenaBooking = React.useCallback(
-    (bookingId: string): ActionResult => {
+    async (bookingId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.arenaBookings.find((booking) => booking.id === bookingId);
       if (!existing) {
@@ -5090,15 +7323,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      dispatch({ type: 'ARENA_BOOKING_DELETE', payload: { id: bookingId } });
-      void persistArenaBookingDelete(bookingId);
-      return { success: true };
+      const key = `arena:${bookingId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Bokningen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistArenaBookingDelete(existing);
+        if (!result.success) return result;
+        dispatch({ type: 'ARENA_BOOKING_DELETE', payload: { id: bookingId } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistArenaBookingDelete],
   );
 
   const addArenaStatus = React.useCallback(
-    (input: CreateArenaStatusInput): ActionResult<ArenaStatus> => {
+    async (input: CreateArenaStatusInput): Promise<ActionResult<ArenaStatus>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageArenaStatus);
@@ -5109,27 +7349,35 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!label) {
         return { success: false, reason: 'Statusen behöver en titel.' };
       }
-      if (!input.date) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
       }
 
       const status: ArenaStatus = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         stableId,
         date: input.date,
         label,
         createdByUserId: current.currentUserId,
         createdAt: new Date().toISOString(),
       };
-      dispatch({ type: 'ARENA_STATUS_ADD', payload: status });
-      void persistArenaStatusInsert(status);
-      return { success: true, data: status };
+      const key = `arena status:${status.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Sparning pågår. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistArenaStatusInsert(status);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte uppgifterna. Försök igen.' };
+        dispatch({ type: 'ARENA_STATUS_ADD', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistArenaStatusInsert],
   );
 
   const removeArenaStatus = React.useCallback(
-    (statusId: string): ActionResult => {
+    async (statusId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.arenaStatuses.find((status) => status.id === statusId);
       if (!existing) {
@@ -5139,15 +7387,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      dispatch({ type: 'ARENA_STATUS_DELETE', payload: { id: statusId } });
-      void persistArenaStatusDelete(statusId);
-      return { success: true };
+      const key = `arena status:${statusId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Sparning pågår. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistArenaStatusDelete(existing);
+        if (!result.success) return result;
+        dispatch({ type: 'ARENA_STATUS_DELETE', payload: { id: statusId } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistArenaStatusDelete],
   );
 
   const addRideLog = React.useCallback(
-    (input: CreateRideLogInput): ActionResult<RideLogEntry> => {
+    async (input: CreateRideLogInput): Promise<ActionResult<RideLogEntry>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageRideLogs);
@@ -5158,8 +7413,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!stable) {
         return { success: false, reason: 'Stallet kunde inte hittas.' };
       }
-      if (!input.date) {
-        return { success: false, reason: 'Datum saknas.' };
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
       }
       if (!input.horseId) {
         return { success: false, reason: 'Välj en häst.' };
@@ -5177,7 +7432,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const log: RideLogEntry = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         stableId,
         horseId: input.horseId,
         date: input.date,
@@ -5186,15 +7441,25 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: input.note?.trim() || undefined,
         createdByUserId: current.currentUserId,
       };
-      dispatch({ type: 'RIDE_LOG_ADD', payload: log });
-      void persistRideLogInsert(log);
-      return { success: true, data: log };
+      const key = `ride-log:${log.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistRideLogInsert(log, true);
+        if (!saved) throw new Error('Servern bekräftade inte ridpasset.');
+        dispatch({ type: 'RIDE_LOG_ADD', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[ride log save] Kunde inte registrera ridpass', error);
+        return { success: false, reason: 'Ridpasset kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistRideLogInsert],
   );
 
   const removeRideLog = React.useCallback(
-    (rideLogId: string): ActionResult => {
+    async (rideLogId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.rideLogs.find((log) => log.id === rideLogId);
       if (!existing) {
@@ -5204,15 +7469,451 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      dispatch({ type: 'RIDE_LOG_DELETE', payload: { id: rideLogId } });
-      void persistRideLogDelete(rideLogId);
-      return { success: true };
+      const key = `ride-log:${rideLogId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistRideLogDelete(existing);
+        if (!result.success) return result;
+        dispatch({ type: 'RIDE_LOG_DELETE', payload: { id: rideLogId } });
+        return { success: true };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistRideLogDelete],
   );
 
+  const ensurePlannedRideAccess = React.useCallback(
+    (stableId: string, horseId: string) => {
+      const horse = stateRef.current.horses.find((entry) => entry.id === horseId);
+      const isHorseOwner = Boolean(horse) && horse?.ownerUserId === stateRef.current.currentUserId;
+      return ensurePermission(
+        stableId,
+        (permissions) => permissions.canManageRideLogs || isHorseOwner,
+      );
+    },
+    [ensurePermission],
+  );
+
+  const createPlannedRide = React.useCallback(
+    async (input: CreatePlannedRideInput): Promise<ActionResult<PlannedRide>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      if (!input.horseId) {
+        return { success: false, reason: 'Välj en häst.' };
+      }
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      }
+      if (input.time?.trim() && !isValidTime(input.time.trim())) {
+        return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
+      }
+      const horse = current.horses.find((item) => item.id === input.horseId);
+      if (!horse || horse.stableId !== stableId) {
+        return { success: false, reason: 'Hästen finns inte i valt stall.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(stableId, input.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+
+      const ride: PlannedRide = {
+        id: input.requestId ?? generateId(),
+        stableId,
+        horseId: input.horseId,
+        riderUserId: input.riderUserId ?? current.currentUserId,
+        date: input.date,
+        time: input.time?.trim() || undefined,
+        rideTypeId: input.rideTypeId?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        status: 'planned',
+        createdAt: new Date().toISOString(),
+      };
+      const writeKey = `planned-ride:${ride.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistPlannedRideUpsert(ride);
+        dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[planned ride create] Kunde inte spara ridpass', error);
+        return { success: false, reason: 'Ridpasset kunde inte sparas. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensurePlannedRideAccess, persistPlannedRideUpsert],
+  );
+
+  const updatePlannedRide = React.useCallback(
+    async (input: UpdatePlannedRideInput): Promise<ActionResult<PlannedRide>> => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(existing.stableId, existing.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const next: PlannedRide = { ...existing, ...input.updates };
+      if (existing.status !== 'planned' || next.status === 'done') {
+        return { success: false, reason: 'Passet har ändrats. Använd Slutför ridpass för att logga det.' };
+      }
+      if (!isValidISODate(next.date)) return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      if (next.time?.trim() && !isValidTime(next.time.trim())) return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
+      next.time = next.time?.trim() || undefined;
+      const writeKey = `planned-ride:${existing.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistPlannedRideUpsert(next, existing, input.updates);
+        dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[planned ride update] Kunde inte uppdatera ridpass', error);
+        return { success: false, reason: 'Ridpasset kunde inte sparas. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensurePlannedRideAccess, persistPlannedRideUpsert],
+  );
+
+  const deletePlannedRide = React.useCallback(
+    async (plannedRideId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === plannedRideId);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      const accessCheck = ensurePlannedRideAccess(existing.stableId, existing.horseId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const writeKey = `planned-ride:${existing.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        await persistPlannedRideDelete(existing);
+        dispatch({ type: 'PLANNED_RIDE_DELETE', payload: { id: plannedRideId } });
+        return { success: true };
+      } catch (error) {
+        console.warn('[planned ride delete] Kunde inte ta bort ridpass', error);
+        return { success: false, reason: 'Ridpasset kunde inte tas bort. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensurePlannedRideAccess, persistPlannedRideDelete],
+  );
+
+  const completePlannedRide = React.useCallback(
+    async (input: CompletePlannedRideInput): Promise<ActionResult<{ plannedRide: PlannedRide; rideLog: RideLogEntry }>> => {
+      const current = stateRef.current;
+      const existing = current.plannedRides.find((ride) => ride.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Ridpasset kunde inte hittas.' };
+      }
+      if (existing.status !== 'planned') {
+        return { success: false, reason: 'Passet är redan klart eller avbokat. Uppdatera sidan.' };
+      }
+      const accessCheck = ensurePermission(existing.stableId, (permissions) => permissions.canManageRideLogs);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const stable = current.stables.find((item) => item.id === existing.stableId);
+      if (!stable) {
+        return { success: false, reason: 'Stallet kunde inte hittas.' };
+      }
+      // Falla tillbaka till ride type från planet om det finns, annars kräv att stallet har en
+      const rideTypeId = existing.rideTypeId ?? stable.rideTypes?.[0]?.id;
+      if (!rideTypeId) {
+        return { success: false, reason: 'Stallet saknar ridpass-typer. Lägg till en först.' };
+      }
+
+      const rideLog: RideLogEntry = {
+        id: existing.completedRideLogId ?? existing.id,
+        stableId: existing.stableId,
+        horseId: existing.horseId,
+        date: existing.date,
+        rideTypeId,
+        length: input.length?.trim() || undefined,
+        note: input.note?.trim() || existing.note,
+        createdByUserId: current.currentUserId,
+      };
+      const updatedRide: PlannedRide = {
+        ...existing,
+        status: 'done',
+        completedRideLogId: rideLog.id,
+      };
+
+      const writeKey = `planned-ride:${existing.id}`;
+      if (pendingDataWrites.current.has(writeKey)) {
+        return { success: false, reason: 'Ridpasset sparas redan. Vänta ett ögonblick.' };
+      }
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      let logConfirmed = false;
+      try {
+        const savedLog = await persistRideLogInsert(rideLog, true);
+        if (!savedLog) throw new Error('Servern bekräftade inte ridloggen.');
+        logConfirmed = true;
+        const savedRide = await persistPlannedRideUpsert(updatedRide, existing);
+        if (!savedRide) throw new Error('Servern bekräftade inte ridpasset.');
+        if (!stateRef.current.rideLogs.some((entry) => entry.id === savedLog.id)) {
+          dispatch({ type: 'RIDE_LOG_ADD', payload: savedLog });
+        }
+        dispatch({ type: 'PLANNED_RIDE_UPSERT', payload: savedRide });
+        return { success: true, data: { plannedRide: savedRide, rideLog: savedLog } };
+      } catch (error) {
+        console.warn('[planned ride complete] Kunde inte slutföra ridpass', error);
+        return {
+          success: false,
+          reason: logConfirmed
+            ? 'Ridloggen har sparats, men passet kunde inte markeras klart. Försök igen eller uppdatera sidan om passet har ändrats.'
+            : 'Ridpasset kunde inte loggas med dessa uppgifter. Försök igen eller uppdatera sidan om passet redan har loggats.',
+        };
+      } finally {
+        pendingDataWrites.current.delete(writeKey);
+      }
+    },
+    [ensurePermission, persistRideLogInsert, persistPlannedRideUpsert],
+  );
+
+  const upsertExternalContact = React.useCallback(
+    async (input: UpsertExternalContactInput): Promise<ActionResult<ExternalContact>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageOnboarding || permissions.canManageMembers);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const name = input.name.trim();
+      if (!name) {
+        return { success: false, reason: 'Ange ett namn för kontakten.' };
+      }
+      const existing = input.id
+        ? current.externalContacts.find((entry) => entry.id === input.id)
+        : undefined;
+      const id = existing?.id ?? input.id ?? generateId();
+      const contact: ExternalContact = {
+        id,
+        stableId,
+        name,
+        type: input.type,
+        phone: input.phone?.trim() || undefined,
+        email: input.email?.trim() || undefined,
+        note: input.note?.trim() || undefined,
+        createdAt: existing?.createdAt ?? new Date().toISOString(),
+      };
+      const key = `contact:${contact.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Kontakten sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistExternalContactUpsert(contact);
+        if (!result.success) return result;
+        dispatch({ type: 'EXTERNAL_CONTACT_UPSERT', payload: contact });
+        return { success: true, data: contact };
+      } finally { pendingDataWrites.current.delete(key); }
+    },
+    [ensurePermission, persistExternalContactUpsert],
+  );
+
+  const deleteExternalContact = React.useCallback(
+    async (contactId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const existing = current.externalContacts.find((entry) => entry.id === contactId);
+      if (!existing) {
+        return { success: false, reason: 'Kontakten kunde inte hittas.' };
+      }
+      const accessCheck = ensurePermission(existing.stableId, (permissions) => permissions.canManageOnboarding || permissions.canManageMembers);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const key = `contact:${contactId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Kontakten sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistExternalContactDelete(contactId);
+        if (!result.success) return result;
+        dispatch({ type: 'EXTERNAL_CONTACT_DELETE', payload: { id: contactId } });
+        return { success: true };
+      } finally { pendingDataWrites.current.delete(key); }
+    },
+    [ensurePermission, persistExternalContactDelete],
+  );
+
+  const ensureCareEventAccess = React.useCallback(
+    (stableId: string) =>
+      ensurePermission(
+        stableId,
+        (permissions) => permissions.canManageCareEvents,
+      ),
+    [ensurePermission],
+  );
+
+  const createCareEvent = React.useCallback(
+    async (input: CreateCareEventInput): Promise<ActionResult<CareEvent>> => {
+      const current = stateRef.current;
+      const stableId = input.stableId ?? current.currentStableId;
+      const accessCheck = ensureCareEventAccess(stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const title = input.title.trim();
+      if (!title) {
+        return { success: false, reason: 'Vårdhändelsen behöver en titel.' };
+      }
+      if (!isValidISODate(input.date)) {
+        return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      }
+      if (input.time?.trim() && !isValidTime(input.time.trim())) {
+        return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
+      }
+      if (!input.horseIds.length) {
+        return { success: false, reason: 'Välj minst en häst.' };
+      }
+      const validHorseIds = input.horseIds.filter((horseId) =>
+        current.horses.some((horse) => horse.id === horseId && horse.stableId === stableId),
+      );
+      if (!validHorseIds.length) {
+        return { success: false, reason: 'Inga giltiga hästar valda.' };
+      }
+      const event: CareEvent = {
+        id: input.requestId ?? generateId(),
+        stableId,
+        horseIds: validHorseIds,
+        type: input.type,
+        title,
+        date: input.date,
+        time: input.time?.trim() || undefined,
+        contactId: input.contactId,
+        responsibleUserId: input.responsibleUserId,
+        status: 'planned',
+        note: input.note?.trim() || undefined,
+        createdAt: new Date().toISOString(),
+      };
+      const writeKey = `care-event:${event.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Vårdhändelsen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistCareEventUpsert(event);
+        dispatch({ type: 'CARE_EVENT_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[care event create] Kunde inte spara vårdhändelse', error);
+        return { success: false, reason: 'Vårdhändelsen kunde inte sparas. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
+  const updateCareEvent = React.useCallback(
+    async (input: UpdateCareEventInput): Promise<ActionResult<CareEvent>> => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const next: CareEvent = { ...existing, ...input.updates };
+      if (input.updates.status && (existing.status !== 'planned' || input.updates.status === 'done')) {
+        return { success: false, reason: 'Vårdhändelsen har ändrats. Använd Slutför vård för att logga den.' };
+      }
+      if (!next.title?.trim()) return { success: false, reason: 'Vårdhändelsen behöver en titel.' };
+      if (!isValidISODate(next.date)) return { success: false, reason: 'Ange ett giltigt datum i formatet ÅÅÅÅ-MM-DD.' };
+      if (next.time?.trim() && !isValidTime(next.time.trim())) return { success: false, reason: 'Ange en giltig tid i formatet HH:MM (00:00–23:59).' };
+      if (!next.horseIds.length || next.horseIds.some((id) => !current.horses.some((horse) => horse.id === id && horse.stableId === existing.stableId))) {
+        return { success: false, reason: 'Välj giltiga hästar i stallet.' };
+      }
+      next.title = next.title.trim();
+      next.time = next.time?.trim() || undefined;
+      const writeKey = `care-event:${next.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Vårdhändelsen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistCareEventUpsert(next, existing, input.updates);
+        dispatch({ type: 'CARE_EVENT_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[care event update] Kunde inte spara vårdhändelse', error);
+        return { success: false, reason: 'Vårdhändelsen kunde inte sparas. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
+  const deleteCareEvent = React.useCallback(
+    async (careEventId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === careEventId);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      const writeKey = `care-event:${existing.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Vårdhändelsen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        await persistCareEventDelete(existing);
+        dispatch({ type: 'CARE_EVENT_DELETE', payload: { id: careEventId } });
+        return { success: true };
+      } catch (error) {
+        console.warn('[care event delete] Kunde inte ta bort vårdhändelse', error);
+        return { success: false, reason: 'Vårdhändelsen kunde inte tas bort. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensureCareEventAccess, persistCareEventDelete],
+  );
+
+  const completeCareEvent = React.useCallback(
+    async (input: CompleteCareEventInput): Promise<ActionResult<CareEvent>> => {
+      const current = stateRef.current;
+      const existing = current.careEvents.find((event) => event.id === input.id);
+      if (!existing) {
+        return { success: false, reason: 'Vårdhändelsen kunde inte hittas.' };
+      }
+      const accessCheck = ensureCareEventAccess(existing.stableId);
+      if (!accessCheck.success) {
+        return accessCheck;
+      }
+      if (existing.status !== 'planned') {
+        return { success: false, reason: 'Vårdhändelsen är redan klar eller avbokad. Uppdatera sidan.' };
+      }
+      const next: CareEvent = {
+        ...existing,
+        status: 'done',
+        completedAt: new Date().toISOString(),
+        note: input.note?.trim() || existing.note,
+      };
+      const writeKey = `care-event:${next.id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Vårdhändelsen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const saved = await persistCareEventUpsert(next, existing, { status: 'done', note: next.note, completedAt: next.completedAt });
+        dispatch({ type: 'CARE_EVENT_UPSERT', payload: saved });
+        return { success: true, data: saved };
+      } catch (error) {
+        console.warn('[care event complete] Kunde inte spara vårdhändelse', error);
+        return { success: false, reason: 'Vårdhändelsen kunde inte sparas. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(writeKey); }
+    },
+    [ensureCareEventAccess, persistCareEventUpsert],
+  );
+
   const addPost = React.useCallback(
-    (input: CreatePostInput): ActionResult<Post> => {
+    async (input: CreatePostInput): Promise<ActionResult<Post>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canCreatePost);
@@ -5232,13 +7933,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const imagePath =
         input.image && !hasUriScheme(input.image) ? normalizePostImagePath(input.image) : undefined;
       const post: Post = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         authorId: current.currentUserId,
         author: user.name,
         avatar: user.avatar ?? require('@/assets/images/dummy-avatar.png'),
         timeAgo: 'Nu',
         createdAt: new Date().toISOString(),
         content,
+        image: isQaDemoMode ? input.image : undefined,
+        imageSignedUrl: isQaDemoMode ? input.image : undefined,
         imagePath: imagePath || undefined,
         likes: 0,
         comments: 0,
@@ -5247,15 +7950,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         stableId,
         groupIds: groupIds.includes(defaultGroupId) ? groupIds : [defaultGroupId, ...groupIds],
       };
-      dispatch({ type: 'POST_ADD', payload: post });
-      void persistPostInsert(post, input.image);
-      return { success: true, data: post };
+      const key = `post:${post.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Inlägget publiceras redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistPostInsert(post, input.image);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte inlägget. Försök igen.' };
+        dispatch({ type: 'POST_ADD', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistPostInsert],
   );
 
   const togglePostLike = React.useCallback(
-    (postId: string): ActionResult<Post> => {
+    async (postId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const post = current.posts.find((item) => item.id === postId);
       if (!post) {
@@ -5267,27 +7978,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return accessCheck;
       }
       const userId = current.currentUserId;
-      const likedBy = new Set(post.likedByUserIds ?? []);
-      const hasLiked = likedBy.has(userId);
-      if (hasLiked) {
-        likedBy.delete(userId);
-      } else {
-        likedBy.add(userId);
-      }
-      const nextLikes = Math.max(0, post.likes + (hasLiked ? -1 : 1));
-      const updates = {
-        likedByUserIds: Array.from(likedBy),
-        likes: nextLikes,
-      };
-      dispatch({ type: 'POST_UPDATE', payload: { id: post.id, updates } });
-      void persistPostLikeToggle(post.id, userId, !hasLiked);
-      return { success: true, data: { ...post, ...updates } };
+      const enabled = !(post.likedByUserIds ?? []).includes(userId);
+      const key = `post like:${postId}:${userId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gillningen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistPostLikeToggle(post.id, userId, enabled);
+        if (!result.success) return result;
+        dispatch({ type: 'POST_LIKE_SET', payload: { postId, userId, enabled } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistPostLikeToggle],
   );
 
   const addPostComment = React.useCallback(
-    (postId: string, text: string): ActionResult<PostComment> => {
+    async (postId: string, text: string, requestId?: string): Promise<ActionResult<PostComment>> => {
       const trimmed = text.trim();
       if (!trimmed) {
         return { success: false, reason: 'Kommentaren kan inte vara tom.' };
@@ -5304,21 +8011,24 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
       const author = current.users[current.currentUserId];
       const comment: PostComment = {
-        id: generateId(),
+        id: requestId ?? generateId(),
         postId,
         authorId: current.currentUserId,
         authorName: author?.name ?? 'Okänd',
         text: trimmed,
         createdAt: new Date().toISOString(),
       };
-      const nextCommentsData = [...(post.commentsData ?? []), comment];
-      const updates = {
-        commentsData: nextCommentsData,
-        comments: post.comments + 1,
-      };
-      dispatch({ type: 'POST_UPDATE', payload: { id: post.id, updates } });
-      void persistPostCommentInsert(postId, current.currentUserId, trimmed);
-      return { success: true, data: comment };
+      const key = `post comment:${postId}:${current.currentUserId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Kommentaren sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistPostCommentInsert(comment);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte kommentaren. Försök igen.' };
+        dispatch({ type: 'POST_COMMENT_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistPostCommentInsert],
   );
@@ -5365,6 +8075,180 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: true };
     },
     [persistPostDelete],
+  );
+
+  const reportPost = React.useCallback(
+    async (postId: string, reason?: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const post = current.posts.find((entry) => entry.id === postId);
+      if (!post) {
+        return { success: false, reason: 'Inlägget kunde inte hittas.' };
+      }
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase.from('content_reports').insert({
+        id: generateId(),
+        stable_id: post.stableId ?? current.currentStableId,
+        reporter_user_id: userId,
+        target_type: 'post',
+        target_id: postId,
+        reason: reason?.trim() ? reason.trim() : null,
+      });
+      if (error) {
+        reportPersistErrorRef.current('Kunde inte skicka rapport', error);
+        return { success: false, reason: 'Kunde inte skicka rapporten.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const reportComment = React.useCallback(
+    async (postId: string, commentId: string, reason?: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const post = current.posts.find((entry) => entry.id === postId);
+      if (!post) {
+        return { success: false, reason: 'Inlägget kunde inte hittas.' };
+      }
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase.from('content_reports').insert({
+        id: generateId(),
+        stable_id: post.stableId ?? current.currentStableId,
+        reporter_user_id: userId,
+        target_type: 'comment',
+        target_id: commentId,
+        reason: reason?.trim() ? reason.trim() : null,
+      });
+      if (error) {
+        reportPersistErrorRef.current('Kunde inte skicka rapport', error);
+        return { success: false, reason: 'Kunde inte skicka rapporten.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const fetchContentReports = React.useCallback(
+    async (includeResolved = false): Promise<ActionResult<ContentReport[]>> => {
+      const current = stateRef.current;
+      const stableId = current.currentStableId;
+      if (!stableId) {
+        return { success: false, reason: 'Inget aktivt stall.' };
+      }
+      if (isQaDemoMode) return { success: true, data: [] };
+      let query = supabase
+        .from('content_reports')
+        .select('id, stable_id, reporter_user_id, target_type, target_id, reason, created_at, resolved_at')
+        .eq('stable_id', stableId)
+        .order('created_at', { ascending: false });
+      if (!includeResolved) {
+        query = query.is('resolved_at', null);
+      }
+      const { data, error } = await query;
+      if (error || !data) {
+        return { success: false, reason: 'Kunde inte hämta rapporter.' };
+      }
+      const reports: ContentReport[] = data.map((row) => ({
+        id: row.id,
+        stableId: row.stable_id ?? null,
+        reporterUserId: row.reporter_user_id ?? null,
+        targetType: row.target_type,
+        targetId: row.target_id,
+        reason: row.reason ?? null,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at ?? null,
+      }));
+      return { success: true, data: reports };
+    },
+    [],
+  );
+
+  const resolveContentReport = React.useCallback(
+    async (reportId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase
+        .from('content_reports')
+        .update({ resolved_at: new Date().toISOString(), resolved_by_user_id: current.currentUserId })
+        .eq('id', reportId);
+      if (error) {
+        reportPersistErrorRef.current('Kunde inte lösa rapport', error);
+        return { success: false, reason: 'Kunde inte markera rapporten som löst.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const blockUser = React.useCallback(
+    async (targetUserId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (targetUserId === userId) {
+        return { success: false, reason: 'Du kan inte blockera dig själv.' };
+      }
+      if (current.blockedUserIds.includes(targetUserId)) {
+        return { success: true };
+      }
+      // Optimistic: hide their content immediately.
+      const previous = current.blockedUserIds;
+      dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: [...previous, targetUserId] } });
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase.from('blocked_users').insert({
+        id: generateId(),
+        blocker_user_id: userId,
+        blocked_user_id: targetUserId,
+      });
+      if (error) {
+        // Roll back the optimistic update so UI never lies about a failed write.
+        dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: previous } });
+        reportPersistErrorRef.current('Kunde inte blockera användaren', error);
+        return { success: false, reason: 'Kunde inte blockera användaren.' };
+      }
+      return { success: true };
+    },
+    [],
+  );
+
+  const unblockUser = React.useCallback(
+    async (targetUserId: string): Promise<ActionResult> => {
+      const current = stateRef.current;
+      const userId = current.currentUserId;
+      if (!userId) {
+        return { success: false, reason: 'Ingen aktiv användare.' };
+      }
+      if (!current.blockedUserIds.includes(targetUserId)) {
+        return { success: true };
+      }
+      const previous = current.blockedUserIds;
+      dispatch({
+        type: 'STATE_HYDRATE',
+        payload: { blockedUserIds: previous.filter((id) => id !== targetUserId) },
+      });
+      if (isQaDemoMode) return { success: true };
+      const { error } = await supabase
+        .from('blocked_users')
+        .delete()
+        .eq('blocker_user_id', userId)
+        .eq('blocked_user_id', targetUserId);
+      if (error) {
+        dispatch({ type: 'STATE_HYDRATE', payload: { blockedUserIds: previous } });
+        reportPersistErrorRef.current('Kunde inte häva blockeringen', error);
+        return { success: false, reason: 'Kunde inte häva blockeringen.' };
+      }
+      return { success: true };
+    },
+    [],
   );
 
   const loadMorePosts = React.useCallback(async (): Promise<ActionResult> => {
@@ -5523,7 +8407,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, []);
 
   const createGroup = React.useCallback(
-    (input: CreateGroupInput): ActionResult<Group> => {
+    async (input: CreateGroupInput): Promise<ActionResult<Group>> => {
       const current = stateRef.current;
       const stableId = input.stableId ?? current.currentStableId;
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageGroups);
@@ -5535,22 +8419,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Gruppen behöver ett namn.' };
       }
       const group: Group = {
-        id: generateId(),
+        id: input.requestId ?? generateId(),
         name,
         type: 'custom',
         stableId,
         createdAt: new Date().toISOString(),
         createdByUserId: current.currentUserId,
       };
-      dispatch({ type: 'GROUP_ADD', payload: group });
-      void persistGroupInsert(group);
-      return { success: true, data: group };
+      const key = `group:${group.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gruppen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistGroupInsert(group);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte gruppen.' };
+        if (stateRef.current.groups.some((entry) => entry.id === group.id)) {
+          dispatch({ type: 'GROUP_UPDATE', payload: { id: group.id, updates: result.data } });
+        } else {
+          dispatch({ type: 'GROUP_ADD', payload: result.data });
+        }
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistGroupInsert],
   );
 
   const renameGroup = React.useCallback(
-    (input: RenameGroupInput): ActionResult<Group> => {
+    async (input: RenameGroupInput): Promise<ActionResult<Group>> => {
       const current = stateRef.current;
       const existing = current.groups.find((group) => group.id === input.id);
       if (!existing) {
@@ -5568,15 +8464,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!name) {
         return { success: false, reason: 'Gruppen behöver ett namn.' };
       }
-      dispatch({ type: 'GROUP_UPDATE', payload: { id: input.id, updates: { name } } });
-      void persistGroupUpdate(input.id, { name });
-      return { success: true, data: { ...existing, name } };
+      const key = `group:${input.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gruppen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistGroupUpdate(input.id, { name }, stableId);
+        if (!result.success) return result;
+        dispatch({ type: 'GROUP_UPDATE', payload: { id: input.id, updates: { name } } });
+        return { success: true, data: { ...existing, name } };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistGroupUpdate],
   );
 
   const deleteGroup = React.useCallback(
-    (groupId: string): ActionResult => {
+    async (groupId: string): Promise<ActionResult> => {
       const current = stateRef.current;
       const existing = current.groups.find((group) => group.id === groupId);
       if (!existing) {
@@ -5590,16 +8493,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!accessCheck.success) {
         return accessCheck;
       }
-      dispatch({ type: 'GROUP_DELETE', payload: { id: groupId } });
-      void persistGroupDelete(groupId);
-      return { success: true };
+      const key = `group:${groupId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gruppen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistGroupDelete(groupId, stableId);
+        if (!result.success) return result;
+        dispatch({ type: 'GROUP_DELETE', payload: { id: groupId } });
+        return { success: true };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistGroupDelete],
   );
 
   const setCurrentStable = React.useCallback((stableId: string) => {
+    refreshRequestId.current += 1;
+    setHydrating(false);
+    setRefreshing(false);
     dispatch({ type: 'STABLE_SET', payload: { stableId } });
-  }, []);
+    void refreshData({ stableId, reason: 'switch' });
+  }, [refreshData]);
 
   const setOnboardingDismissed = React.useCallback(
     (dismissed: boolean): ActionResult<UserProfile> => {
@@ -5613,10 +8527,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'USER_UPDATE',
         payload: { id: userId, updates: { onboardingDismissed: dismissed } },
       });
-      void persistProfileUpdate(userId, { onboarding_dismissed: dismissed });
+      void trackDataWrite(persistProfileUpdate(userId, { onboarding_dismissed: dismissed }));
       return { success: true, data: { ...profile, onboardingDismissed: dismissed } };
     },
-    [persistProfileUpdate],
+    [trackDataWrite, persistProfileUpdate],
   );
 
   React.useEffect(() => {
@@ -5631,7 +8545,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   }, [derived.onboardingComplete, setOnboardingDismissed]);
 
   const updateProfile = React.useCallback(
-    (input: UpdateProfileInput): ActionResult<UserProfile> => {
+    async (input: UpdateProfileInput): Promise<ActionResult<UserProfile>> => {
       const current = stateRef.current;
       const userId = current.currentUserId;
       const profile = current.users[userId];
@@ -5667,18 +8581,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true, data: profile };
       }
 
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: { id: userId, updates },
-      });
-      void persistProfileUpdate(userId, payload);
-      return { success: true, data: { ...profile, ...updates } };
+      const key = `profile:${userId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Profilen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistProfileUpdate(userId, payload);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte profilen. Försök igen.' };
+        const saved: Partial<UserProfile> = {
+          ...('name' in updates ? { name: String(result.data.full_name ?? '') } : {}),
+          ...('phone' in updates ? { phone: String(result.data.phone ?? '') } : {}),
+          ...('location' in updates ? { location: String(result.data.location ?? '') } : {}),
+        };
+        dispatch({ type: 'USER_UPDATE', payload: { id: userId, updates: saved } });
+        return { success: true, data: { ...profile, ...saved } };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [persistProfileUpdate],
   );
 
   const upsertFarm = React.useCallback(
-    (input: UpsertFarmInput, options?: PersistOptions): ActionResult<Farm> => {
+    async (input: UpsertFarmInput, options?: PersistOptions): Promise<ActionResult<Farm>> => {
       const current = stateRef.current;
       if (!options?.skipPermission) {
         const accessCheck = ensurePermission(
@@ -5692,23 +8616,31 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user?.id) {
         return { success: false, reason: 'Du måste logga in igen.' };
       }
-      const name = input.name.trim();
+      const existing = input.id ? current.farms.find((farm) => farm.id === input.id) : undefined;
+      const name = input.name === undefined ? existing?.name ?? '' : input.name.trim();
       if (!name) {
         return { success: false, reason: 'Gården måste ha ett namn.' };
       }
-      const id = input.id ?? generateId();
+      const id = input.id ?? input.requestId ?? generateId();
       const farm: Farm = {
         id,
         name,
-        location: input.location?.trim() || undefined,
-        hasIndoorArena: input.hasIndoorArena,
-        arenaNote: input.arenaNote?.trim() || undefined,
+        location: Object.prototype.hasOwnProperty.call(input, 'location') ? input.location?.trim() || undefined : existing?.location,
+        hasIndoorArena: input.hasIndoorArena ?? existing?.hasIndoorArena,
+        arenaNote: Object.prototype.hasOwnProperty.call(input, 'arenaNote') ? input.arenaNote?.trim() || undefined : existing?.arenaNote,
       };
-      dispatch({ type: 'FARM_UPSERT', payload: farm });
-      if (!options?.skipPersist) {
-        void persistFarmUpsert(farm);
-      }
-      return { success: true, data: farm };
+      const key = `farm:${id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gården sparas redan. Vänta och försök igen.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = options?.skipPersist ? { success: true as const, data: farm }
+          : await persistFarmUpsert(farm, input, Boolean(existing));
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte gården. Försök igen.' };
+        dispatch({ type: 'FARM_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistFarmUpsert, user],
   );
@@ -5727,12 +8659,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: false, reason: 'Gården kunde inte hittas.' };
     }
     dispatch({ type: 'FARM_DELETE', payload: { id: farmId } });
-    void persistFarmDelete(farmId);
+    void trackDataWrite(persistFarmDelete(farmId));
     return { success: true };
-  }, [ensurePermission, persistFarmDelete]);
+  }, [trackDataWrite, ensurePermission, persistFarmDelete]);
 
   const upsertStable = React.useCallback(
-    (input: UpsertStableInput, options?: PersistOptions): ActionResult<Stable> => {
+    async (input: UpsertStableInput, options?: PersistOptions): Promise<ActionResult<Stable>> => {
       const current = stateRef.current;
       if (!options?.skipPermission) {
         const accessCheck = ensurePermission(
@@ -5747,7 +8679,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!ownerId) {
         return { success: false, reason: 'Du måste logga in igen.' };
       }
-      const id = input.id ?? generateId();
+      const id = input.id ?? input.requestId ?? generateId();
       const existing = input.id ? current.stables.find((stable) => stable.id === input.id) : undefined;
       const baseSettings = existing ? resolveStableSettings(existing) : createDefaultStableSettings();
       const settingsUpdates = input.settings;
@@ -5782,35 +8714,42 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Stallet måste ha ett namn.' };
       }
 
-      dispatch({ type: 'STABLE_UPSERT', payload: stable });
-      if (!options?.skipPersist) {
-        void persistStableUpsert(stable, !existing, ownerId);
-      }
+      const writeKey = `stable:${id}`;
+      if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Stallet sparas redan. Vänta och försök igen.' };
+      pendingDataWrites.current.add(writeKey);
+      dataWriteVersion.current += 1;
+      try {
+        const result = options?.skipPersist ? { success: true as const, data: stable }
+          : await persistStableUpsert(stable, !existing, ownerId, input);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte stallet. Försök igen.' };
+        dispatch({ type: 'STABLE_UPSERT', payload: result.data });
 
-      // ensure current user is admin of new stable
-      const currentUserProfile = current.users[current.currentUserId];
-      if (currentUserProfile && !currentUserProfile.membership.some((m) => m.stableId === stable.id)) {
-        dispatch({
-          type: 'USER_UPDATE',
-          payload: {
-            id: currentUserProfile.id,
-            updates: {
-              membership: [
-                ...currentUserProfile.membership,
-                { stableId: stable.id, role: 'admin', access: 'owner' },
-              ],
+        // Owner membership is visible locally only after the server confirmed it.
+        const currentUserProfile = stateRef.current.users[current.currentUserId];
+        if (currentUserProfile && !currentUserProfile.membership.some((m) => m.stableId === stable.id)) {
+          dispatch({
+            type: 'USER_UPDATE',
+            payload: {
+              id: currentUserProfile.id,
+              updates: {
+                membership: [
+                  ...currentUserProfile.membership,
+                  { stableId: stable.id, role: 'admin', access: 'owner' },
+                ],
+              },
             },
-          },
-        });
-      }
+          });
+        }
 
-      return { success: true, data: stable };
+        return result;
+      } finally { pendingDataWrites.current.delete(writeKey); }
     },
     [ensurePermission, persistStableUpsert, user],
   );
 
   const updateStable = React.useCallback(
-    (input: { id: string; updates: StableUpdates }, options?: PersistOptions): ActionResult<Stable> => {
+    async (input: { id: string; updates: StableUpdates }, options?: PersistOptions): Promise<ActionResult<Stable>> => {
       const accessCheck = ensurePermission(input.id, (permissions) => permissions.canManageOnboarding);
       if (!accessCheck.success) {
         return accessCheck;
@@ -5846,14 +8785,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!updated.name.trim()) {
         return { success: false, reason: 'Stallet måste ha ett namn.' };
       }
-      dispatch({
-        type: 'STABLE_UPDATE',
-        payload: { id: input.id, updates },
-      });
-      if (!options?.skipPersist) {
-        void persistStableUpdate(input.id, updates);
-      }
-      return { success: true, data: updated };
+      const key = `stable:${input.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Stallet sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = options?.skipPersist ? { success: true as const, data: updated }
+          : await persistStableUpdate(input.id, updates, existing);
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte stalluppgifterna.' };
+        dispatch({ type: 'STABLE_UPDATE', payload: { id: input.id, updates: result.data } });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistStableUpdate],
   );
@@ -5869,42 +8812,43 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       return { success: false, reason: 'Stallet kunde inte hittas.' };
     }
     dispatch({ type: 'STABLE_DELETE', payload: { id: stableId } });
-    void persistStableDelete(stableId);
+    void trackDataWrite(persistStableDelete(stableId));
     return { success: true };
-  }, [ensurePermission, persistStableDelete]);
+  }, [trackDataWrite, ensurePermission, persistStableDelete]);
 
   const upsertHorse = React.useCallback(
-    (input: UpsertHorseInput): ActionResult<Horse> => {
+    async (input: UpsertHorseInput): Promise<ActionResult<Horse>> => {
       const accessCheck = ensurePermission(input.stableId, (permissions) => permissions.canManageHorses);
-      if (!accessCheck.success) {
-        return accessCheck;
-      }
-      const name = input.name.trim();
-      if (!name) {
-        return { success: false, reason: 'Hästen måste ha ett namn.' };
-      }
+      if (!accessCheck.success) return accessCheck;
       const existing = input.id ? stateRef.current.horses.find((horse) => horse.id === input.id) : undefined;
-      const id = input.id ?? generateId();
+      const name = (input.name ?? existing?.name ?? '').trim();
+      if (!name) return { success: false, reason: 'Hästen måste ha ett namn.' };
+      if (input.age !== undefined && (!Number.isInteger(input.age) || input.age < 0 || input.age > 60)) {
+        return { success: false, reason: 'Ange en ålder i hela år mellan 0 och 60.' };
+      }
+      if (existing && existing.stableId !== input.stableId) return { success: false, reason: 'Hästen tillhör ett annat stall.' };
       const horse: Horse = {
-        id,
-        name,
-        stableId: input.stableId,
-        ownerUserId: input.ownerUserId,
-        image: input.image ?? existing?.image,
-        gender: input.gender,
-        age: input.age,
-        boxNumber: input.boxNumber?.trim() || undefined,
-        canSleepInside: input.canSleepInside,
-        note: input.note?.trim() || undefined,
+        ...existing, ...input, id: input.id ?? generateId(), name,
+        image: 'image' in input ? input.image ?? undefined : existing?.image,
+        boxNumber: 'boxNumber' in input ? input.boxNumber?.trim() || undefined : existing?.boxNumber,
+        note: 'note' in input ? input.note?.trim() || undefined : existing?.note,
       };
-      dispatch({ type: 'HORSE_UPSERT', payload: horse });
-      void persistHorseUpsert(horse);
-      return { success: true, data: horse };
+      const key = `horse:${horse.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Hästen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistHorseUpsert(horse, input, Boolean(existing));
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte hästen. Försök igen.' };
+        dispatch({ type: 'HORSE_UPSERT', payload: result.data });
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistHorseUpsert],
   );
 
-  const deleteHorse = React.useCallback((horseId: string): ActionResult => {
+  const deleteHorse = React.useCallback(async (horseId: string): Promise<ActionResult> => {
     const current = stateRef.current;
     const existing = current.horses.find((horse) => horse.id === horseId);
     if (!existing) {
@@ -5914,15 +8858,22 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     if (!accessCheck.success) {
       return accessCheck;
     }
-    dispatch({ type: 'HORSE_DELETE', payload: { id: horseId } });
-    void persistHorseDelete(horseId);
-    return { success: true };
+    const key = `horse:${horseId}`;
+    if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Hästen sparas redan. Vänta ett ögonblick.' };
+    pendingDataWrites.current.add(key);
+    dataWriteVersion.current += 1;
+    try {
+      const result = await persistHorseDelete(existing);
+      if (!result.success) return result;
+      dispatch({ type: 'HORSE_DELETE', payload: { id: horseId } });
+      return { success: true };
+    } finally { pendingDataWrites.current.delete(key); }
   }, [ensurePermission, persistHorseDelete]);
 
   const addMember = React.useCallback(
-    (input: AddMemberInput): ActionResult<{ inviteCode: string }> => {
-      const stableIds = Array.from(new Set([input.stableId, ...(input.stableIds ?? [])]));
-      if (!stableIds.length) {
+    async (input: AddMemberInput): Promise<ActionResult<InviteConfirmation>> => {
+      const stableIds = Array.from(new Set(input.stableIds ?? [input.stableId])).filter(Boolean);
+      if (!stableIds.length || !stableIds.includes(input.stableId)) {
         return { success: false, reason: 'Välj minst ett stall.' };
       }
       for (const stableId of stableIds) {
@@ -5936,18 +8887,37 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!name) {
         return { success: false, reason: 'Namn krävs.' };
       }
-      if (!email) {
-        return { success: false, reason: 'Epost krävs.' };
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return { success: false, reason: 'Ange en giltig e-postadress.' };
       }
-      const inviteCode = generateInviteCode();
-      void persistStableInvite(input, stableIds, inviteCode);
-      return { success: true, data: { inviteCode } };
+      const key = `invite:${JSON.stringify([email.toLowerCase(), stableIds])}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Inbjudan skapas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        return await persistStableInvite(input, stableIds);
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistStableInvite],
   );
 
+  // An owner = admin role with owner access (matches is_stable_owner in RLS).
+  // Reads last-rendered state via stateRef, so it assumes sequential user actions
+  // (a re-render happens between promoting a new owner and demoting the old one).
+  // A two-step transfer fired in a single synchronous tick is not a real UI flow.
+  // This client snapshot cannot enforce the last-owner invariant across phones;
+  // atomic protection requires a database constraint or transaction.
+  const countStableOwners = React.useCallback((stableId: string) => {
+    const current = stateRef.current;
+    return Object.values(current.users).filter((u) =>
+      u.membership?.some(
+        (e) => e.stableId === stableId && e.role === 'admin' && (e.access ?? 'view') === 'owner',
+      ),
+    ).length;
+  }, []);
+
   const updateMemberRole = React.useCallback(
-    (input: UpdateMemberRoleInput): ActionResult<UserProfile> => {
+    async (input: UpdateMemberRoleInput): Promise<ActionResult<UserProfile>> => {
       const accessCheck = ensurePermission(input.stableId, (permissions) => permissions.canManageMembers);
       if (!accessCheck.success) {
         return accessCheck;
@@ -5957,51 +8927,48 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
       }
-      const membership = user.membership.map((entry) =>
-        entry.stableId === input.stableId
-          ? {
-              ...entry,
-              role: input.role,
-              customRole: input.customRole?.trim() || entry.customRole,
-              access:
-                input.access ??
-                (input.role === 'admin'
-                  ? 'owner'
-                  : input.role === 'staff'
-                    ? 'edit'
-                    : entry.access ?? 'view'),
-              horseIds: input.horseIds ?? entry.horseIds,
-              riderRole:
-                input.role === 'rider'
-                  ? input.riderRole ?? entry.riderRole ?? 'medryttare'
-                  : undefined,
-            }
-          : entry,
-      );
-      const nextEntry = membership.find((entry) => entry.stableId === input.stableId);
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: {
-          id: user.id,
-          updates: { membership },
-        },
-      });
-      if (nextEntry) {
-        void persistStableMemberUpdate(input.stableId, user.id, {
-          role: nextEntry.role,
-          customRole: nextEntry.customRole,
-          access: nextEntry.access,
-          horseIds: nextEntry.horseIds,
-          riderRole: nextEntry.riderRole,
-        });
+      // Guard against demoting the last owner — would lock the stable out of administration.
+      const currentEntry = user.membership.find((entry) => entry.stableId === input.stableId);
+      if (!currentEntry) return { success: false, reason: 'Medlemmen är inte kopplad till stallet.' };
+      const wasOwner =
+        currentEntry?.role === 'admin' && (currentEntry.access ?? 'view') === 'owner';
+      const nextAccess =
+        input.access ??
+        (input.role === 'admin' ? 'owner' : input.role === 'staff' ? 'edit' : currentEntry?.access ?? 'view');
+      const staysOwner = input.role === 'admin' && nextAccess === 'owner';
+      if (wasOwner && !staysOwner && countStableOwners(input.stableId) <= 1) {
+        return {
+          success: false,
+          reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.',
+        };
       }
-      return { success: true, data: { ...user, membership } };
+      const key = `member:${input.stableId}:${user.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Medlemmen uppdateras redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistStableMemberUpdate(input.stableId, user.id, {
+          role: input.role,
+          access: nextAccess,
+          riderRole: input.role === 'rider' ? input.riderRole ?? currentEntry.riderRole ?? 'medryttare' : undefined,
+          ...('customRole' in input ? { customRole: input.customRole?.trim() || undefined } : {}),
+          ...('horseIds' in input ? { horseIds: input.horseIds } : {}),
+        });
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte medlemsändringen.' };
+        const latestUser = stateRef.current.users[user.id] ?? user;
+        const membership = latestUser.membership.map((entry) => entry.stableId === input.stableId ? result.data! : entry);
+        dispatch({ type: 'USER_UPDATE', payload: { id: user.id, updates: { membership } } });
+        return { success: true, data: { ...latestUser, membership } };
+      } finally {
+        pendingDataWrites.current.delete(key);
+      }
     },
-    [ensurePermission, persistStableMemberUpdate],
+    [ensurePermission, persistStableMemberUpdate, countStableOwners],
   );
 
   const updateMemberHorseIds = React.useCallback(
-    (input: UpdateMemberHorseIdsInput): ActionResult<UserProfile> => {
+    async (input: UpdateMemberHorseIdsInput): Promise<ActionResult<UserProfile>> => {
       const accessCheck = ensurePermission(input.stableId, (permissions) => permissions.canManageMembers);
       if (!accessCheck.success) {
         return accessCheck;
@@ -6011,28 +8978,31 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
       }
-      const membership = user.membership.map((entry) =>
-        entry.stableId === input.stableId ? { ...entry, horseIds: input.horseIds } : entry,
-      );
-      const hasMembership = membership.some((entry) => entry.stableId === input.stableId);
+      const hasMembership = user.membership.some((entry) => entry.stableId === input.stableId);
       if (!hasMembership) {
         return { success: false, reason: 'Medlemmen är inte kopplad till stallet.' };
       }
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: {
-          id: user.id,
-          updates: { membership },
-        },
-      });
-      void persistStableMemberUpdate(input.stableId, user.id, { horseIds: input.horseIds });
-      return { success: true, data: { ...user, membership } };
+      const key = `member:${input.stableId}:${user.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Medlemmen uppdateras redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistStableMemberUpdate(input.stableId, user.id, { horseIds: input.horseIds });
+        if (!result.success) return result;
+        if (!result.data) return { success: false, reason: 'Servern bekräftade inte hästkopplingen.' };
+        const latestUser = stateRef.current.users[user.id] ?? user;
+        const membership = latestUser.membership.map((entry) => entry.stableId === input.stableId ? result.data! : entry);
+        dispatch({ type: 'USER_UPDATE', payload: { id: user.id, updates: { membership } } });
+        return { success: true, data: { ...latestUser, membership } };
+      } finally {
+        pendingDataWrites.current.delete(key);
+      }
     },
     [ensurePermission, persistStableMemberUpdate],
   );
 
   const toggleMemberDefaultPass = React.useCallback(
-    (input: ToggleMemberDefaultPassInput): ActionResult<UserProfile> => {
+    async (input: ToggleMemberDefaultPassInput): Promise<ActionResult<UserProfile>> => {
       const accessCheck = ensurePermission(input.stableId, (permissions) => permissions.canManageMembers);
       if (!accessCheck.success) {
         return accessCheck;
@@ -6042,6 +9012,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
       }
+      const stableId = input.stableId;
+      const weekday = input.weekday;
+      const slot = input.slot;
       const exists = user.defaultPasses.some(
         (entry) => entry.weekday === input.weekday && entry.slot === input.slot,
       );
@@ -6051,29 +9024,34 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           )
         : [...user.defaultPasses, { weekday: input.weekday, slot: input.slot }];
 
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: {
-          id: user.id,
-          updates: { defaultPasses: nextDefaultPasses },
-        },
-      });
-
-      void persistDefaultPassToggle({
-        userId: user.id,
-        stableId: input.stableId,
-        weekday: input.weekday,
-        slot: input.slot,
-        enabled: !exists,
-      });
-
-      return { success: true, data: { ...user, defaultPasses: nextDefaultPasses } };
+      if (stableId && defaultPassesStableId.current !== stableId) return { success: false, reason: 'Standardpassen för stallet hämtas fortfarande. Vänta ett ögonblick.' };
+      const key = `default:${stableId}:${user.id}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Standardpassen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        if (!stableId) {
+          if (!(await saveDefaultPassDraft(user.id, nextDefaultPasses))) return { success: false, reason: 'Standardpassen kunde inte sparas på telefonen. Försök igen.' };
+        } else {
+          const result = await persistDefaultPassToggle({ userId: user.id, stableId, weekday, slot, enabled: !exists });
+          if (!result.success) return result;
+        }
+        // These preferences in state always belong to the currently selected stable.
+        if (stateRef.current.currentStableId === stableId) {
+          const latest = stateRef.current.users[user.id] ?? user;
+          const remaining = latest.defaultPasses.filter(entry => !(entry.weekday === weekday && entry.slot === slot));
+          const saved = exists ? remaining : [...remaining, { weekday, slot }];
+          dispatch({ type: 'USER_UPDATE', payload: { id: user.id, updates: { defaultPasses: saved } } });
+          return { success: true, data: { ...latest, defaultPasses: saved } };
+        }
+        return { success: true, data: user };
+      } finally { pendingDataWrites.current.delete(key); }
     },
     [ensurePermission, persistDefaultPassToggle],
   );
 
   const removeMemberFromStable = React.useCallback(
-    (userId: string, stableId: string): ActionResult<UserProfile> => {
+    async (userId: string, stableId: string): Promise<ActionResult<UserProfile>> => {
       const accessCheck = ensurePermission(stableId, (permissions) => permissions.canManageMembers);
       if (!accessCheck.success) {
         return accessCheck;
@@ -6083,18 +9061,35 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!user) {
         return { success: false, reason: 'Användaren hittades inte.' };
       }
-      const membership = user.membership.filter((entry) => entry.stableId !== stableId);
-      dispatch({
-        type: 'USER_UPDATE',
-        payload: { id: userId, updates: { membership } },
-      });
-      const deletePromise = persistStableMemberDelete(stableId, userId);
-      if (userId === current.currentUserId) {
-        void deletePromise.then(() => refreshData({ reason: 'leave' }));
+      // Guard against removing the last owner — would lock the stable out of administration.
+      const targetEntry = user.membership.find((entry) => entry.stableId === stableId);
+      if (!targetEntry) return { success: false, reason: 'Medlemmen är inte kopplad till stallet.' };
+      const targetIsOwner =
+        targetEntry?.role === 'admin' && (targetEntry.access ?? 'view') === 'owner';
+      if (targetIsOwner && countStableOwners(stableId) <= 1) {
+        return {
+          success: false,
+          reason: 'Stallet måste ha minst en ägare. Utse en ny ägare innan du tar bort denna.',
+        };
       }
-      return { success: true, data: { ...user, membership } };
+      const key = `member:${stableId}:${userId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Medlemmen uppdateras redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = await persistStableMemberDelete(stableId, userId);
+        if (!result.success) return result;
+        const latestUser = stateRef.current.users[userId] ?? user;
+        const membership = latestUser.membership.filter((entry) => entry.stableId !== stableId);
+        dispatch({ type: 'USER_UPDATE', payload: { id: userId, updates: { membership } } });
+        pendingDataWrites.current.delete(key);
+        if (userId === current.currentUserId) await refreshData({ reason: 'leave' });
+        return { success: true, data: { ...latestUser, membership } };
+      } finally {
+        pendingDataWrites.current.delete(key);
+      }
     },
-    [ensurePermission, persistStableMemberDelete, refreshData],
+    [ensurePermission, persistStableMemberDelete, refreshData, countStableOwners],
   );
 
   const joinStableByCode = React.useCallback(
@@ -6153,6 +9148,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       hydrating,
       refreshing,
       refreshError,
+      lastRefreshedAt,
       derived,
       actions: {
         logNextAssignment,
@@ -6165,10 +9161,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updateAssignment,
         deleteAssignment,
         addEvent,
+        createStableAlert,
+        resolveStableAlert,
         toggleDefaultPass,
         upsertPaddock,
         deletePaddock,
         updateHorseDayStatus,
+        upsertFeedPlan,
+        deleteFeedPlan,
+        upsertFeedCheck,
         addDayEvent,
         removeDayEvent,
         addArenaBooking,
@@ -6178,10 +9179,26 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         removeArenaStatus,
         addRideLog,
         removeRideLog,
+        createPlannedRide,
+        updatePlannedRide,
+        deletePlannedRide,
+        completePlannedRide,
+        upsertExternalContact,
+        deleteExternalContact,
+        createCareEvent,
+        updateCareEvent,
+        deleteCareEvent,
+        completeCareEvent,
         addPost,
         togglePostLike,
         addPostComment,
         deletePost,
+        reportPost,
+        reportComment,
+        fetchContentReports,
+        resolveContentReport,
+        blockUser,
+        unblockUser,
         loadMorePosts,
         createGroup,
         renameGroup,
@@ -6214,6 +9231,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       hydrating,
       refreshing,
       refreshError,
+      lastRefreshedAt,
       derived,
       logNextAssignment,
       claimNextOpenAssignment,
@@ -6225,10 +9243,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       updateAssignment,
       deleteAssignment,
       addEvent,
+      createStableAlert,
+      resolveStableAlert,
       toggleDefaultPass,
       upsertPaddock,
       deletePaddock,
       updateHorseDayStatus,
+      upsertFeedPlan,
+      deleteFeedPlan,
+      upsertFeedCheck,
       addDayEvent,
       removeDayEvent,
       addArenaBooking,
@@ -6238,10 +9261,26 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       removeArenaStatus,
       addRideLog,
       removeRideLog,
+      createPlannedRide,
+      updatePlannedRide,
+      deletePlannedRide,
+      completePlannedRide,
+      upsertExternalContact,
+      deleteExternalContact,
+      createCareEvent,
+      updateCareEvent,
+      deleteCareEvent,
+      completeCareEvent,
       addPost,
       togglePostLike,
       addPostComment,
       deletePost,
+      reportPost,
+      reportComment,
+      fetchContentReports,
+      resolveContentReport,
+      blockUser,
+      unblockUser,
       loadMorePosts,
       createGroup,
       renameGroup,

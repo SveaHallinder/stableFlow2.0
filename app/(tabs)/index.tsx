@@ -1,6 +1,6 @@
+import { generateId } from '@/lib/ids';
 import React from 'react';
 import {
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -14,7 +14,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
@@ -27,16 +27,17 @@ import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import type { UserRole } from '@/context/AppDataContext';
 import { roleLabels } from '@/lib/roleLabels';
 import {
   groupAssignmentsByDay,
   toISODate,
 } from '@/lib/schedule';
+import { deriveFeedFocus, deriveTodayOverview, getCurrentFeedSlot } from '@/lib/today';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useWeather } from '@/hooks/useWeather';
@@ -60,7 +61,7 @@ type QuickAction = {
 
 const tourSteps = [
   {
-    title: 'Överblick',
+    title: 'Idag',
     text: 'Se viktiga aviseringar, dagens läge och snabbåtgärder för pass, lediga pass, händelser och hagar.',
   },
   {
@@ -91,13 +92,12 @@ export default function OverviewScreen() {
     assignmentHistory,
     assignments,
     alerts,
+    stableAlerts,
     messages: messageItems,
     posts: postItems,
     currentUserId,
     paddocks,
-    horses,
     currentStableId,
-    users,
     stables,
   } = state;
   const toast = useToast();
@@ -112,21 +112,27 @@ export default function OverviewScreen() {
     () => paddocks.filter((paddock) => paddock.stableId === currentStableId),
     [paddocks, currentStableId],
   );
-  const activeHorses = React.useMemo(
-    () => horses.filter((horse) => horse.stableId === currentStableId),
-    [horses, currentStableId],
-  );
-
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
   const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
+  const [eventSaving, setEventSaving] = React.useState(false);
+  const eventSavingRef = React.useRef(false);
+  const eventIdRef = React.useRef<string | null>(null);
+  const [eventSaveError, setEventSaveError] = React.useState<string | null>(null);
+  const [resolvingAlertId, setResolvingAlertId] = React.useState<string | null>(null);
+  const resolvingAlertRef = React.useRef(false);
+  const [alertResolveError, setAlertResolveError] = React.useState<string | null>(null);
   const [eventText, setEventText] = React.useState('');
+  const [eventKind, setEventKind] = React.useState<'event' | 'important' | 'urgent'>('event');
   const [tourVisible, setTourVisible] = React.useState(tour === 'intro');
   const [tourStep, setTourStep] = React.useState(0);
 
   React.useEffect(() => {
     if (eventsModalVisible) {
+      eventIdRef.current = generateId();
+      setEventSaveError(null);
       setEventText('');
+      setEventKind('event');
     }
   }, [eventsModalVisible]);
 
@@ -138,6 +144,10 @@ export default function OverviewScreen() {
 
   const { permissions } = derived;
   const canManageDayEvents = permissions.canManageDayEvents;
+  const canResolveStableAlerts =
+    permissions.canManageAssignments ||
+    permissions.canManageDayEvents ||
+    permissions.canManageOnboarding;
   const membership = derived.membership;
   const roleLabel =
     membership?.customRole?.trim() || roleLabels[membership?.role ?? 'guest'];
@@ -163,7 +173,7 @@ export default function OverviewScreen() {
     }
     const assignmentById = new Map(assignments.map((assignment) => [assignment.id, assignment]));
     const seen = new Map<string, { activity: AssignmentHistoryEntry; count: number }>();
-    const ordered: Array<{ activity: AssignmentHistoryEntry; count: number }> = [];
+    const ordered: { activity: AssignmentHistoryEntry; count: number }[] = [];
 
     for (const activity of assignmentHistory) {
       const assignment = assignmentById.get(activity.assignmentId);
@@ -185,6 +195,23 @@ export default function OverviewScreen() {
 
   const latestEvent = alerts[0];
   const recentEvents = alerts.slice(0, 3);
+  const activeStableAlerts = React.useMemo(() => {
+    const severityRank = { urgent: 0, important: 1, info: 2 };
+    return stableAlerts
+      .filter(
+        (alert) =>
+          alert.stableId === currentStableId &&
+          !alert.resolvedAt &&
+          alert.severity !== 'info',
+      )
+      .sort((a, b) => {
+        const severityDiff = severityRank[a.severity] - severityRank[b.severity];
+        if (severityDiff !== 0) {
+          return severityDiff;
+        }
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
+  }, [currentStableId, stableAlerts]);
 
   const closeTour = React.useCallback(() => {
     setTourVisible(false);
@@ -260,14 +287,6 @@ export default function OverviewScreen() {
     const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
     return { paddockCount, horseCount };
   }, [activePaddocks]);
-  const memberCount = React.useMemo(
-    () =>
-      Object.values(users).filter((user) =>
-        user.membership.some((entry) => entry.stableId === currentStableId),
-      ).length,
-    [currentStableId, users],
-  );
-
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
       {
@@ -366,6 +385,94 @@ export default function OverviewScreen() {
     [todaySummary],
   );
   const hasTodayAssignments = todaySummary.total > 0;
+  const todayOverview = React.useMemo(
+    () =>
+      deriveTodayOverview({
+        state,
+        currentUserId,
+        currentStableId,
+        todayIso,
+        membership,
+        permissions,
+      }),
+    [state, currentUserId, currentStableId, todayIso, membership, permissions],
+  );
+  const currentFeedSlot = getCurrentFeedSlot(new Date());
+  const feedFocusHorseIds = React.useMemo(() => {
+    const ownerId = currentUserId;
+    const horsesForUser = state.horses.filter(
+      (horse) =>
+        horse.stableId === currentStableId &&
+        (permissions.canManageHorses ||
+          horse.ownerUserId === ownerId ||
+          (membership?.horseIds ?? []).includes(horse.id)),
+    );
+    return horsesForUser.map((horse) => horse.id);
+  }, [state.horses, currentStableId, currentUserId, membership, permissions]);
+  const feedFocus = React.useMemo(
+    () =>
+      deriveFeedFocus({
+        state,
+        currentStableId,
+        todayIso,
+        slot: currentFeedSlot,
+        horseIds: feedFocusHorseIds,
+      }),
+    [state, currentStableId, todayIso, currentFeedSlot, feedFocusHorseIds],
+  );
+  const ownsHorseInFocus = React.useMemo(
+    () => state.horses.some((horse) => horse.ownerUserId === currentUserId && feedFocusHorseIds.includes(horse.id)),
+    [state.horses, currentUserId, feedFocusHorseIds],
+  );
+  const canCheckFeed = permissions.canUpdateHorseStatus || ownsHorseInFocus;
+  const [feedDeviation, setFeedDeviation] = React.useState<{ horseId: string; text: string } | null>(null);
+  const feedSavePending = React.useRef(false);
+  const [feedSavingHorseId, setFeedSavingHorseId] = React.useState<string | null>(null);
+  const [feedSaveError, setFeedSaveError] = React.useState<{ horseId: string; message: string } | null>(null);
+  const handleFeedCheck = React.useCallback(
+    async (horseId: string, deviationNote?: string) => {
+      if (feedSavePending.current) return false;
+      feedSavePending.current = true;
+      setFeedSavingHorseId(horseId);
+      setFeedSaveError(null);
+      const result = await actions.upsertFeedCheck({
+        stableId: currentStableId,
+        horseId,
+        date: todayIso,
+        slot: currentFeedSlot,
+        checked: true,
+        deviationNote,
+      });
+      feedSavePending.current = false;
+      setFeedSavingHorseId(null);
+      if (!result.success) {
+        setFeedSaveError({ horseId, message: result.reason });
+        toast.showToast(result.reason, 'error');
+        return false;
+      }
+      toast.showToast(
+        deviationNote ? 'Avvikelse registrerad.' : 'Foderkoll registrerad.',
+        'success',
+      );
+      return true;
+    },
+    [actions, currentStableId, todayIso, currentFeedSlot, toast],
+  );
+  const handleFeedDeviationOpen = React.useCallback(
+    (horseId: string, currentNote: string) => {
+      setFeedDeviation((prev) =>
+        prev?.horseId === horseId ? null : { horseId, text: currentNote },
+      );
+    },
+    [],
+  );
+  const handleFeedDeviationSave = React.useCallback(async () => {
+    if (!feedDeviation) return;
+    const ok = await handleFeedCheck(feedDeviation.horseId, feedDeviation.text.trim() || undefined);
+    if (ok) {
+      setFeedDeviation(null);
+    }
+  }, [feedDeviation, handleFeedCheck]);
 
   const visibleMessages = messagesExpanded ? activeMessages : activeMessages.slice(0, 1);
   const visiblePosts = postsExpanded ? activePosts : activePosts.slice(0, 1);
@@ -415,18 +522,12 @@ export default function OverviewScreen() {
   const handleOpenAdmin = React.useCallback(() => {
     router.push('/admin');
   }, [router]);
-  const handleOpenMyPasses = React.useCallback(() => {
-    router.push('/calendar?view=mine');
-  }, [router]);
   const handleOpenCalendar = React.useCallback(() => {
     router.push('/calendar?view=all');
   }, [router]);
-  const handleStartTour = React.useCallback(() => {
-    setTourStep(0);
-    setTourVisible(true);
-  }, []);
 
-  const handleSubmitEvent = React.useCallback(() => {
+  const handleSubmitEvent = React.useCallback(async () => {
+    if (eventSavingRef.current) return;
     if (!canManageDayEvents) {
       toast.showToast('Behörighet saknas för att lägga till händelser.', 'error');
       return;
@@ -436,14 +537,46 @@ export default function OverviewScreen() {
       toast.showToast('Skriv en kort uppdatering.', 'error');
       return;
     }
-    const result = actions.addEvent(details, 'info');
+    eventSavingRef.current = true;
+    setEventSaving(true);
+    setEventSaveError(null);
+    const result =
+      eventKind === 'event'
+        ? await actions.addEvent(details, 'info', eventIdRef.current ?? undefined)
+        : await actions.createStableAlert({
+            requestId: eventIdRef.current ?? undefined,
+            title: details,
+            severity: eventKind,
+          });
+    eventSavingRef.current = false;
+    setEventSaving(false);
     if (result.success) {
-      toast.showToast('Händelsen lades till.', 'success');
+      toast.showToast(eventKind === 'event' ? 'Händelsen lades till.' : 'Viktig notis lades till.', 'success');
       setEventsModalVisible(false);
     } else {
+      setEventSaveError(result.reason);
       toast.showToast(result.reason, 'error');
     }
-  }, [actions, canManageDayEvents, eventText, toast]);
+  }, [actions, canManageDayEvents, eventKind, eventText, toast]);
+
+  const handleResolveStableAlert = React.useCallback(
+    async (alertId: string) => {
+      if (resolvingAlertRef.current) return;
+      resolvingAlertRef.current = true;
+      setResolvingAlertId(alertId);
+      setAlertResolveError(null);
+      const result = await actions.resolveStableAlert(alertId);
+      resolvingAlertRef.current = false;
+      setResolvingAlertId(null);
+      if (result.success) {
+        toast.showToast('Notisen är löst.', 'success');
+      } else {
+        setAlertResolveError(result.reason);
+        toast.showToast(result.reason, 'error');
+      }
+    },
+    [actions, toast],
+  );
 
   const startHereSection = showOnboardingEntry ? (
     <Card
@@ -482,6 +615,281 @@ export default function OverviewScreen() {
           </View>
         )}
       </View>
+    </Card>
+  ) : null;
+
+  const prioritySection = (
+    <Card
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
+    >
+      <View style={styles.priorityHeader}>
+        <View style={styles.priorityTitleBlock}>
+          <Text style={styles.priorityEyebrow}>Idag</Text>
+          <Text style={[styles.priorityTitle, !isDesktopWeb && styles.priorityTitleMobile]}>
+            {todayOverview.headline}
+          </Text>
+          <Text style={styles.prioritySubtitle}>{todayOverview.subheadline}</Text>
+        </View>
+        <View style={styles.priorityRolePill}>
+          <Text style={styles.priorityRoleText}>{roleLabel}</Text>
+        </View>
+      </View>
+
+      {todayOverview.noStableData ? (
+        <View style={styles.priorityNotice}>
+          <Feather name="info" size={15} color={palette.primary} />
+          <Text style={styles.priorityNoticeText}>Slutför setup för att se dagens stallstatus.</Text>
+        </View>
+      ) : null}
+
+      {todayOverview.permissionNote ? (
+        <View style={styles.priorityNotice}>
+          <Feather name="lock" size={15} color={palette.secondaryText} />
+          <Text style={styles.priorityNoticeText}>{todayOverview.permissionNote}</Text>
+        </View>
+      ) : null}
+
+      <View style={[styles.priorityGrid, isDesktopWeb && styles.priorityGridDesktop]}>
+        {(isDesktopWeb ? todayOverview.insights : todayOverview.insights.slice(0, 3)).map((item) => (
+          <View
+            key={item.id}
+            style={[
+              styles.priorityItem,
+              !isDesktopWeb && styles.priorityItemMobile,
+              item.tone === 'warning' && styles.priorityItemWarning,
+              item.tone === 'success' && styles.priorityItemSuccess,
+            ]}
+          >
+            <Text style={[styles.priorityValue, !isDesktopWeb && styles.priorityValueMobile]}>{item.value}</Text>
+            <Text style={styles.priorityLabel}>{item.label}</Text>
+            {isDesktopWeb ? <Text style={styles.priorityMeta} numberOfLines={2}>
+              {item.meta}
+            </Text> : null}
+          </View>
+        ))}
+      </View>
+      {todayOverview.myHorseSummaries[0] ? (
+        <TouchableOpacity
+          style={styles.priorityHorseButton}
+          onPress={() => router.push(`/horses/${todayOverview.myHorseSummaries[0].horse.id}`)}
+          activeOpacity={0.85}
+        >
+          <Feather name="activity" size={15} color={palette.primary} />
+          <Text style={styles.priorityHorseButtonText}>
+            Öppna {todayOverview.myHorseSummaries[0].horse.name}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+    </Card>
+  );
+
+  const feedSection = currentStableId && feedFocus.totalCount > 0 ? (
+    <Card
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
+    >
+      <View style={styles.priorityHeader}>
+        <View style={styles.priorityTitleBlock}>
+          <Text style={styles.priorityEyebrow}>Foder nu</Text>
+          <Text style={[styles.priorityTitle, !isDesktopWeb && styles.priorityTitleMobile]}>
+            {feedFocus.label}
+          </Text>
+          <Text style={styles.prioritySubtitle}>
+            {`${feedFocus.checkedCount}/${feedFocus.totalCount} klart`}
+            {feedFocus.deviationCount ? ` · ${feedFocus.deviationCount} avvikelser` : ''}
+          </Text>
+        </View>
+      </View>
+      <View style={{ gap: 8 }}>
+        {feedFocus.items.slice(0, 5).map((item) => {
+          const planLabel = item.plan?.label ?? 'Ingen plan satt';
+          const amountLabel = item.plan?.amount;
+          const isChecked = Boolean(item.check?.checkedAt);
+          const hasDeviation = Boolean(item.check?.deviationNote);
+          const deviationActive = feedDeviation?.horseId === item.horse.id;
+          return (
+            <View key={item.horse.id} style={{ gap: 8 }}>
+              <View style={[styles.priorityNotice, !isDesktopWeb && { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                <View style={isDesktopWeb ? { flex: 1, minWidth: 0 } : undefined}>
+                  <Text style={styles.priorityNoticeText}>
+                    {`${item.horse.name} · ${planLabel}`}
+                  </Text>
+                  {amountLabel ? (
+                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]}>
+                      {amountLabel}
+                    </Text>
+                  ) : null}
+                  {hasDeviation && !deviationActive ? (
+                    <Text style={[styles.priorityNoticeText, { color: palette.secondaryText }]}>
+                      {`Avvikelse: ${item.check?.deviationNote}`}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: isDesktopWeb ? 'flex-end' : 'flex-start' }}>
+                  <TouchableOpacity
+                    onPress={() => router.push(`/horses/${item.horse.id}`)}
+                    accessibilityRole="button"
+                    activeOpacity={0.85}
+                    style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Profil</Text>
+                  </TouchableOpacity>
+                  {canCheckFeed ? (
+                    <TouchableOpacity
+                      onPress={() => handleFeedCheck(item.horse.id)}
+                      disabled={feedSavingHorseId !== null}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: feedSavingHorseId !== null, busy: feedSavingHorseId === item.horse.id }}
+                      activeOpacity={0.85}
+                      style={{
+                        minHeight: 44,
+                        justifyContent: 'center',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 999,
+                        backgroundColor: isChecked ? palette.surfaceTint : palette.primary,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '700',
+                          color: isChecked ? palette.secondaryText : palette.inverseText,
+                        }}
+                      >
+                        {feedSavingHorseId === item.horse.id ? 'Sparar…' : isChecked ? 'Klart' : 'Markera klart'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {canCheckFeed ? (
+                    <TouchableOpacity
+                      onPress={() => handleFeedDeviationOpen(item.horse.id, item.check?.deviationNote ?? '')}
+                      accessibilityRole="button"
+                      disabled={feedSavingHorseId !== null}
+                      activeOpacity={0.85}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avvikelse</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+              {feedSaveError?.horseId === item.horse.id ? (
+                <Text style={{ color: palette.error, fontSize: 14 }}>
+                  {feedSaveError.message}
+                </Text>
+              ) : null}
+              {deviationActive ? (
+                <View style={{ padding: 10, gap: 8, borderRadius: radius.md, backgroundColor: palette.surfaceTint }}>
+                  <TextInput
+                    multiline
+                    value={feedDeviation?.text ?? ''}
+                    editable={feedSavingHorseId === null}
+                    onChangeText={(text) =>
+                      setFeedDeviation((prev) => (prev ? { ...prev, text } : prev))
+                    }
+                    placeholder="Skriv en kort avvikelse, t.ex. Hösilage tog slut – ersatt med torrhö."
+                    placeholderTextColor={palette.secondaryText}
+                    style={{
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                      borderRadius: radius.md,
+                      backgroundColor: palette.surface,
+                      color: palette.primaryText,
+                      fontSize: 14,
+                    }}
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => setFeedDeviation(null)}
+                      disabled={feedSavingHorseId !== null}
+                      activeOpacity={0.85}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avbryt</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={handleFeedDeviationSave}
+                      disabled={feedSavingHorseId !== null}
+                      accessibilityRole="button"
+                      activeOpacity={0.85}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.inverseText }}>
+                        {feedSavingHorseId === item.horse.id ? 'Sparar…' : 'Spara avvikelse'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+      {feedFocus.totalCount > 5 ? (
+        <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/stable-horses')} style={styles.feedAllHorses}>
+          <Text style={styles.priorityNoticeText}>{`Visa alla ${feedFocus.totalCount} hästar`}</Text>
+        </TouchableOpacity>
+      ) : null}
+    </Card>
+  ) : null;
+
+  const stableAlertsSection = activeStableAlerts.length ? (
+    <Card
+      tone={isDesktopWeb ? 'default' : 'muted'}
+      elevated
+      style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
+    >
+      <View style={styles.eventsHeader}>
+        <Text style={[styles.eventsTitle, !isDesktopWeb && styles.eventsTitleMobile]}>
+          Viktigt
+        </Text>
+        <Text style={[styles.eventsMeta, !isDesktopWeb && styles.eventsMetaMobile]}>
+          {`${activeStableAlerts.length} ${activeStableAlerts.length === 1 ? 'aktivt' : 'aktiva'}`}
+        </Text>
+      </View>
+      <View style={styles.eventsList}>
+        {activeStableAlerts.map((alert) => (
+          <View key={alert.id} style={styles.eventRow}>
+            <View
+              style={[
+                styles.eventDot,
+                { backgroundColor: alert.severity === 'urgent' ? palette.error : palette.warning },
+              ]}
+            />
+            <View style={styles.eventBody}>
+              <Text
+                style={[styles.eventMessage, !isDesktopWeb && styles.eventMessageMobile]}
+              >
+                {alert.title}
+              </Text>
+              {alert.body ? (
+                <Text style={styles.eventTime}>
+                  {alert.body}
+                </Text>
+              ) : (
+                <Text style={styles.eventTime}>{formatEventTime(alert.createdAt)}</Text>
+              )}
+            </View>
+            {canResolveStableAlerts ? (
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`Markera ${alert.title} som löst`}
+                disabled={Boolean(resolvingAlertId)}
+                style={styles.alertResolveButton}
+                onPress={() => handleResolveStableAlert(alert.id)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.alertResolveText}>{resolvingAlertId === alert.id ? 'Sparar…' : 'Löst'}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ))}
+      </View>
+      {alertResolveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{alertResolveError}</Text>}
     </Card>
   ) : null;
 
@@ -753,7 +1161,7 @@ export default function OverviewScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Dagens överblick"
+          title="Idag"
           primaryAction={
             <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
               <Feather name="search" size={18} color={palette.primaryText} />
@@ -770,26 +1178,44 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <DataSyncStatus />
           {isDesktopWeb ? (
-            <View style={styles.desktopDashboard}>
-            <View style={[styles.desktopColumn, styles.desktopColumnPrimary]}>
+            <>
               {startHereSection}
-              {eventsSection}
+              {prioritySection}
+              {feedSection}
+              {/* Row 1: Events + Messages side by side */}
+              <View style={styles.desktopRow}>
+                <View style={styles.desktopRowMain}>
+                  {stableAlertsSection}
+                  {eventsSection}
+                </View>
+                <View style={styles.desktopRowSide}>
+                  {messagesSection}
+                </View>
+              </View>
+              {/* Row 2: Quick actions full width */}
               {quickActionsSection}
-              {summarySection}
-              {missedSection}
-              <WeatherPanel stableLocation={stableLocation} />
-            </View>
-            <View style={[styles.desktopColumn, styles.desktopColumnSecondary]}>
-              {messagesSection}
-              {postsSection}
-            </View>
-            </View>
+              {/* Row 3: Today summary + Posts + Weather */}
+              <View style={styles.desktopRow}>
+                <View style={styles.desktopRowMain}>
+                  {summarySection}
+                  {missedSection}
+                </View>
+                <View style={styles.desktopRowSide}>
+                  {postsSection}
+                  <WeatherPanel stableLocation={stableLocation} />
+                </View>
+              </View>
+            </>
           ) : (
             <>
               {startHereSection}
-              {eventsSection}
+              {prioritySection}
+              {stableAlertsSection}
+              {feedSection}
               {quickActionsSection}
+              {eventsSection}
               {summarySection}
               {missedSection}
               <WeatherPanel stableLocation={stableLocation} />
@@ -803,19 +1229,48 @@ export default function OverviewScreen() {
         visible={eventsModalVisible}
         title="Händelser"
         description="Skriv en kort uppdatering till stallet (t.ex. tappskor, hagbyte, parkering)."
-        onClose={() => setEventsModalVisible(false)}
-        primaryLabel="Skicka"
-        primaryDisabled={!isEventValid}
+        onClose={() => { if (!eventSavingRef.current) setEventsModalVisible(false); }}
+        primaryLabel={eventSaving ? 'Sparar…' : 'Skicka'}
+        primaryDisabled={!isEventValid || eventSaving}
         onPrimary={isEventValid ? handleSubmitEvent : undefined}
       >
+        <View style={styles.eventKindRow}>
+          {[
+            { id: 'event', label: 'Händelse' },
+            { id: 'important', label: 'Viktigt' },
+            { id: 'urgent', label: 'Akut' },
+          ].map((option) => {
+            const active = eventKind === option.id;
+            return (
+              <TouchableOpacity
+                key={option.id}
+                style={[styles.eventKindChip, active && styles.eventKindChipActive]}
+                disabled={eventSaving}
+                onPress={() => setEventKind(option.id as typeof eventKind)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.eventKindText, active && styles.eventKindTextActive]}>
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
         <TextInput
+          editable={!eventSaving}
+          multiline
           value={eventText}
           onChangeText={setEventText}
           placeholder="Ex. Kanel har tappat en sko. / Parkera inte vid containern."
           placeholderTextColor={palette.secondaryText}
           style={[styles.reportInput, styles.reportInputCompact]}
         />
-        <Text style={styles.reportHint}>Händelsen hamnar i listan “Händelser” i överblicken.</Text>
+        {eventSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{eventSaveError}</Text>}
+        <Text style={styles.reportHint}>
+          {eventKind === 'event'
+            ? 'Händelsen hamnar i listan “Händelser” i överblicken.'
+            : 'Viktiga och akuta notiser visas högre upp på Idag.'}
+        </Text>
       </QuickActionSheet>
 
       <Modal visible={tourVisible} transparent animationType="fade" onRequestClose={closeTour}>
@@ -850,7 +1305,13 @@ export default function OverviewScreen() {
 }
 
 function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
-  const weather = useWeather(stableLocation);
+  const { data: weather, status } = useWeather(stableLocation);
+
+  // Weather is non-critical. If it can't load (SMHI unreachable, or CORS-blocked
+  // on web), hide the panel rather than hang on "Laddar väder..." forever.
+  if (status === 'error') {
+    return null;
+  }
 
   if (!weather) {
     return (
@@ -927,6 +1388,8 @@ const QuickActionCard = React.memo(function QuickActionCard({
     <Pressable
         disabled={action.disabled}
         onPress={() => onPress?.(action)}
+        accessibilityRole="button"
+        accessibilityLabel={action.label}
         style={({ pressed }) => [
           styles.quickActionCard,
           isDesktop && styles.quickActionCardDesktop,
@@ -1167,49 +1630,48 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 16,
-    paddingBottom: 50,
+    paddingBottom: 120,
     gap: 18,
   },
   scrollContentDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
-    paddingTop: 8,
-    paddingBottom: 64,
-    gap: 32,
+    paddingHorizontal: 36,
+    paddingTop: 0,
+    paddingBottom: 40,
+    gap: 20,
   },
-  desktopDashboard: {
+  desktopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 36,
+    gap: 20,
     width: '100%',
   },
-  desktopColumn: {
-    flex: 1,
+  desktopRowMain: {
+    flex: 1.2,
     minWidth: 0,
-    gap: 28,
+    gap: 20,
   },
-  desktopColumnPrimary: {
-    flex: 1.25,
-  },
-  desktopColumnSecondary: {
-    flex: 0.75,
+  desktopRowSide: {
+    flex: 0.8,
+    minWidth: 0,
+    gap: 20,
   },
   desktopClamp: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 36,
   },
   pageHeader: {
     marginBottom: 8,
   },
   pageHeaderDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
+    paddingHorizontal: 36,
     marginBottom: 0,
   },
   alertCard: {
@@ -1304,6 +1766,27 @@ const styles = StyleSheet.create({
   eventTime: {
     fontSize: 13,
     color: palette.secondaryText,
+  },
+  alertResolveButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  alertResolveText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  feedAllHorses: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
   },
   missedCard: {
     paddingHorizontal: 28,
@@ -1571,6 +2054,143 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.secondaryText,
   },
+  priorityCard: {
+    paddingHorizontal: 28,
+    paddingVertical: 24,
+    borderWidth: 0,
+    gap: 16,
+    borderRadius: radius.xl,
+  },
+  priorityCardMobile: {
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(15,22,34,0.08)',
+    backgroundColor: palette.surface,
+  },
+  priorityHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  priorityTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  priorityEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: palette.primary,
+    textTransform: 'uppercase',
+  },
+  priorityTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  priorityTitleMobile: {
+    fontSize: 18,
+  },
+  prioritySubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.secondaryText,
+  },
+  priorityRolePill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  priorityRoleText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  priorityNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceTint,
+  },
+  priorityNoticeText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.secondaryText,
+  },
+  priorityGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  priorityGridDesktop: {
+    flexWrap: 'nowrap',
+  },
+  priorityItem: {
+    flexGrow: 1,
+    flexBasis: 150,
+    minWidth: 130,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: radius.md,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    gap: 4,
+  },
+  priorityItemWarning: {
+    borderColor: 'rgba(238, 166, 45, 0.38)',
+    backgroundColor: 'rgba(255, 246, 230, 0.82)',
+  },
+  priorityItemMobile: {
+    flexBasis: 0,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+  },
+  priorityValueMobile: { fontSize: 20 },
+  priorityItemSuccess: {
+    borderColor: 'rgba(36, 153, 100, 0.22)',
+    backgroundColor: 'rgba(235, 249, 241, 0.8)',
+  },
+  priorityValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: palette.primaryText,
+  },
+  priorityLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  priorityMeta: {
+    fontSize: 12,
+    lineHeight: 16,
+    color: palette.secondaryText,
+  },
+  priorityHorseButton: {
+    minHeight: 42,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    borderRadius: radius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: palette.surfaceTint,
+  },
+  priorityHorseButtonText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.primaryText,
+  },
   summarySection: {
     gap: 16,
     paddingVertical: 0,
@@ -1621,7 +2241,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45,108,246,0.1)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
   },
   summaryBadgeText: {
     fontSize: 12,
@@ -1847,6 +2467,31 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
     lineHeight: 18,
   },
+  eventKindRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  eventKindChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radius.full,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
+  },
+  eventKindChipActive: {
+    borderColor: 'rgba(62,155,95,0.35)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
+  },
+  eventKindText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.primaryText,
+  },
+  eventKindTextActive: {
+    color: palette.primary,
+  },
   reportInput: {
     borderRadius: radius.lg,
     borderWidth: 1,
@@ -2043,8 +2688,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   sectionBlockDesktop: {
-    padding: 28,
-    borderRadius: radius.xl,
+    padding: 18,
+    borderRadius: radius.md,
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(15,22,34,0.06)',
@@ -2313,7 +2958,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surfaceTint,
   },
-  userRowActive: { borderColor: 'rgba(45,108,246,0.4)', backgroundColor: 'rgba(45,108,246,0.08)' },
+  userRowActive: { borderColor: 'rgba(62,155,95,0.4)', backgroundColor: 'rgba(62,155,95,0.08)' },
   userName: { fontSize: 15, fontWeight: '700', color: palette.primaryText },
   userMeta: { fontSize: 12, color: palette.secondaryText, marginTop: 2 },
 });

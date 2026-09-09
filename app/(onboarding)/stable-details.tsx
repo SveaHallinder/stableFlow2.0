@@ -1,3 +1,4 @@
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import React from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -15,16 +16,21 @@ export default function OnboardingStableDetails() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
   const activeStable = React.useMemo(
     () => stables.find((stable) => stable.id === activeStableId),
     [activeStableId, stables],
   );
 
+  const draftStableRef = React.useRef('');
+  const dirtyFieldsRef = React.useRef(new Set<string>());
   const [draft, setDraft] = React.useState({
     name: '',
     description: '',
@@ -32,8 +38,9 @@ export default function OnboardingStableDetails() {
   });
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!activeStableId && fallbackStableId) {
@@ -42,17 +49,19 @@ export default function OnboardingStableDetails() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   React.useEffect(() => {
-    if (!activeStable) {
-      return;
+    if (!activeStable) return;
+    if (draftStableRef.current !== activeStable.id) {
+      draftStableRef.current = activeStable.id;
+      dirtyFieldsRef.current.clear();
     }
-    setDraft({
-      name: activeStable.name ?? '',
-      description: activeStable.description ?? '',
-      location: activeStable.location ?? '',
-    });
+    setDraft(previous => ({
+      name: dirtyFieldsRef.current.has('name') ? previous.name : activeStable.name ?? '',
+      description: dirtyFieldsRef.current.has('description') ? previous.description : activeStable.description ?? '',
+      location: dirtyFieldsRef.current.has('location') ? previous.location : activeStable.location ?? '',
+    }));
   }, [activeStable]);
 
   const handleSelectStable = React.useCallback(
@@ -63,34 +72,37 @@ export default function OnboardingStableDetails() {
     [actions],
   );
 
-  const handleSave = React.useCallback(() => {
-    if (!activeStableId) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return false;
-    }
-    const name = draft.name.trim();
-    if (!name) {
-      toast.showToast('Stallnamn krävs.', 'error');
-      return false;
-    }
-    const result = actions.updateStable({
-      id: activeStableId,
-      updates: {
-        name,
-        description: draft.description.trim() || undefined,
-        location: draft.location.trim() || undefined,
-      },
-    });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-      return false;
-    }
-    toast.showToast('Stalluppgifter sparade.', 'success');
-    return true;
+  const handleSave = React.useCallback(async () => {
+    if (savingRef.current) return false;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      if (!activeStableId) {
+        toast.showToast('Välj ett stall först.', 'error');
+        return false;
+      }
+      const name = draft.name.trim();
+      if (!name) {
+        toast.showToast('Stallnamn krävs.', 'error');
+        return false;
+      }
+      const result = await actions.updateStable({
+        id: activeStableId,
+        updates: Object.fromEntries(Object.entries({ name, description: draft.description.trim() || undefined, location: draft.location.trim() || undefined }).filter(([key]) => dirtyFieldsRef.current.has(key))),
+      });
+      if (!result.success) {
+        setSaveError(result.reason);
+        toast.showToast(result.reason, 'error');
+        return false;
+      }
+      toast.showToast('Stalluppgifter sparade.', 'success');
+      return true;
+    } finally { savingRef.current = false; setSaving(false); }
   }, [actions, activeStableId, draft.description, draft.location, draft.name, toast]);
 
-  const handleNext = React.useCallback(() => {
-    if (handleSave()) {
+  const handleNext = React.useCallback(async () => {
+    if (await handleSave()) {
       if (returnTo) {
         router.replace(returnTo);
       } else {
@@ -117,10 +129,12 @@ export default function OnboardingStableDetails() {
       total={10}
       onBack={handleBack}
       onNext={handleNext}
-      nextLabel="Spara & tillbaka"
+      nextLabel={saving ? 'Sparar…' : 'Spara & tillbaka'}
       showProgress={false}
-      disableNext={!canContinue}
+      disableNext={!canContinue || saving}
     >
+      <DataSyncStatus />
+      {saveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text>}
       {stables.length > 1 ? (
         <Card tone="muted" style={styles.card}>
           <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -128,7 +142,7 @@ export default function OnboardingStableDetails() {
             {stables.map((stable) => {
               const active = stable.id === activeStableId;
               return (
-                <TouchableOpacity
+                <TouchableOpacity disabled={saving}
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => handleSelectStable(stable.id)}
@@ -144,25 +158,25 @@ export default function OnboardingStableDetails() {
 
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Grundinfo</Text>
-        <TextInput
+        <TextInput editable={!saving}
           placeholder="Stallnamn"
           placeholderTextColor={palette.mutedText}
           value={draft.name}
-          onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
+          onChangeText={(text) => { dirtyFieldsRef.current.add('name'); setDraft((prev) => ({ ...prev, name: text })); }}
           style={styles.input}
         />
-        <TextInput
+        <TextInput editable={!saving}
           placeholder="Plats (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.location}
-          onChangeText={(text) => setDraft((prev) => ({ ...prev, location: text }))}
+          onChangeText={(text) => { dirtyFieldsRef.current.add('location'); setDraft((prev) => ({ ...prev, location: text })); }}
           style={styles.input}
         />
-        <TextInput
+        <TextInput editable={!saving}
           placeholder="Beskrivning (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.description}
-          onChangeText={(text) => setDraft((prev) => ({ ...prev, description: text }))}
+          onChangeText={(text) => { dirtyFieldsRef.current.add('description'); setDraft((prev) => ({ ...prev, description: text })); }}
           style={[styles.input, styles.multilineInput]}
           multiline
         />

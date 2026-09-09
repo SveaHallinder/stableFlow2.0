@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -21,7 +20,7 @@ import { useToast } from '@/components/ToastProvider';
 import { radius, space } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { roleLabels, roleOrder, accessLabels } from '@/lib/roleLabels';
-import type { AssignmentSlot, DefaultPass, UserRole, WeekdayIndex } from '@/context/AppDataContext';
+import type { ActionResult, AssignmentSlot, DefaultPass, WeekdayIndex } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 
@@ -50,6 +49,26 @@ export default function MemberProfileScreen() {
   const router = useRouter();
   const toast = useToast();
   const { state, actions } = useAppData();
+  const [memberSaving, setMemberSaving] = React.useState(false);
+  const memberSavingRef = React.useRef(false);
+  const [memberError, setMemberError] = React.useState<string | null>(null);
+  const runMemberChange = React.useCallback(async (operation: () => Promise<ActionResult<unknown>>) => {
+    if (memberSavingRef.current) return false;
+    memberSavingRef.current = true;
+    setMemberSaving(true);
+    setMemberError(null);
+    try {
+      const result = await operation();
+      if (!result.success) setMemberError(result.reason);
+      return result.success;
+    } catch {
+      setMemberError('Medlemsändringen kunde inte sparas. Försök igen.');
+      return false;
+    } finally {
+      memberSavingRef.current = false;
+      setMemberSaving(false);
+    }
+  }, []);
   const { id: rawId, stableId: rawStableId } = useLocalSearchParams<{
     id?: string;
     stableId?: string;
@@ -115,34 +134,21 @@ export default function MemberProfileScreen() {
       } else {
         nextIds.add(horseId);
       }
-      const result = actions.updateMemberHorseIds({
+      void runMemberChange(() => actions.updateMemberHorseIds({
         userId: member.id,
         stableId,
         horseIds: Array.from(nextIds),
-      });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
+      }));
     },
-    [actions, assignedHorseIds, canManageMembers, member, membership, ownerHorseIds, stableId, toast],
+    [actions, assignedHorseIds, canManageMembers, member, membership, ownerHorseIds, stableId, runMemberChange],
   );
 
   const handleToggleDefaultPass = React.useCallback(
     (weekday: WeekdayIndex, slot: AssignmentSlot) => {
-      if (!member || !canManageMembers) {
-        return;
-      }
-      const result = actions.toggleMemberDefaultPass({
-        userId: member.id,
-        stableId,
-        weekday,
-        slot,
-      });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
+      if (!member || !canManageMembers) return;
+      void runMemberChange(() => actions.toggleMemberDefaultPass({ userId: member.id, stableId, weekday, slot }));
     },
-    [actions, canManageMembers, member, stableId, toast],
+    [actions, canManageMembers, member, stableId, runMemberChange],
   );
 
   const handleMessage = React.useCallback(async () => {
@@ -162,30 +168,41 @@ export default function MemberProfileScreen() {
     toast.showToast('Direktsamtal öppnas snart.', 'info');
   }, [toast]);
 
+  const isSelf = member?.id === state.currentUserId;
+  const isBlocked = member ? state.blockedUserIds.includes(member.id) : false;
+  const handleToggleBlock = React.useCallback(async () => {
+    if (!member) return;
+    const result = isBlocked
+      ? await actions.unblockUser(member.id)
+      : await actions.blockUser(member.id);
+    if (result.success) {
+      toast.showToast(
+        isBlocked ? 'Blockeringen är hävd.' : `${member.name} är blockerad.`,
+        'success',
+      );
+    } else {
+      toast.showToast(result.reason, 'error');
+    }
+  }, [actions, isBlocked, member, toast]);
+
   const handleRoleCycle = React.useCallback(() => {
     if (!member || !membership) {
       return;
     }
     const index = roleOrder.indexOf(membership.role);
     const nextRole = roleOrder[(index + 1) % roleOrder.length];
-    const result = actions.updateMemberRole({ userId: member.id, stableId, role: nextRole });
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-    }
-  }, [actions, member, membership, stableId, toast]);
+    void runMemberChange(() => actions.updateMemberRole({ userId: member.id, stableId, role: nextRole }));
+  }, [actions, member, membership, stableId, runMemberChange]);
 
-  const handleRemoveMember = React.useCallback(() => {
+  const handleRemoveMember = React.useCallback(async () => {
     if (!member) {
       return;
     }
-    const result = actions.removeMemberFromStable(member.id, stableId);
-    if (!result.success) {
-      toast.showToast(result.reason, 'error');
-    } else {
+    if (await runMemberChange(() => actions.removeMemberFromStable(member.id, stableId))) {
       toast.showToast('Medlem borttagen.', 'success');
       handleBack();
     }
-  }, [actions, handleBack, member, stableId, toast]);
+  }, [actions, handleBack, member, stableId, toast, runMemberChange]);
 
   const wrapDesktop = (content: React.ReactNode) => {
     if (!isDesktopWeb) {
@@ -251,9 +268,29 @@ export default function MemberProfileScreen() {
           <Text style={styles.primaryActionLabel}>Ring</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage} activeOpacity={0.85}>
-          <Feather name="message-circle" size={16} color="#2D6CF6" />
+          <Feather name="message-circle" size={16} color={palette.primary} />
           <Text style={styles.secondaryActionLabel}>Chatta</Text>
         </TouchableOpacity>
+        {!isSelf ? (
+          <TouchableOpacity
+            style={styles.blockActionButton}
+            onPress={handleToggleBlock}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={isBlocked ? 'Avblockera användare' : 'Blockera användare'}
+          >
+            <Feather
+              name={isBlocked ? 'user-check' : 'slash'}
+              size={16}
+              color={isBlocked ? palette.secondaryText : palette.error}
+            />
+            <Text
+              style={[styles.blockActionLabel, { color: isBlocked ? palette.secondaryText : palette.error }]}
+            >
+              {isBlocked ? 'Avblockera' : 'Blockera'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     </Card>
   );
@@ -263,7 +300,13 @@ export default function MemberProfileScreen() {
       <Text style={styles.sectionTitle}>Kontakt</Text>
       <View style={styles.detailList}>
         <DetailRow icon="mail" value={member.email ?? 'Ingen e-post'} />
-        <DetailRow icon="phone" value={member.phone || 'Inget nummer'} />
+        <DetailRow
+          icon="phone"
+          value={
+            member.phone ||
+            (isSelf || canManageMembers ? 'Inget nummer' : 'Endast synligt för admin')
+          }
+        />
         <DetailRow icon="map-pin" value={member.location || 'Okänd plats'} />
       </View>
     </Card>
@@ -284,7 +327,10 @@ export default function MemberProfileScreen() {
                   key={horse.id}
                   onPress={() => handleToggleHorse(horse.id)}
                   activeOpacity={0.85}
-                  disabled={!canManageMembers || isOwner}
+                  disabled={!canManageMembers || isOwner || memberSaving}
+                  accessibilityRole="button"
+                  aria-pressed={isAssigned}
+                  accessibilityState={{ disabled: !canManageMembers || isOwner || memberSaving, selected: isAssigned }}
                 >
                   <Pill
                     active={isAssigned}
@@ -319,7 +365,7 @@ export default function MemberProfileScreen() {
 
   const defaultPassSection = (
     <Card tone="muted" style={styles.sectionCard}>
-      <Text style={styles.sectionTitle}>Standardriddagar</Text>
+      <Text style={styles.sectionTitle}>Standardpass</Text>
       {member.defaultPasses.length || canManageMembers ? (
         <View style={styles.defaultPassGrid}>
           {DEFAULT_SLOTS.map((slot) => (
@@ -331,10 +377,15 @@ export default function MemberProfileScreen() {
                   return canManageMembers ? (
                     <TouchableOpacity
                       key={`${slot.value}-${day.value}`}
+                      style={{ width: isDesktopWeb ? '12%' : '23%' }}
                       onPress={() => handleToggleDefaultPass(day.value, slot.value)}
+                      disabled={memberSaving}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${slot.label}, ${day.label}`}
+                      aria-pressed={active}
                       activeOpacity={0.85}
                     >
-                      <Pill active={active} style={styles.defaultPassChip}>
+                      <Pill active={active} style={[styles.defaultPassChip, { width: '100%' }]}>
                         <Text
                           style={[
                             styles.defaultPassChipText,
@@ -395,7 +446,9 @@ export default function MemberProfileScreen() {
             style={[styles.adminButton, !canManageMembers && styles.adminButtonDisabled]}
             onPress={handleRoleCycle}
             activeOpacity={0.85}
-            disabled={!canManageMembers}
+            disabled={!canManageMembers || memberSaving}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: !canManageMembers || memberSaving }}
           >
             <Text style={styles.adminButtonText}>Byt roll</Text>
           </TouchableOpacity>
@@ -404,7 +457,9 @@ export default function MemberProfileScreen() {
               style={[styles.removeButton, !canManageMembers && styles.adminButtonDisabled]}
               onPress={handleRemoveMember}
               activeOpacity={0.85}
-              disabled={!canManageMembers}
+              disabled={!canManageMembers || memberSaving}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canManageMembers || memberSaving }}
             >
               <Text style={styles.removeButtonText}>Ta bort från stallet</Text>
             </TouchableOpacity>
@@ -440,6 +495,8 @@ export default function MemberProfileScreen() {
               contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
               showsVerticalScrollIndicator={false}
             >
+              {memberSaving && <Text accessibilityLiveRegion="polite" style={styles.sectionHint}>Sparar medlemsändring…</Text>}
+              {memberError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{memberError}</Text>}
               {isDesktopWeb ? (
                 <View style={styles.desktopLayout}>
                   <View style={styles.desktopSidebarContent}>
@@ -549,7 +606,7 @@ const styles = StyleSheet.create({
   heroName: { fontSize: 20, fontWeight: '700', color: palette.primaryText },
   heroMeta: { fontSize: 13, fontWeight: '600', color: palette.secondaryText },
   heroStable: { fontSize: 12, color: palette.secondaryText },
-  heroActions: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  heroActions: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   primaryActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -567,9 +624,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(45, 108, 246, 0.12)',
+    backgroundColor: 'rgba(62, 155, 95, 0.12)',
   },
   secondaryActionLabel: { fontSize: 13, fontWeight: '600', color: palette.primary },
+  blockActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceMuted,
+  },
+  blockActionLabel: { fontSize: 13, fontWeight: '600' },
   sectionCard: {
     paddingHorizontal: 18,
     paddingVertical: 16,
@@ -597,8 +664,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   ownerChip: {
-    backgroundColor: 'rgba(45, 108, 246, 0.08)',
-    borderColor: 'rgba(45, 108, 246, 0.25)',
+    backgroundColor: 'rgba(62, 155, 95, 0.08)',
+    borderColor: 'rgba(62, 155, 95, 0.25)',
   },
   disabledChip: {
     opacity: 0.7,
@@ -607,7 +674,7 @@ const styles = StyleSheet.create({
   defaultPassRow: { gap: 8 },
   defaultPassRowLabel: { fontSize: 13, fontWeight: '600', color: palette.secondaryText },
   defaultPassRowChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  defaultPassChip: { paddingHorizontal: 10, paddingVertical: 6 },
+  defaultPassChip: { paddingHorizontal: 10, paddingVertical: 6, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
   defaultPassChipText: { fontSize: 11, fontWeight: '600', color: palette.secondaryText },
   defaultPassChipTextActive: { color: palette.primary },
   awayList: { gap: 10 },

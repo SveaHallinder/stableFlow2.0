@@ -49,6 +49,7 @@ export default function NotificationSettingsScreen() {
   const [permissionStatus, setPermissionStatus] = React.useState<string>('undetermined');
   const [prefs, setPrefs] = React.useState<NotificationPrefs>(defaultPrefs);
   const [loadingPrefs, setLoadingPrefs] = React.useState(true);
+  const userId = user?.id;
 
   // Check permission status
   React.useEffect(() => {
@@ -57,11 +58,11 @@ export default function NotificationSettingsScreen() {
 
   // Load saved preferences
   React.useEffect(() => {
-    if (!user?.id) return;
+    if (!userId) return;
     supabase
       .from('notification_preferences')
       .select('messages,assignments,feed,reminders')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .maybeSingle()
       .then(({ data }) => {
         if (data) {
@@ -75,7 +76,7 @@ export default function NotificationSettingsScreen() {
         setLoadingPrefs(false);
       })
       .then(undefined, () => setLoadingPrefs(false));
-  }, [user?.id]);
+  }, [userId]);
 
   const handleRequestPermission = React.useCallback(async () => {
     const granted = await requestPermission();
@@ -84,13 +85,13 @@ export default function NotificationSettingsScreen() {
 
   const handleToggle = React.useCallback(
     async (key: keyof NotificationPrefs) => {
-      if (!user?.id) return;
+      if (!userId) return;
       const prev = prefs;
       const next = { ...prefs, [key]: !prefs[key] };
       setPrefs(next);
       const { error } = await supabase.from('notification_preferences').upsert(
         {
-          user_id: user.id,
+          user_id: userId,
           ...next,
           updated_at: new Date().toISOString(),
         },
@@ -98,7 +99,7 @@ export default function NotificationSettingsScreen() {
       );
       if (error) setPrefs(prev);
     },
-    [user?.id, prefs],
+    [userId, prefs],
   );
 
   const missedAssignments = React.useMemo(

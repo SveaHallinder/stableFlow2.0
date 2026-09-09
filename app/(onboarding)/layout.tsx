@@ -17,7 +17,7 @@ export default function OnboardingLayoutChoice() {
   }, [router]);
 
   const handleSingle = React.useCallback(() => {
-    router.push({ pathname: '/(onboarding)/stables', params: { returnTo } });
+    router.push({ pathname: '/(onboarding)/create-stable', params: { returnTo } });
   }, [router]);
 
   return (

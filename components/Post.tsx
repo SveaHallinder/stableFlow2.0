@@ -13,7 +13,8 @@ import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { theme } from '@/components/theme';
 import { color, space, radius } from '@/design/tokens';
-import type { PostComment } from '@/context/AppDataContext';
+import type { ActionResult, PostComment } from '@/context/AppDataContext';
+import { generateId } from '@/lib/ids';
 
 export type PostData = {
   id: string;
@@ -36,11 +37,13 @@ const palette = theme.colors;
 type PostCardProps = {
   data: PostData;
   currentUserId?: string;
-  onToggleLike?: () => void;
-  onAddComment?: (text: string) => void;
+  onToggleLike?: () => Promise<ActionResult>;
+  onAddComment?: (text: string, requestId: string) => Promise<ActionResult<PostComment>>;
   canInteract?: boolean;
   canDelete?: boolean;
   onDelete?: () => void;
+  onReport?: () => void;
+  onReportComment?: (commentId: string) => void;
 };
 
 export const PostCard = React.memo(function PostCard({
@@ -51,27 +54,62 @@ export const PostCard = React.memo(function PostCard({
   canInteract = true,
   canDelete = false,
   onDelete,
+  onReport,
+  onReportComment,
 }: PostCardProps) {
   const [showComposer, setShowComposer] = React.useState(false);
   const [commentText, setCommentText] = React.useState('');
+  const commentPendingRef = React.useRef(false);
+  const commentRequestIdRef = React.useRef<string | null>(null);
+  const [commentPending, setCommentPending] = React.useState(false);
+  const [commentError, setCommentError] = React.useState<string | null>(null);
+  const likePendingRef = React.useRef(false);
+  const [likePending, setLikePending] = React.useState(false);
+  const [likeError, setLikeError] = React.useState<string | null>(null);
   const [imageFailed, setImageFailed] = React.useState(false);
-  const prevImageUrl = React.useRef(data.imageSignedUrl);
-  if (prevImageUrl.current !== data.imageSignedUrl) {
-    prevImageUrl.current = data.imageSignedUrl;
-    if (imageFailed) setImageFailed(false);
-  }
+
+  React.useEffect(() => {
+    setImageFailed(false);
+  }, [data.imageSignedUrl]);
+
   const isLiked = currentUserId ? data.likedByUserIds?.includes(currentUserId) : false;
   const comments = data.commentsData ?? [];
   const visibleComments = comments.slice(-2);
 
-  const handleSubmitComment = () => {
+  const handleSubmitComment = async () => {
     const trimmed = commentText.trim();
-    if (!trimmed || !onAddComment) {
+    if (!trimmed || !onAddComment || !canInteract || commentPendingRef.current) {
       return;
     }
-    onAddComment(trimmed);
-    setCommentText('');
-    setShowComposer(false);
+    commentPendingRef.current = true;
+    setCommentPending(true);
+    setCommentError(null);
+    commentRequestIdRef.current ??= generateId();
+    try {
+      const result = await onAddComment(trimmed, commentRequestIdRef.current);
+      if (!result.success) { setCommentError(result.reason); return; }
+      setCommentText('');
+      commentRequestIdRef.current = null;
+      setShowComposer(false);
+    } catch (error) {
+      console.warn('[post comment form] Kunde inte skicka kommentar', error);
+      setCommentError('Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.');
+    } finally { commentPendingRef.current = false; setCommentPending(false); }
+  };
+
+  const handleToggleLike = async () => {
+    if (!canInteract || !onToggleLike || likePendingRef.current) return;
+    likePendingRef.current = true;
+    setLikePending(true);
+    setLikeError(null);
+    try {
+      const result = await onToggleLike();
+      if (!result.success) { setLikeError(result.reason); return; }
+      if (Platform.OS !== 'web') void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (error) {
+      console.warn('[post like control] Kunde inte spara gillning', error);
+      setLikeError('Gillningen kunde inte sparas. Försök igen.');
+    } finally { likePendingRef.current = false; setLikePending(false); }
   };
 
   return (
@@ -84,8 +122,25 @@ export const PostCard = React.memo(function PostCard({
           <Text style={styles.author}>{data.author}</Text>
           <Text style={styles.timestamp}>{data.timeAgo}</Text>
         </View>
+        {onReport ? (
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onReport}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Rapportera inlägg"
+          >
+            <Feather name="flag" size={16} color={palette.secondaryText} />
+          </TouchableOpacity>
+        ) : null}
         {canDelete && onDelete ? (
-          <TouchableOpacity style={styles.moreButton} onPress={onDelete} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={onDelete}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Ta bort inlägg"
+          >
             <Feather name="more-vertical" size={18} color={palette.secondaryText} />
           </TouchableOpacity>
         ) : null}
@@ -116,8 +171,21 @@ export const PostCard = React.memo(function PostCard({
         <View style={styles.commentList}>
           {visibleComments.map((comment) => (
             <View key={comment.id} style={styles.commentRow}>
-              <Text style={styles.commentAuthor}>{comment.authorName}</Text>
-              <Text style={styles.commentText}>{comment.text}</Text>
+              <View style={styles.commentBody}>
+                <Text style={styles.commentAuthor}>{comment.authorName}</Text>
+                <Text style={styles.commentText}>{comment.text}</Text>
+              </View>
+              {onReportComment && comment.authorId && comment.authorId !== currentUserId ? (
+                <TouchableOpacity
+                  onPress={() => onReportComment(comment.id)}
+                  activeOpacity={0.85}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Rapportera kommentar"
+                >
+                  <Feather name="flag" size={13} color={palette.secondaryText} />
+                </TouchableOpacity>
+              ) : null}
             </View>
           ))}
         </View>
@@ -126,29 +194,24 @@ export const PostCard = React.memo(function PostCard({
       <View style={styles.actions}>
         <TouchableOpacity
           style={[styles.actionButton, isLiked && styles.actionButtonActive]}
-          onPress={() => {
-            if (Platform.OS !== 'web') {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }
-            onToggleLike?.();
-          }}
-          disabled={!canInteract}
+          onPress={handleToggleLike}
+          disabled={!canInteract || likePending}
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel={isLiked ? 'Ta bort gilla' : 'Gilla inlägg'}
-          accessibilityState={{ selected: isLiked }}
+          accessibilityState={{ selected: isLiked, disabled: !canInteract || likePending, busy: likePending }}
         >
           <Feather
             name="heart"
             size={16}
             color={isLiked ? palette.primary : palette.secondaryText}
           />
-          <Text style={[styles.actionText, isLiked && styles.actionTextActive]}>{data.likes}</Text>
+          <Text style={[styles.actionText, isLiked && styles.actionTextActive]}>{likePending ? 'Sparar…' : data.likes}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.actionButton}
-          onPress={() => canInteract && setShowComposer((prev) => !prev)}
-          disabled={!canInteract}
+          onPress={() => canInteract && !commentPendingRef.current && setShowComposer((prev) => !prev)}
+          disabled={!canInteract || commentPending}
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityLabel="Kommentera"
@@ -157,11 +220,15 @@ export const PostCard = React.memo(function PostCard({
           <Text style={styles.actionText}>{data.comments}</Text>
         </TouchableOpacity>
       </View>
+      {likeError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{likeError}</Text> : null}
 
       {showComposer && canInteract ? (
+        <View style={{ gap: 8 }}>
+        {commentError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{commentError}</Text> : null}
         <View style={styles.commentComposer}>
           <TextInput
             value={commentText}
+            editable={!commentPending}
             onChangeText={setCommentText}
             placeholder="Skriv en kommentar..."
             placeholderTextColor={palette.mutedText}
@@ -170,16 +237,17 @@ export const PostCard = React.memo(function PostCard({
           <TouchableOpacity
             style={[
               styles.commentSendButton,
-              !commentText.trim() && styles.commentSendButtonDisabled,
+              (!commentText.trim() || commentPending) && styles.commentSendButtonDisabled,
             ]}
             onPress={handleSubmitComment}
-            disabled={!commentText.trim()}
+            disabled={!commentText.trim() || commentPending}
             activeOpacity={0.85}
             accessibilityRole="button"
             accessibilityLabel="Skicka kommentar"
           >
-            <Text style={styles.commentSendText}>Skicka</Text>
+            <Text style={styles.commentSendText}>{commentPending ? 'Skickar…' : 'Skicka'}</Text>
           </TouchableOpacity>
+        </View>
         </View>
       ) : null}
     </View>
@@ -264,7 +332,15 @@ const styles = StyleSheet.create({
   },
   commentRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
+  },
+  commentBody: {
+    flexDirection: 'row',
+    gap: 6,
+    flex: 1,
+    flexWrap: 'wrap',
   },
   commentAuthor: {
     fontSize: 12,

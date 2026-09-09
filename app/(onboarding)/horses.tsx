@@ -1,4 +1,8 @@
+import { InviteReceipt } from '@/components/InviteReceipt';
+import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
+import { generateId } from '@/lib/ids';
+import { confirmAction } from '@/lib/confirm';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -23,7 +27,7 @@ export default function OnboardingHorses() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, horses, currentUserId } = state;
 
   const fallbackStableId = currentStableId || stables[0]?.id || '';
@@ -34,6 +38,13 @@ export default function OnboardingHorses() {
     [activeStableId, horses],
   );
 
+  const [inviteReceipt, setInviteReceipt] = React.useState<InviteConfirmation | null>(null);
+  const [savingHorse, setSavingHorse] = React.useState(false);
+  const savingHorseRef = React.useRef(false);
+  const [deletingHorseId, setDeletingHorseId] = React.useState<string | null>(null);
+  const [horseDeleteError, setHorseDeleteError] = React.useState<{ id: string; reason: string } | null>(null);
+  const newHorseIdRef = React.useRef<string | null>(null);
+  const [horseSaveError, setHorseSaveError] = React.useState<string | null>(null);
   const [draft, setDraft] = React.useState({
     name: '',
     gender: 'unknown' as NonNullable<Horse['gender']>,
@@ -44,8 +55,9 @@ export default function OnboardingHorses() {
   const [ownerDraft, setOwnerDraft] = React.useState({ name: '', email: '' });
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
-      router.replace('/(onboarding)/stables');
+      router.replace('/(onboarding)/create-stable');
       return;
     }
     if (!activeStableId && fallbackStableId) {
@@ -54,7 +66,7 @@ export default function OnboardingHorses() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
@@ -64,7 +76,8 @@ export default function OnboardingHorses() {
     [actions],
   );
 
-  const handleAddHorse = React.useCallback(() => {
+  const handleAddHorse = React.useCallback(async () => {
+    if (savingHorseRef.current) return;
     if (!activeStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -88,7 +101,12 @@ export default function OnboardingHorses() {
       toast.showToast('Ålder måste vara en siffra.', 'error');
       return;
     }
-    const result = actions.upsertHorse({
+    savingHorseRef.current = true;
+    setSavingHorse(true);
+    setHorseSaveError(null);
+    newHorseIdRef.current ??= generateId();
+    const result = await actions.upsertHorse({
+      id: newHorseIdRef.current,
       name,
       stableId: activeStableId,
       ownerUserId: ownerMode === 'self' ? currentUserId || undefined : undefined,
@@ -98,26 +116,38 @@ export default function OnboardingHorses() {
     });
     if (result.success) {
       if (ownerMode === 'invite' && result.data?.id) {
-        const inviteResult = actions.addMember({
+        const inviteResult = await actions.addMember({
           name: ownerDraft.name.trim(),
           email: ownerDraft.email.trim(),
           stableId: activeStableId,
           role: 'rider',
           customRole: 'Hästägare',
+          riderRole: 'owner',
           access: 'view',
           horseIds: [result.data.id],
         });
-        if (inviteResult.success && inviteResult.data?.inviteCode) {
+        if (!inviteResult.success) {
+          setHorseSaveError(`Hästen är sparad. ${inviteResult.reason}`);
+          savingHorseRef.current = false;
+          setSavingHorse(false);
+          return;
+        }
+        setInviteReceipt(inviteResult.data ?? null);
+        if (inviteResult.data?.inviteCode) {
           toast.showToast(`Inbjudningskod ${inviteResult.data.inviteCode}`, 'success');
         }
       }
+      newHorseIdRef.current = null;
       toast.showToast('Häst sparad.', 'success');
       setDraft({ name: '', gender: 'unknown', age: '', note: '' });
       setOwnerDraft({ name: '', email: '' });
       setOwnerMode('self');
     } else {
+      setHorseSaveError(result.reason);
       toast.showToast(result.reason, 'error');
     }
+    savingHorseRef.current = false;
+    setSavingHorse(false);
   }, [
     actions,
     activeStableId,
@@ -133,15 +163,38 @@ export default function OnboardingHorses() {
   ]);
 
   const handleDeleteHorse = React.useCallback(
-    (horseId: string) => {
-      const result = actions.deleteHorse(horseId);
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      } else {
-        toast.showToast('Häst borttagen.', 'success');
+    async (horseId: string) => {
+      if (savingHorseRef.current) return;
+      const horse = horses.find((entry) => entry.id === horseId);
+      if (!horse) return;
+      savingHorseRef.current = true;
+      try {
+        const confirmed = await confirmAction({
+          title: `Ta bort ${horse.name}?`,
+          message: 'Hästen och tillhörande historik tas bort permanent. Det går inte att ångra.',
+          confirmLabel: 'Ta bort häst',
+          destructive: true,
+        });
+        if (!confirmed) return;
+        setSavingHorse(true);
+        setDeletingHorseId(horseId);
+        setHorseDeleteError(null);
+        const result = await actions.deleteHorse(horseId);
+        if (result.success) {
+          toast.showToast('Häst borttagen.', 'success');
+        } else {
+          setHorseDeleteError({ id: horseId, reason: result.reason });
+        }
+      } catch (error) {
+        console.warn('[horse delete form] Kunde inte ta bort häst', error);
+        setHorseDeleteError({ id: horseId, reason: 'Hästen kunde inte tas bort. Försök igen.' });
+      } finally {
+        savingHorseRef.current = false;
+        setSavingHorse(false);
+        setDeletingHorseId(null);
       }
     },
-    [actions, toast],
+    [actions, horses, toast],
   );
 
   const handleBack = React.useCallback(() => {
@@ -160,6 +213,7 @@ export default function OnboardingHorses() {
       total={6}
       allowExit={false}
       onNext={handleBack}
+      disableNext={savingHorse}
       nextLabel="Tillbaka"
       showProgress
     >
@@ -170,7 +224,7 @@ export default function OnboardingHorses() {
             {stables.map((stable) => {
               const active = stable.id === activeStableId;
               return (
-                <TouchableOpacity
+                <TouchableOpacity disabled={savingHorse}
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => handleSelectStable(stable.id)}
@@ -186,7 +240,7 @@ export default function OnboardingHorses() {
 
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Ny häst</Text>
-        <TextInput
+        <TextInput editable={!savingHorse}
           placeholder="Hästens namn"
           placeholderTextColor={palette.mutedText}
           value={draft.name}
@@ -197,7 +251,7 @@ export default function OnboardingHorses() {
           {genderOptions.map((option) => {
             const active = draft.gender === option.id;
             return (
-              <TouchableOpacity
+              <TouchableOpacity disabled={savingHorse}
                 key={option.id}
                 style={[styles.chip, active && styles.chipActive]}
                 onPress={() => setDraft((prev) => ({ ...prev, gender: option.id }))}
@@ -208,7 +262,7 @@ export default function OnboardingHorses() {
             );
           })}
         </View>
-        <TextInput
+        <TextInput editable={!savingHorse}
           placeholder="Ålder (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.age}
@@ -216,7 +270,7 @@ export default function OnboardingHorses() {
           style={styles.input}
           keyboardType="number-pad"
         />
-        <TextInput
+        <TextInput editable={!savingHorse}
           placeholder="Anteckning (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.note}
@@ -227,7 +281,7 @@ export default function OnboardingHorses() {
         <View style={styles.ownerSection}>
           <Text style={styles.sectionLabel}>Ägare</Text>
           <View style={styles.toggleRow}>
-            <TouchableOpacity
+            <TouchableOpacity disabled={savingHorse}
               style={[styles.toggleChip, ownerMode === 'self' && styles.toggleChipActive]}
               onPress={() => setOwnerMode('self')}
               activeOpacity={0.85}
@@ -236,7 +290,7 @@ export default function OnboardingHorses() {
                 Jag är ägare
               </Text>
             </TouchableOpacity>
-            <TouchableOpacity
+            <TouchableOpacity disabled={savingHorse}
               style={[styles.toggleChip, ownerMode === 'invite' && styles.toggleChipActive]}
               onPress={() => setOwnerMode('invite')}
               activeOpacity={0.85}
@@ -248,14 +302,14 @@ export default function OnboardingHorses() {
           </View>
           {ownerMode === 'invite' ? (
             <>
-              <TextInput
+              <TextInput editable={!savingHorse}
                 placeholder="Namn på ägare"
                 placeholderTextColor={palette.mutedText}
                 value={ownerDraft.name}
                 onChangeText={(text) => setOwnerDraft((prev) => ({ ...prev, name: text }))}
                 style={styles.input}
               />
-              <TextInput
+              <TextInput editable={!savingHorse}
                 placeholder="Epost till ägare"
                 placeholderTextColor={palette.mutedText}
                 value={ownerDraft.email}
@@ -267,8 +321,11 @@ export default function OnboardingHorses() {
             </>
           ) : null}
         </View>
-        <TouchableOpacity style={styles.primaryButton} onPress={handleAddHorse} activeOpacity={0.9}>
-          <Text style={styles.primaryLabel}>Lägg till häst</Text>
+        <InviteReceipt confirmation={inviteReceipt} />
+        {inviteReceipt && <Text style={{ color: palette.secondaryText }}>När personen gått med kan du välja medlemmen som ägare under Hantera hästar.</Text>}
+        {horseSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseSaveError}</Text>}
+        <TouchableOpacity disabled={savingHorse} style={styles.primaryButton} onPress={handleAddHorse} activeOpacity={0.9}>
+          <Text style={styles.primaryLabel}>{savingHorse ? 'Sparar…' : 'Lägg till häst'}</Text>
         </TouchableOpacity>
       </Card>
 
@@ -284,9 +341,14 @@ export default function OnboardingHorses() {
                     ? genderOptions.find((option) => option.id === horse.gender)?.label
                     : 'Ingen kön angiven'}
                 </Text>
+                {deletingHorseId === horse.id ? <Text>Tar bort hästen…</Text> : null}
+                {horseDeleteError?.id === horse.id ? (
+                  <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseDeleteError.reason}</Text>
+                ) : null}
               </View>
-              <TouchableOpacity
-                style={styles.iconButton}
+              <TouchableOpacity disabled={savingHorse}
+                style={[styles.iconButton, { minWidth: 44, minHeight: 44 }]}
+                accessibilityRole="button" accessibilityLabel={`Ta bort ${horse.name}`}
                 onPress={() => handleDeleteHorse(horse.id)}
                 activeOpacity={0.85}
               >

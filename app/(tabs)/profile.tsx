@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  Image,
+  ActivityIndicator,
   Platform,
   RefreshControl,
   ScrollView,
@@ -68,10 +68,26 @@ export default function ProfileScreen() {
   const { currentUserId, users, currentStableId } = state;
   const currentUser = users[currentUserId];
   const toast = useToast();
+  const [defaultPassSaving, setDefaultPassSaving] = React.useState(false);
+  const defaultPassSavingRef = React.useRef(false);
+  const [defaultPassError, setDefaultPassError] = React.useState<string | null>(null);
+  const handleToggleDefaultPass = React.useCallback(async (weekday: WeekdayIndex, slot: AssignmentSlot) => {
+    if (defaultPassSavingRef.current) return;
+    defaultPassSavingRef.current = true;
+    setDefaultPassSaving(true);
+    setDefaultPassError(null);
+    try {
+      const result = await actions.toggleDefaultPass(weekday, slot);
+      if (!result.success) setDefaultPassError(result.reason);
+    } finally { defaultPassSavingRef.current = false; setDefaultPassSaving(false); }
+  }, [actions]);
   const scrollRef = React.useRef<ScrollView>(null);
   const [defaultPassAnchor, setDefaultPassAnchor] = React.useState<number | null>(null);
   const [highlightDefaultPass, setHighlightDefaultPass] = React.useState(false);
   const [didScrollToSection, setDidScrollToSection] = React.useState(false);
+  const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
+    () => new Set(),
+  );
   const isDesktopWeb = useIsDesktopWeb();
   const isWeb = Platform.OS === 'web';
   const currentStable = state.stables.find((stable) => stable.id === currentStableId);
@@ -155,15 +171,27 @@ export default function ProfileScreen() {
   }, [router]);
 
   const handleTakeAssignment = React.useCallback(
-    (assignmentId: string) => {
-      const result = actions.claimAssignment(assignmentId);
-      if (result.success && result.data) {
-        toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
-      } else if (!result.success) {
-        toast.showToast(result.reason, 'error');
+    async (assignmentId: string) => {
+      if (claimingAssignmentIds.has(assignmentId)) {
+        return;
+      }
+      setClaimingAssignmentIds((current) => new Set(current).add(assignmentId));
+      try {
+        const result = await actions.claimAssignment(assignmentId);
+        if (result.success && result.data) {
+          toast.showToast(`${result.data.label} ${result.data.time} är nu ditt.`, 'success');
+        } else if (!result.success) {
+          toast.showToast(result.reason, 'error');
+        }
+      } finally {
+        setClaimingAssignmentIds((current) => {
+          const next = new Set(current);
+          next.delete(assignmentId);
+          return next;
+        });
       }
     },
-    [actions, toast],
+    [actions, claimingAssignmentIds, toast],
   );
 
   if (!currentUser) {
@@ -223,7 +251,7 @@ export default function ProfileScreen() {
       <View style={styles.heroChips}>
         {currentUser.horses.map((horse) => (
           <View key={horse} style={styles.heroChip}>
-            <Feather name="heart" size={12} color="#2D6CF6" />
+            <Feather name="heart" size={12} color={palette.primary} />
             <Text style={styles.heroChipText}>{horse}</Text>
           </View>
         ))}
@@ -339,7 +367,7 @@ export default function ProfileScreen() {
     ) : null;
 
   const defaultPassSubtitle = hasStable
-    ? 'Välj dagar du oftast kan ta pass. De markeras automatiskt som dina i schemat.'
+    ? 'Välj dagar du oftast kan ta pass. Dina val används för att fördela befintliga pass i stallets schema.'
     : 'Välj dagar du brukar kunna ta pass. Sparas lokalt tills du går med i ett stall.';
 
   const defaultPassSection = (
@@ -356,6 +384,8 @@ export default function ProfileScreen() {
           <Text style={styles.defaultPassSubtitle}>{defaultPassSubtitle}</Text>
         </View>
 
+        {defaultPassError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{defaultPassError}</Text>}
+        {defaultPassSaving && <Text style={styles.defaultPassSubtitle}>Sparar standardpass…</Text>}
         <View style={styles.defaultPassGrid}>
           {DEFAULT_SLOTS.map((slot) => (
             <View key={slot.value} style={styles.defaultPassRow}>
@@ -366,7 +396,12 @@ export default function ProfileScreen() {
                   return (
                     <TouchableOpacity
                       key={`${slot.value}-${day.value}`}
-                      onPress={() => actions.toggleDefaultPass(day.value, slot.value)}
+                      style={{ width: isDesktopWeb ? '12%' : '23%' }}
+                      onPress={() => handleToggleDefaultPass(day.value, slot.value)}
+                      disabled={defaultPassSaving || refreshing}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${slot.label}, ${day.label}`}
+                      aria-pressed={active}
                       activeOpacity={0.85}
                     >
                       <Pill active={active} style={styles.defaultPassChip}>
@@ -412,6 +447,7 @@ export default function ProfileScreen() {
               isCurrentUser={isCurrentUser}
               timeLabel={timeLabel}
               note={note}
+              isPending={claimingAssignmentIds.has(assignment.id)}
               onTakeAssignment={handleTakeAssignment}
             />
           ))
@@ -517,6 +553,7 @@ const AssignmentCard = React.memo(function AssignmentCard({
   isCurrentUser,
   timeLabel,
   note,
+  isPending,
   onTakeAssignment,
 }: {
   assignment: Assignment;
@@ -524,7 +561,8 @@ const AssignmentCard = React.memo(function AssignmentCard({
   isCurrentUser: boolean;
   timeLabel: string;
   note?: string;
-  onTakeAssignment: (assignmentId: string) => void;
+  isPending: boolean;
+  onTakeAssignment: (assignmentId: string) => void | Promise<void>;
 }) {
   const status = assignmentStatusStyles[assignment.status];
 
@@ -547,11 +585,18 @@ const AssignmentCard = React.memo(function AssignmentCard({
       {note ? <Text style={styles.assignmentNote}>{note}</Text> : null}
       {assignment.status === 'open' ? (
         <TouchableOpacity
-          style={styles.assignmentAction}
+          style={[styles.assignmentAction, isPending && styles.assignmentActionDisabled]}
           activeOpacity={0.85}
-          onPress={() => onTakeAssignment(assignment.id)}
+          onPress={() => void onTakeAssignment(assignment.id)}
+          disabled={isPending}
+          accessibilityRole="button"
+          accessibilityLabel={isPending ? 'Tar passet' : `Ta ${formatAssignmentTitle(assignment)}`}
+          accessibilityState={{ disabled: isPending, busy: isPending }}
         >
-          <Text style={styles.assignmentActionLabel}>Ta passet</Text>
+          {isPending ? <ActivityIndicator size="small" color={palette.inverseText} /> : null}
+          <Text style={styles.assignmentActionLabel}>
+            {isPending ? 'Tar pass...' : 'Ta passet'}
+          </Text>
         </TouchableOpacity>
       ) : null}
     </Card>
@@ -881,6 +926,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   defaultPassChip: {
+    width: '100%',
+    minWidth: 44,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
@@ -952,11 +1002,17 @@ const styles = StyleSheet.create({
   },
   assignmentAction: {
     alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     marginTop: 4,
     backgroundColor: palette.primary,
     borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  assignmentActionDisabled: {
+    opacity: 0.65,
   },
   assignmentActionLabel: {
     fontSize: 13,

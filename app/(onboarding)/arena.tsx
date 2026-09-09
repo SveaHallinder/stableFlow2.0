@@ -7,7 +7,6 @@ import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
-import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
 
@@ -21,7 +20,7 @@ export default function OnboardingResources() {
   const toast = useToast();
   const params = useLocalSearchParams();
   const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, farms } = state;
   const currentUser = state.users[state.currentUserId];
   const manageableStableIds = React.useMemo(() => {
@@ -59,8 +58,14 @@ export default function OnboardingResources() {
     hasRoundPen: false,
   });
   const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const dirtyResourceRef = React.useRef(new Set<keyof ResourceDraft>());
+  const draftScopeRef = React.useRef('');
+  const scopeKey = useFarmResources ? `farm:${activeFarmId}` : `stable:${activeStableId}`;
+  const [saveError, setSaveError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    if (hydrating) return;
     if (!stables.length) {
       router.replace('/(onboarding)/setup');
       return;
@@ -71,7 +76,7 @@ export default function OnboardingResources() {
     if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
       setActiveStableId(fallbackStableId);
     }
-  }, [activeStableId, fallbackStableId, router, stables]);
+  }, [activeStableId, fallbackStableId, router, stables, hydrating]);
 
   React.useEffect(() => {
     if (!hasFarms) {
@@ -89,181 +94,88 @@ export default function OnboardingResources() {
       setActiveFarmId(nextFarmId);
       return;
     }
-    if (activeStable?.farmId && activeStable.farmId !== activeFarmId) {
-      setActiveFarmId(activeStable.farmId);
-    }
   }, [activeFarmId, activeStable?.farmId, farms, hasFarms]);
 
   React.useEffect(() => {
-    if (useFarmResources) {
-      const farmHasArena = activeFarm?.hasIndoorArena ?? false;
-      const farmRoundPen = farmStables.some((stable) => resolveStableSettings(stable).arena.hasRoundPen);
-      setDraft({
-        hasArena: farmHasArena,
-        hasRoundPen: farmRoundPen,
-      });
-      return;
+    if (draftScopeRef.current !== scopeKey) {
+      draftScopeRef.current = scopeKey;
+      dirtyResourceRef.current.clear();
+      setSaveError(null);
     }
     const settings = resolveStableSettings(activeStable);
-    setDraft({
-      hasArena: settings.arena.hasArena,
-      hasRoundPen: settings.arena.hasRoundPen,
-    });
-  }, [activeFarm, activeStable, farmStables, useFarmResources]);
+    const hasArena = useFarmResources ? activeFarm?.hasIndoorArena ?? false : settings.arena.hasArena;
+    const hasRoundPen = useFarmResources
+      ? farmStables.some((stable) => resolveStableSettings(stable).arena.hasRoundPen)
+      : settings.arena.hasRoundPen;
+    setDraft(previous => ({
+      hasArena: dirtyResourceRef.current.has('hasArena') ? previous.hasArena : hasArena,
+      hasRoundPen: dirtyResourceRef.current.has('hasRoundPen') ? previous.hasRoundPen : hasRoundPen,
+    }));
+  }, [activeFarm?.hasIndoorArena, activeStable, farmStables, scopeKey, useFarmResources]);
 
   const handleSelectStable = React.useCallback(
     (stableId: string) => {
+      if (savingRef.current) return;
       setActiveStableId(stableId);
+      setActiveFarmId(stables.find(stable => stable.id === stableId)?.farmId ?? farms[0]?.id ?? '');
       actions.setCurrentStable(stableId);
     },
-    [actions],
+    [actions, farms, stables],
   );
 
   const handleSelectFarm = React.useCallback((farmId: string) => {
+    if (savingRef.current) return;
     setActiveFarmId(farmId);
   }, []);
 
   const handleSave = React.useCallback(async () => {
-    if (saving) {
+    if (savingRef.current) return false;
+    if ((useFarmResources && !activeFarmId) || (!useFarmResources && !activeStableId)) {
+      setSaveError(useFarmResources ? 'Välj en gård först.' : 'Välj ett stall först.');
       return false;
     }
-    if (useFarmResources && !activeFarmId) {
-      toast.showToast('Välj en gård först.', 'error');
-      return false;
-    }
-    if (!useFarmResources && !activeStableId) {
-      toast.showToast('Välj ett stall först.', 'error');
-      return false;
-    }
-
+    savingRef.current = true;
     setSaving(true);
+    setSaveError(null);
     try {
-      const userId = state.currentUserId;
-      if (useFarmResources && activeFarmId) {
-        const accessStableId =
-          farmStables.find((stable) => manageableStableIds.has(stable.id))?.id ||
-          stables.find((stable) => manageableStableIds.has(stable.id))?.id ||
-          '';
+      const dirty = new Set(dirtyResourceRef.current);
+      const arena = {
+        ...(dirty.has('hasArena') ? { hasArena: draft.hasArena } : {}),
+        ...(dirty.has('hasRoundPen') ? { hasRoundPen: draft.hasRoundPen } : {}),
+      };
+      let targets = stables.filter((stable) => stable.id === activeStableId);
+      if (useFarmResources) {
+        targets = farmStables.filter((stable) => manageableStableIds.has(stable.id));
+        const accessStableId = targets[0]?.id;
         if (!accessStableId) {
-          toast.showToast('Du måste vara stallägare för minst ett stall i gården.', 'error');
+          setSaveError('Du måste vara stallägare för minst ett stall i gården.');
           return false;
         }
-        const farmName = activeFarm?.name || 'Gård';
-        const farmPayload = {
-          id: activeFarmId,
-          name: farmName,
-          location: activeFarm?.location ?? null,
-          has_indoor_arena: draft.hasArena,
-          arena_note: activeFarm?.arenaNote ?? null,
-        };
-        const farmResult = await supabase.from('farms').upsert(farmPayload);
-        if (farmResult.error) {
-          toast.showToast(`Kunde inte spara gård. ${farmResult.error.message}`, 'error');
-          return false;
-        }
-        const farmLocalResult = actions.upsertFarm(
-          {
-            id: activeFarmId,
-            name: farmName,
-            location: activeFarm?.location,
-            hasIndoorArena: draft.hasArena,
-            arenaNote: activeFarm?.arenaNote,
-            accessStableId,
-          },
-          { skipPersist: true },
-        );
-        if (!farmLocalResult.success) {
-          toast.showToast(farmLocalResult.reason, 'error');
-          return false;
-        }
-        const targets = farmStables.length ? farmStables : stables.filter((stable) => stable.farmId === activeFarmId);
-        const allowedTargets = targets.filter((stable) => manageableStableIds.has(stable.id));
-        if (!allowedTargets.length) {
-          toast.showToast('Du måste vara stallägare för att spara resurser.', 'error');
-          return false;
-        }
-        for (const stable of allowedTargets) {
-          const settings = resolveStableSettings(stable);
-          const nextSettings = {
-            ...settings,
-            arena: {
-              ...settings.arena,
-              hasArena: draft.hasArena,
-              hasRoundPen: draft.hasRoundPen,
-            },
-            onboarding: {
-              ...settings.onboarding,
-              resourcesComplete: true,
-            },
-          };
-          const stablePayload = { settings: nextSettings };
-          const stableResult = await supabase.from('stables').update(stablePayload).eq('id', stable.id);
-          if (stableResult.error) {
-            toast.showToast(`Kunde inte spara resurser för ${stable.name}. ${stableResult.error.message}`, 'error');
-            return false;
-          }
-          const stableLocalResult = actions.updateStable(
-            { id: stable.id, updates: { settings: nextSettings } },
-            { skipPersist: true },
-          );
-          if (!stableLocalResult.success) {
-            toast.showToast(stableLocalResult.reason, 'error');
-            return false;
-          }
-        }
-      } else {
-        const settings = resolveStableSettings(activeStable);
-        const nextSettings = {
-          ...settings,
-          arena: {
-            ...settings.arena,
-            hasArena: draft.hasArena,
-            hasRoundPen: draft.hasRoundPen,
-          },
-          onboarding: {
-            ...settings.onboarding,
-            resourcesComplete: true,
-          },
-        };
-        const stablePayload = { settings: nextSettings };
-        const stableResult = await supabase.from('stables').update(stablePayload).eq('id', activeStableId);
-        if (stableResult.error) {
-          toast.showToast(`Kunde inte spara resurser. ${stableResult.error.message}`, 'error');
-          return false;
-        }
-        const stableLocalResult = actions.updateStable(
-          { id: activeStableId, updates: { settings: nextSettings } },
-          { skipPersist: true },
-        );
-        if (!stableLocalResult.success) {
-          toast.showToast(stableLocalResult.reason, 'error');
-          return false;
+        if (dirty.has('hasArena')) {
+          const result = await actions.upsertFarm({ id: activeFarmId, hasIndoorArena: draft.hasArena, accessStableId });
+          if (!result.success) { setSaveError(result.reason); return false; }
         }
       }
-
+      if (!targets.length) { setSaveError('Stallet kunde inte hittas.'); return false; }
+      for (const stable of targets) {
+        const result = await actions.updateStable({ id: stable.id, updates: {
+          settings: { arena, onboarding: { resourcesComplete: true } },
+        } });
+        if (!result.success) { setSaveError(result.reason); return false; }
+      }
+      if (draftScopeRef.current !== scopeKey) {
+        setSaveError('Vald gård eller valt stall har ändrats. Kontrollera uppgifterna igen.');
+        return false;
+      }
+      dirtyResourceRef.current.clear();
       toast.showToast('Resurser sparade.', 'success');
       return true;
-    } finally {
-      setSaving(false);
-    }
-  }, [
-    actions,
-    activeFarm?.arenaNote,
-    activeFarm?.location,
-    activeFarm?.name,
-    activeFarmId,
-    activeStable,
-    activeStableId,
-    draft.hasArena,
-    draft.hasRoundPen,
-    farmStables,
-    manageableStableIds,
-    saving,
-    stables,
-    state.currentUserId,
-    toast,
-    useFarmResources,
-  ]);
+    } catch (error) {
+      console.warn('[resource save] Kunde inte spara resurser', error);
+      setSaveError('Resurserna kunde inte sparas. Dina val finns kvar. Försök igen.');
+      return false;
+    } finally { savingRef.current = false; setSaving(false); }
+  }, [actions, activeFarmId, activeStableId, draft.hasArena, draft.hasRoundPen, farmStables, manageableStableIds, scopeKey, stables, toast, useFarmResources]);
 
   const handleNext = React.useCallback(async () => {
     if (await handleSave()) {
@@ -276,6 +188,7 @@ export default function OnboardingResources() {
   }, [handleSave, returnTo, router]);
 
   const handleBack = React.useCallback(() => {
+    if (savingRef.current) return;
     if (returnTo) {
       router.replace(returnTo);
     } else {
@@ -296,6 +209,7 @@ export default function OnboardingResources() {
       disableNext={saving}
       showProgress
     >
+      {saveError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text> : null}
       {useFarmResources ? (
         farms.length > 1 ? (
           <Card tone="muted" style={styles.card}>
@@ -307,6 +221,7 @@ export default function OnboardingResources() {
                   <TouchableOpacity
                     key={farm.id}
                     style={[styles.chip, active && styles.chipActive]}
+                    disabled={saving}
                     onPress={() => handleSelectFarm(farm.id)}
                     activeOpacity={0.85}
                   >
@@ -332,6 +247,7 @@ export default function OnboardingResources() {
                 <TouchableOpacity
                   key={stable.id}
                   style={[styles.chip, active && styles.chipActive]}
+                  disabled={saving}
                   onPress={() => handleSelectStable(stable.id)}
                   activeOpacity={0.85}
                 >
@@ -353,7 +269,8 @@ export default function OnboardingResources() {
             <TouchableOpacity
               key={option.label}
               style={[styles.toggleChip, draft.hasArena === option.value && styles.toggleChipActive]}
-              onPress={() => setDraft((prev) => ({ ...prev, hasArena: option.value }))}
+              disabled={saving}
+              onPress={() => { dirtyResourceRef.current.add('hasArena'); setDraft((prev) => ({ ...prev, hasArena: option.value })); }}
               activeOpacity={0.85}
             >
               <Text style={[styles.toggleText, draft.hasArena === option.value && styles.toggleTextActive]}>
@@ -374,7 +291,8 @@ export default function OnboardingResources() {
             <TouchableOpacity
               key={option.label}
               style={[styles.toggleChip, draft.hasRoundPen === option.value && styles.toggleChipActive]}
-              onPress={() => setDraft((prev) => ({ ...prev, hasRoundPen: option.value }))}
+              disabled={saving}
+              onPress={() => { dirtyResourceRef.current.add('hasRoundPen'); setDraft((prev) => ({ ...prev, hasRoundPen: option.value })); }}
               activeOpacity={0.85}
             >
               <Text style={[styles.toggleText, draft.hasRoundPen === option.value && styles.toggleTextActive]}>

@@ -1,19 +1,19 @@
 import { radius, shadow, space } from './tokens';
 
 export const systemPalette = {
-  background: '#F8FAFD',
+  background: '#F1F4F0',
   backgroundAlt: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#F3F6FC',
-  surfaceTint: '#F6F8FC',
+  surfaceAlt: '#F4F5F3',
+  surfaceTint: '#F5F6F4',
   surfaceGlass: 'rgba(255, 255, 255, 0.3)',
-  primary: '#2D6CF6',
-  accent: '#1BA97A',
+  primary: '#3E9B5F',
+  accent: '#3E9B5F',
   warning: '#E29833',
   error: '#F95F5F',
-  success: '#1BA97A',
+  success: '#2E9E5B',
   info: '#5AA3FF',
-  badge: '#5E5CE6',
+  badge: '#3E9B5F',
   textPrimary: '#1B1E2F',
   textSecondary: '#50526A',
   textMuted: '#6E7490',
@@ -36,8 +36,8 @@ export const systemStatus = {
 };
 
 export const systemGradients = {
-  background: ['#F8FAFD', '#FFFFFF'] as const,
-  action: ['#3EDFAF', '#2D8BFF'] as const,
+  background: ['#EFF3ED', '#F5F7F2'] as const,
+  action: ['#4FBE7A', '#3E9B5F'] as const,
   weather: ['#3A73FF', '#5F96FF'] as const,
 };
 
@@ -98,16 +98,16 @@ export const systemRadius = radius;
 
 export const quickActionVariants = {
   primary: {
-    gradient: ['#ECF3FF', '#F8FAFF'] as [string, string],
-    icon: '#2D6CF6',
-    accentBorder: 'rgba(45, 108, 246, 0.18)',
-    shadow: 'rgba(45, 108, 246, 0.12)',
+    gradient: ['#EAF6EE', '#F6FBF8'] as [string, string],
+    icon: '#3E9B5F',
+    accentBorder: 'rgba(62, 155, 95, 0.18)',
+    shadow: 'rgba(62, 155, 95, 0.12)',
   },
   accent: {
-    gradient: ['#EAF9F4', '#F6FBF9'] as [string, string],
-    icon: '#1BA97A',
-    accentBorder: 'rgba(27, 169, 122, 0.18)',
-    shadow: 'rgba(27, 169, 122, 0.12)',
+    gradient: ['#EAF6EE', '#F6FBF8'] as [string, string],
+    icon: '#3E9B5F',
+    accentBorder: 'rgba(62, 155, 95, 0.18)',
+    shadow: 'rgba(62, 155, 95, 0.12)',
   },
   warning: {
     gradient: ['#FFF6EB', '#FFF9F1'] as [string, string],
@@ -118,8 +118,8 @@ export const quickActionVariants = {
 };
 
 export const surfacePresets = {
-  hero: '#F4F8FF',
-  section: '#F7F9FE',
+  hero: '#F0F7F2',
+  section: '#F6F8F5',
   card: systemPalette.surface,
   subtle: systemPalette.surfaceAlt,
 };

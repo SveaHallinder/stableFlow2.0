@@ -85,6 +85,7 @@ export const ScreenHeader = ({
   if (isDesktopWeb) {
     return (
       <View style={[styles.desktopHeader, style]}>
+        {resolvedLeft ? <View style={styles.desktopBack}>{resolvedLeft}</View> : null}
         <View style={styles.desktopHeaderLeft}>
           {children ?? (
             <>
@@ -142,7 +143,12 @@ const styles = StyleSheet.create({
   },
   desktopHeaderLeft: {
     flex: 1,
+    minWidth: 0,
     gap: 4,
+  },
+  desktopBack: {
+    marginRight: 16,
+    flexShrink: 0,
   },
   desktopHeaderRight: {
     flexShrink: 0,

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Modal,
@@ -19,18 +18,45 @@ import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { DesktopNav } from '@/components/DesktopNav';
 import { HeaderIconButton, Card } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { color, radius, space } from '@/design/tokens';
 import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
-import type { Paddock, PaddockImage, UpsertPaddockInput } from '@/context/AppDataContext';
+import { confirmAction } from '@/lib/confirm';
+import { generateId } from '@/lib/ids';
+import type { Paddock, PaddockImage, UpsertPaddockInput, UpdateHorseDayStatusInput } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { createPaddocksPrintHtml } from '@/lib/paddocksPrint';
 import { toISODate } from '@/lib/schedule';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
+const webPaddockModalOverlayStyle =
+  Platform.OS === 'web'
+    ? ({
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: 1000,
+      } as const)
+    : undefined;
+const webPaddockModalSheetStyle =
+  Platform.OS === 'web'
+    ? ({
+        position: 'fixed',
+        top: 40,
+        left: '50%',
+        width: 'min(640px, calc(100vw - 32px))',
+        maxHeight: 'calc(100vh - 80px)',
+        marginLeft: 'calc(-1 * min(320px, calc((100vw - 32px) / 2)))',
+        overflowY: 'auto',
+        zIndex: 1001,
+      } as const)
+    : undefined;
 
 type PaddockDraft = {
   id?: string;
@@ -67,20 +93,30 @@ function formatPaddockCaption(paddock: Paddock) {
 
 async function openPrintDialog(html: string) {
   if (Platform.OS === 'web') {
-    if (typeof window === 'undefined') {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
       return;
     }
-    const win = window.open('', '_blank');
-    if (!win) {
-      throw new Error('Kunde inte öppna nytt fönster för utskrift.');
+    const frame = document.createElement('iframe');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    document.body.appendChild(frame);
+    const printWindow = frame.contentWindow;
+    const printDocument = printWindow?.document;
+    if (!printWindow || !printDocument) {
+      frame.remove();
+      throw new Error('Kunde inte förbereda utskrift.');
     }
-    win.document.open();
-    win.document.write(html);
-    win.document.close();
-    win.focus();
+    printDocument.open();
+    printDocument.write(html);
+    printDocument.close();
     setTimeout(() => {
-      win.print();
-      win.close();
+      printWindow.focus();
+      printWindow.print();
+      setTimeout(() => frame.remove(), 500);
     }, 150);
     return;
   }
@@ -171,70 +207,87 @@ export default function PaddocksScreen() {
   });
   const [draft, setDraft] = React.useState<PaddockDraft>(() => draftFromPaddock());
 
-  const activePaddock = React.useMemo(
-    () => paddocks.find((item) => item.id === modalState.paddockId),
-    [modalState.paddockId, paddocks],
-  );
-
-  React.useEffect(() => {
-    if (!modalState.visible) {
-      return;
-    }
-    setDraft(draftFromPaddock(activePaddock));
-  }, [modalState.visible, activePaddock]);
+  const savingPaddockRef = React.useRef(false);
+  const newPaddockIdRef = React.useRef<string | null>(null);
+  const draftStableIdRef = React.useRef(state.currentStableId);
+  const [paddockPending, setPaddockPending] = React.useState<'save' | 'delete' | null>(null);
+  const [paddockError, setPaddockError] = React.useState<string | null>(null);
 
   const openCreate = React.useCallback(() => {
+    if (savingPaddockRef.current) return;
     if (!canManagePaddocks) {
       toast.showToast('Behörighet saknas för att skapa hagar.', 'error');
       return;
     }
+    newPaddockIdRef.current = generateId();
+    draftStableIdRef.current = state.currentStableId;
+    setDraft(draftFromPaddock());
+    setPaddockError(null);
     setModalState({ visible: true });
-  }, [canManagePaddocks, toast]);
+  }, [canManagePaddocks, state.currentStableId, toast]);
 
   const openEdit = React.useCallback((paddockId: string) => {
+    if (savingPaddockRef.current) return;
     if (!canManagePaddocks) {
       toast.showToast('Behörighet saknas för att redigera hagar.', 'error');
       return;
     }
+    const paddock = paddocks.find((item) => item.id === paddockId);
+    if (!paddock) return;
+    draftStableIdRef.current = paddock.stableId;
+    setDraft(draftFromPaddock(paddock));
+    setPaddockError(null);
     setModalState({ visible: true, paddockId });
-  }, [canManagePaddocks, toast]);
+  }, [canManagePaddocks, paddocks, toast]);
 
   const closeModal = React.useCallback(() => {
+    if (savingPaddockRef.current) return;
     setModalState({ visible: false });
   }, []);
+
+  const pendingStatusIds = React.useRef(new Set<string>());
+  const [savingStatusIds, setSavingStatusIds] = React.useState<Set<string>>(() => new Set());
+  const [statusErrors, setStatusErrors] = React.useState<Record<string, string>>({});
+  const handleSaveStatus = React.useCallback(
+    async (horseId: string, updates: UpdateHorseDayStatusInput['updates']) => {
+      if (pendingStatusIds.current.has(horseId)) return;
+      pendingStatusIds.current.add(horseId);
+      setSavingStatusIds(new Set(pendingStatusIds.current));
+      setStatusErrors((current) => ({ ...current, [horseId]: '' }));
+      try {
+        const result = await actions.updateHorseDayStatus({ horseId, date: statusIso, updates });
+        if (!result.success) {
+          setStatusErrors((current) => ({ ...current, [horseId]: result.reason }));
+          toast.showToast(result.reason, 'error');
+        }
+      } finally {
+        pendingStatusIds.current.delete(horseId);
+        setSavingStatusIds(new Set(pendingStatusIds.current));
+      }
+    },
+    [actions, statusIso, toast],
+  );
 
   const handleSetInOutStatus = React.useCallback(
     (horseId: string, field: 'dayStatus' | 'nightStatus', value: 'in' | 'out') => {
       const current = statusByHorseId.get(horseId)?.[field];
       const nextValue = current === value ? undefined : value;
-      const result = actions.updateHorseDayStatus({
-        horseId,
-        date: statusIso,
-        updates: { [field]: nextValue },
-      });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
+      void handleSaveStatus(horseId, { [field]: nextValue });
     },
-    [actions, statusByHorseId, statusIso, toast],
+    [handleSaveStatus, statusByHorseId],
   );
 
   const handleToggleLooseFlag = React.useCallback(
     (horseId: string, field: 'checked' | 'water' | 'hay') => {
       const current = statusByHorseId.get(horseId)?.[field] ?? false;
-      const result = actions.updateHorseDayStatus({
-        horseId,
-        date: statusIso,
-        updates: { [field]: !current },
-      });
-      if (!result.success) {
-        toast.showToast(result.reason, 'error');
-      }
+      void handleSaveStatus(horseId, { [field]: !current });
     },
-    [actions, statusByHorseId, statusIso, toast],
+    [handleSaveStatus, statusByHorseId],
   );
 
   const shiftStatusDate = React.useCallback((amount: number) => {
+    if (pendingStatusIds.current.size) return;
+    setStatusErrors({});
     setStatusDate((prev) => {
       const next = new Date(prev);
       next.setDate(prev.getDate() + amount);
@@ -242,65 +295,54 @@ export default function PaddocksScreen() {
     });
   }, []);
 
-  const handleSave = React.useCallback(() => {
-    if (!canManagePaddocks) {
-      toast.showToast('Behörighet saknas för att spara hagar.', 'error');
-      return;
-    }
+  const handleSave = React.useCallback(async () => {
+    if (savingPaddockRef.current || !canManagePaddocks) return;
+    savingPaddockRef.current = true;
+    setPaddockPending('save');
+    setPaddockError(null);
+    newPaddockIdRef.current ??= generateId();
     const payload: UpsertPaddockInput = {
-      id: draft.id,
-      name: draft.name,
-      horseNames: parseHorseNames(draft.horsesText),
-      stableId: state.currentStableId,
-      image: draft.image,
-      season: draft.season,
+      id: draft.id ?? newPaddockIdRef.current,
+      name: draft.name, horseNames: parseHorseNames(draft.horsesText),
+      stableId: draftStableIdRef.current, image: draft.image, season: draft.season,
     };
+    try {
+      const result = await actions.upsertPaddock(payload);
+      if (result.success) {
+        toast.showToast(draft.id ? 'Hagen uppdaterades.' : 'Ny hage skapades.', 'success');
+        setModalState({ visible: false });
+      } else {
+        setPaddockError(result.reason);
+      }
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
+    }
+  }, [actions, canManagePaddocks, draft, toast]);
 
-    const result = actions.upsertPaddock(payload);
-    if (result.success) {
-      toast.showToast(draft.id ? 'Hagen uppdaterades.' : 'Ny hage skapades.', 'success');
-      closeModal();
-    } else if (!result.success) {
-      toast.showToast(result.reason, 'error');
+  const handleDelete = React.useCallback(async () => {
+    if (savingPaddockRef.current || !canManagePaddocks || !draft.id) return;
+    savingPaddockRef.current = true;
+    try {
+      const confirmed = await confirmAction({
+        title: 'Ta bort hage?', message: 'Detta går inte att ångra.',
+        confirmLabel: 'Ta bort', destructive: true,
+      });
+      if (!confirmed) return;
+      setPaddockPending('delete');
+      setPaddockError(null);
+      const result = await actions.deletePaddock(draft.id);
+      if (result.success) {
+        toast.showToast('Hagen togs bort.', 'success');
+        setModalState({ visible: false });
+      } else {
+        setPaddockError(result.reason);
+      }
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
     }
-  }, [
-    actions,
-    canManagePaddocks,
-    closeModal,
-    draft.horsesText,
-    draft.id,
-    draft.image,
-    draft.name,
-    draft.season,
-    state.currentStableId,
-    toast,
-  ]);
-
-  const handleDelete = React.useCallback(() => {
-    if (!canManagePaddocks) {
-      toast.showToast('Behörighet saknas för att ta bort hagar.', 'error');
-      return;
-    }
-    if (!draft.id) {
-      return;
-    }
-    Alert.alert('Ta bort hage?', 'Detta går inte att ångra.', [
-      { text: 'Avbryt', style: 'cancel' },
-      {
-        text: 'Ta bort',
-        style: 'destructive',
-        onPress: () => {
-          const result = actions.deletePaddock(draft.id!);
-          if (result.success) {
-            toast.showToast('Hagen togs bort.', 'success');
-            closeModal();
-          } else {
-            toast.showToast(result.reason, 'error');
-          }
-        },
-      },
-    ]);
-  }, [actions, canManagePaddocks, closeModal, draft.id, toast]);
+  }, [actions, canManagePaddocks, draft.id, toast]);
 
   const handlePrint = React.useCallback(async () => {
     if (paddocks.length === 0) {
@@ -392,7 +434,7 @@ export default function PaddocksScreen() {
   }, []);
 
   const title = draft.id ? 'Redigera hage' : 'Ny hage';
-  const canSave = canManagePaddocks && draft.name.trim().length > 0;
+  const canSave = canManagePaddocks && !paddockPending && draft.name.trim().length > 0;
   const wrapDesktop = (content: React.ReactNode) => {
     if (!isDesktopWeb) {
       return content;
@@ -457,6 +499,7 @@ export default function PaddocksScreen() {
               ]}
               showsVerticalScrollIndicator={false}
             >
+              <DataSyncStatus />
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
                 <View style={[styles.desktopPanel, isDesktopWeb && styles.desktopPanelDesktop, stickyPanelStyle]}>
                   <Card tone="muted" style={styles.infoCard}>
@@ -517,9 +560,16 @@ export default function PaddocksScreen() {
                           <Text style={styles.statusGroupTitle}>{paddockName}</Text>
                           {group.map((horse) => {
                             const status = statusByHorseId.get(horse.id);
+                            const isSaving = savingStatusIds.has(horse.id);
                             return (
                               <View key={horse.id} style={styles.statusHorseRow}>
-                                <Text style={styles.statusHorseName}>{horse.name}</Text>
+                                <View>
+                                  <Text style={styles.statusHorseName}>{horse.name}</Text>
+                                  {isSaving ? <Text accessibilityLiveRegion="polite">Sparar status…</Text> : null}
+                                  {statusErrors[horse.id] ? (
+                                    <Text style={{ color: palette.error }}>{statusErrors[horse.id]}</Text>
+                                  ) : null}
+                                </View>
                                 {isLoose ? (
                                   <View style={styles.statusToggleGroup}>
                                     {([
@@ -540,7 +590,11 @@ export default function PaddocksScreen() {
                                             canUpdateHorseStatus && handleToggleLooseFlag(horse.id, option.id)
                                           }
                                           activeOpacity={0.85}
-                                          disabled={!canUpdateHorseStatus}
+                                          disabled={!canUpdateHorseStatus || isSaving}
+                                          accessibilityRole="checkbox"
+                                          accessibilityLabel={`${horse.name}: ${option.label}`}
+                                          accessibilityState={{ checked: Boolean(active), disabled: !canUpdateHorseStatus || isSaving }}
+                                          aria-checked={Boolean(active)}
                                         >
                                           <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
                                             {option.label}
@@ -569,7 +623,11 @@ export default function PaddocksScreen() {
                                                 handleSetInOutStatus(horse.id, 'dayStatus', value)
                                               }
                                               activeOpacity={0.85}
-                                              disabled={!canUpdateHorseStatus}
+                                              disabled={!canUpdateHorseStatus || isSaving}
+                                              accessibilityRole="button"
+                                              accessibilityLabel={`${horse.name}, dag: ${value === 'in' ? 'Inne' : 'Ute'}`}
+                                              aria-pressed={active}
+                                              accessibilityState={{ selected: active, disabled: !canUpdateHorseStatus || isSaving }}
                                             >
                                               <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
                                                 {value === 'in' ? 'Inne' : 'Ute'}
@@ -597,7 +655,11 @@ export default function PaddocksScreen() {
                                                 handleSetInOutStatus(horse.id, 'nightStatus', value)
                                               }
                                               activeOpacity={0.85}
-                                              disabled={!canUpdateHorseStatus}
+                                              disabled={!canUpdateHorseStatus || isSaving}
+                                              accessibilityRole="button"
+                                              accessibilityLabel={`${horse.name}, natt: ${value === 'in' ? 'Inne' : 'Ute'}`}
+                                              aria-pressed={active}
+                                              accessibilityState={{ selected: active, disabled: !canUpdateHorseStatus || isSaving }}
                                             >
                                               <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
                                                 {value === 'in' ? 'Inne' : 'Ute'}
@@ -671,14 +733,116 @@ export default function PaddocksScreen() {
               </View>
             </ScrollView>
 
-        <Modal visible={modalState.visible} animationType="slide" transparent onRequestClose={closeModal}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}
-          >
+            {Platform.OS === 'web' && modalState.visible ? (
+              <KeyboardAvoidingView
+                behavior={undefined}
+                style={[
+                  styles.modalOverlay,
+                  isDesktopWeb && styles.modalOverlayDesktop,
+                  webPaddockModalOverlayStyle as any,
+                ]}
+              >
+                <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
+                <View
+                  style={[
+                    styles.modalSheet,
+                    isDesktopWeb && styles.modalSheetDesktop,
+                    webPaddockModalSheetStyle as any,
+                  ]}
+                >
+                  <Text style={styles.modalTitle}>{title}</Text>
+                  {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
+                  {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Namn</Text>
+                    <TextInput
+                      value={draft.name}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, name: value }))}
+                      placeholder="Ex. Hage 3, Gräshage, Paddock vid ridhuset"
+                      placeholderTextColor={palette.mutedText}
+                      style={styles.textInput}
+                      autoCorrect={false}
+                      editable={canManagePaddocks && !paddockPending}
+                    />
+                  </View>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Hästar</Text>
+                    <TextInput
+                      value={draft.horsesText}
+                      onChangeText={(value) => setDraft((prev) => ({ ...prev, horsesText: value }))}
+                      placeholder={'En häst per rad\nEx.\nCinder\nAtlas'}
+                      placeholderTextColor={palette.mutedText}
+                      style={[styles.textInput, styles.horsesInput]}
+                      multiline
+                      numberOfLines={5}
+                      textAlignVertical="top"
+                      editable={canManagePaddocks && !paddockPending}
+                    />
+                    <Text style={styles.formHint}>Tips: Du kan även separera med komma.</Text>
+                  </View>
+                  <View style={styles.formSection}>
+                    <Text style={styles.formLabel}>Säsong</Text>
+                    <View style={styles.chipRow}>
+                      {([
+                        { id: 'yearRound', label: 'Året runt' },
+                        { id: 'summer', label: 'Sommar' },
+                        { id: 'winter', label: 'Vinter' },
+                      ] as const).map((option) => {
+                        const active = draft.season === option.id;
+                        return (
+                          <TouchableOpacity
+                            key={option.id}
+                            style={[styles.chip, active && styles.chipActive]}
+                            onPress={
+                              canManagePaddocks
+                                ? () => setDraft((prev) => ({ ...prev, season: option.id }))
+                                : undefined
+                            }
+                            activeOpacity={0.85}
+                            disabled={!canManagePaddocks || Boolean(paddockPending)}
+                          >
+                            <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                  {draft.id && canManagePaddocks ? (
+                    <TouchableOpacity style={styles.deleteButton} disabled={Boolean(paddockPending)} onPress={handleDelete} activeOpacity={0.85}>
+                      <Text style={styles.deleteButtonLabel}>Ta bort hage</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity style={styles.secondaryButton} disabled={Boolean(paddockPending)} onPress={closeModal} activeOpacity={0.85}>
+                      <Text style={styles.secondaryButtonLabel}>Avbryt</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.primaryButton,
+                        !canSave && styles.primaryButtonDisabled,
+                      ]}
+                      onPress={canManagePaddocks ? handleSave : undefined}
+                      disabled={!canSave}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={styles.primaryButtonLabel}>Spara</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </KeyboardAvoidingView>
+            ) : null}
+
+        {Platform.OS !== 'web' && modalState.visible ? (
+          <Modal visible={modalState.visible} animationType="slide" transparent onRequestClose={closeModal}>
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              style={[styles.modalOverlay, isDesktopWeb && styles.modalOverlayDesktop]}
+            >
                 <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={closeModal} />
                 <View style={[styles.modalSheet, isDesktopWeb && styles.modalSheetDesktop]}>
                   <Text style={styles.modalTitle}>{title}</Text>
+                  {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
+                  {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
 
                   <View style={styles.formSection}>
                     <Text style={styles.formLabel}>Namn</Text>
@@ -689,7 +853,7 @@ export default function PaddocksScreen() {
                       placeholderTextColor={palette.mutedText}
                       style={styles.textInput}
                       autoCorrect={false}
-                      editable={canManagePaddocks}
+                      editable={canManagePaddocks && !paddockPending}
                     />
                   </View>
 
@@ -704,7 +868,7 @@ export default function PaddocksScreen() {
                   multiline
                   numberOfLines={5}
                   textAlignVertical="top"
-                  editable={canManagePaddocks}
+                  editable={canManagePaddocks && !paddockPending}
                 />
                 <Text style={styles.formHint}>Tips: Du kan även separera med komma.</Text>
               </View>
@@ -728,7 +892,7 @@ export default function PaddocksScreen() {
                             : undefined
                         }
                         activeOpacity={0.85}
-                        disabled={!canManagePaddocks}
+                        disabled={!canManagePaddocks || Boolean(paddockPending)}
                       >
                         <Text style={[styles.chipLabel, active && styles.chipLabelActive]}>{option.label}</Text>
                       </TouchableOpacity>
@@ -753,7 +917,7 @@ export default function PaddocksScreen() {
                     style={[styles.imageButton, !canManagePaddocks && styles.imageButtonDisabled]}
                     onPress={canManagePaddocks ? handlePickFromLibrary : undefined}
                     activeOpacity={0.85}
-                    disabled={!canManagePaddocks}
+                    disabled={!canManagePaddocks || Boolean(paddockPending)}
                   >
                     <Feather name="upload" size={14} color={palette.primaryText} />
                     <Text style={styles.imageButtonLabel}>Välj bild</Text>
@@ -762,7 +926,7 @@ export default function PaddocksScreen() {
                     style={[styles.imageButton, !canManagePaddocks && styles.imageButtonDisabled]}
                     onPress={canManagePaddocks ? handleTakePhoto : undefined}
                     activeOpacity={0.85}
-                    disabled={!canManagePaddocks}
+                    disabled={!canManagePaddocks || Boolean(paddockPending)}
                   >
                     <Feather name="camera" size={14} color={palette.primaryText} />
                     <Text style={styles.imageButtonLabel}>Ta foto</Text>
@@ -775,7 +939,7 @@ export default function PaddocksScreen() {
                       ]}
                       onPress={canManagePaddocks ? handleClearImage : undefined}
                       activeOpacity={0.85}
-                      disabled={!canManagePaddocks}
+                      disabled={!canManagePaddocks || Boolean(paddockPending)}
                     >
                       <Feather name="x" size={14} color={palette.error} />
                       <Text style={styles.imageButtonDangerLabel}>Ta bort</Text>
@@ -785,13 +949,13 @@ export default function PaddocksScreen() {
               </View>
 
               {draft.id && canManagePaddocks ? (
-                <TouchableOpacity style={styles.deleteButton} onPress={handleDelete} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.deleteButton} disabled={Boolean(paddockPending)} onPress={handleDelete} activeOpacity={0.85}>
                   <Text style={styles.deleteButtonLabel}>Ta bort hage</Text>
                 </TouchableOpacity>
               ) : null}
 
               <View style={styles.modalActions}>
-                <TouchableOpacity style={styles.secondaryButton} onPress={closeModal} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.secondaryButton} disabled={Boolean(paddockPending)} onPress={closeModal} activeOpacity={0.85}>
                   <Text style={styles.secondaryButtonLabel}>Avbryt</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -807,8 +971,9 @@ export default function PaddocksScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          </KeyboardAvoidingView>
-        </Modal>
+            </KeyboardAvoidingView>
+          </Modal>
+        ) : null}
           </>
         )}
       </SafeAreaView>
@@ -1000,8 +1165,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   statusChipActive: {
-    backgroundColor: 'rgba(45,108,246,0.12)',
-    borderColor: 'rgba(45,108,246,0.3)',
+    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: 'rgba(62,155,95,0.3)',
   },
   statusChipDisabled: { opacity: 0.5 },
   statusChipText: { fontSize: 11, fontWeight: '600', color: palette.primaryText },
@@ -1135,8 +1300,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   chipActive: {
-    backgroundColor: 'rgba(45,108,246,0.1)',
-    borderColor: 'rgba(45,108,246,0.26)',
+    backgroundColor: 'rgba(62,155,95,0.1)',
+    borderColor: 'rgba(62,155,95,0.26)',
   },
   chipLabel: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   chipLabelActive: { color: palette.primary },

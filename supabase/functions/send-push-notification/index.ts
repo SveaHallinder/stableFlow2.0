@@ -7,7 +7,7 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
 );
 
-type NotificationType = "message" | "assignment" | "post";
+type NotificationType = "message" | "assignment" | "post" | "alert";
 
 interface WebhookPayload {
   type: NotificationType;
@@ -145,35 +145,40 @@ async function handleAssignment(
 
 // Handle new feed post
 async function handlePost(record: Record<string, unknown>): Promise<ExpoPushMessage[]> {
-  const stableId = record.stable_id as string | null;
-  const authorId = record.user_id as string;
+  // Phase 6: normal feed posts do not push. Feed stays social; alerts carry urgency.
+  return [];
+}
 
-  if (!stableId) return [];
+async function handleAlert(record: Record<string, unknown>): Promise<ExpoPushMessage[]> {
+  const stableId = record.stable_id as string | null;
+  const authorId = record.created_by_user_id as string | null;
+  const severity = record.severity as string | null;
+
+  if (!stableId || severity === "info") return [];
 
   // Get all stable members except the author
-  const { data: members } = await supabase
+  let query = supabase
     .from("stable_members")
     .select("user_id")
-    .eq("stable_id", stableId)
-    .neq("user_id", authorId);
+    .eq("stable_id", stableId);
+  if (authorId) {
+    query = query.neq("user_id", authorId);
+  }
+  const { data: members } = await query;
 
   const recipientIds = (members ?? []).map((m) => m.user_id);
-  const tokens = await getEligibleTokens(recipientIds, "feed");
+  const tokens = await getEligibleTokens(recipientIds, "reminders");
   if (!tokens.length) return [];
 
-  const authorName = await getUserName(authorId);
-  const content = record.content as string | null;
-  const body = content
-    ? content.length > 80
-      ? content.slice(0, 77) + "..."
-      : content
-    : "Nytt inlägg i flödet";
+  const title = record.title as string | null;
+  const body = (record.body as string | null) || title || "Ny viktig notis";
+  const notificationTitle = severity === "urgent" ? "Akut i stallet" : "Viktigt i stallet";
 
   return tokens.map((to) => ({
     to,
-    title: `${authorName} publicerade`,
+    title: notificationTitle,
     body,
-    data: { screen: "feed" },
+    data: { screen: "home" },
     sound: "default" as const,
     channelId: "default",
   }));
@@ -219,6 +224,9 @@ Deno.serve(async (req) => {
         break;
       case "post":
         messages = await handlePost(payload.record);
+        break;
+      case "alert":
+        messages = await handleAlert(payload.record);
         break;
     }
 

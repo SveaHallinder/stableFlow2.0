@@ -16,7 +16,13 @@ import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { Card } from '@/components/Primitives';
 import { supabase, supabaseConfig } from '@/lib/supabase';
-import { savePendingJoinCode } from '@/lib/pendingAuth';
+import {
+  savePendingJoinCode,
+  savePendingOwnerStable,
+  clearPendingOwnerStable,
+} from '@/lib/pendingAuth';
+import { generateId } from '@/lib/ids';
+import { authRedirectUrl } from '@/lib/authRedirect';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -24,26 +30,40 @@ import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 const palette = theme.colors;
 
 type AuthMode = 'login' | 'signup';
+type SignupIntent = 'create' | 'join';
 
 export default function AuthScreen() {
   const router = useRouter();
   const toast = useToast();
   const isDesktop = useIsDesktopWeb();
   const [mode, setMode] = React.useState<AuthMode>('login');
+  const [signupIntent, setSignupIntent] = React.useState<SignupIntent>('create');
   const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [inviteCode, setInviteCode] = React.useState('');
+  const [stableName, setStableName] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  // When signup needs email confirmation, we show a dedicated panel instead of
+  // stranding the user on the login form.
+  const [pendingConfirmEmail, setPendingConfirmEmail] = React.useState<string | null>(null);
+  const [resending, setResending] = React.useState(false);
 
-  const roleHintLines = [
-    'Du behöver en inbjudningskod från en medlem.',
-    'Koden kopplar dig till rätt stall efter signup.',
-  ];
+  const roleHintLines =
+    signupIntent === 'create'
+      ? [
+          'Du skapar ditt eget stall och blir ägare.',
+          'Du bjuder in personal och hästägare efteråt.',
+        ]
+      : [
+          'Du behöver en inbjudningskod från en medlem.',
+          'Koden kopplar dig till rätt stall efter signup.',
+        ];
 
   React.useEffect(() => {
     if (mode === 'login') {
       setInviteCode('');
+      setStableName('');
     }
   }, [mode]);
 
@@ -53,7 +73,9 @@ export default function AuthScreen() {
       : name.trim().length > 0 &&
         email.trim().length > 0 &&
         password.trim().length > 0 &&
-        inviteCode.trim().length > 0;
+        (signupIntent === 'create'
+          ? stableName.trim().length > 0
+          : inviteCode.trim().length > 0);
 
   const handleSubmit = React.useCallback(async () => {
     if (!canSubmit) {
@@ -79,6 +101,7 @@ export default function AuthScreen() {
     const trimmedEmail = email.trim();
     const trimmedName = name.trim();
     const trimmedInviteCode = inviteCode.trim();
+    const trimmedStableName = stableName.trim();
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({
         email: trimmedEmail,
@@ -94,6 +117,70 @@ export default function AuthScreen() {
         toast.showToast('Välkommen!', 'success');
       }
       setSubmitting(false);
+      return;
+    }
+
+    // Self-serve owner signup: no invite code. We stash the new stable so it is
+    // created (with an owner membership) on the first authenticated hydration,
+    // then the onboarding wizard takes over to finish resources/horses.
+    if (signupIntent === 'create') {
+      const stableId = generateId();
+      // Persist BEFORE signUp (so the immediate-session hydration finds it without a
+      // race) and bind it to this email. Abort if it can't be stored — otherwise we'd
+      // create an account with no stable to claim.
+      const stableSaved = await savePendingOwnerStable({
+        id: stableId,
+        name: trimmedStableName,
+        email: trimmedEmail,
+      });
+      if (!stableSaved) {
+        toast.showToast('Kunde inte förbereda stallet. Försök igen.', 'error');
+        setSubmitting(false);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email: trimmedEmail,
+        password,
+        options: {
+          emailRedirectTo: authRedirectUrl('confirm'),
+          data: {
+            username: trimmedName,
+            full_name: trimmedName,
+          },
+        },
+      });
+
+      if (error) {
+        await clearPendingOwnerStable();
+        const message =
+          error.message === 'Network request failed'
+            ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+            : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
+        toast.showToast(message, 'error');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!data.user || !data.session) {
+        // Email confirmation required. The pending stable is kept and created
+        // on the first login after the user confirms their address.
+        setPendingConfirmEmail(trimmedEmail);
+        setSubmitting(false);
+        return;
+      }
+
+      const profileUpdate = await supabase
+        .from('profiles')
+        .update({ full_name: trimmedName, username: trimmedName })
+        .eq('id', data.user.id);
+      if (profileUpdate.error) {
+        console.warn('Kunde inte uppdatera profil', profileUpdate.error);
+      }
+
+      toast.showToast('Kontot är skapat. Nu sätter vi upp ditt stall.', 'success');
+      setSubmitting(false);
+      router.replace('/');
       return;
     }
 
@@ -116,6 +203,7 @@ export default function AuthScreen() {
       email: trimmedEmail,
       password,
       options: {
+        emailRedirectTo: authRedirectUrl('confirm'),
         data: {
           username: trimmedName,
           full_name: trimmedName,
@@ -135,7 +223,7 @@ export default function AuthScreen() {
 
     if (!data.user || !data.session) {
       await savePendingJoinCode(trimmedInviteCode);
-      toast.showToast('Kontot är skapat. Kontrollera din epost för att aktivera.', 'success');
+      setPendingConfirmEmail(trimmedEmail);
       setSubmitting(false);
       return;
     }
@@ -177,6 +265,8 @@ export default function AuthScreen() {
     canSubmit,
     email,
     inviteCode,
+    stableName,
+    signupIntent,
     mode,
     name,
     password,
@@ -188,6 +278,30 @@ export default function AuthScreen() {
   const handleForgotPassword = React.useCallback(() => {
     router.push('/(auth)/forgot-password');
   }, [router]);
+
+  const handleResendConfirmation = React.useCallback(async () => {
+    if (!pendingConfirmEmail || resending) {
+      return;
+    }
+    setResending(true);
+    const { error } = await supabase.auth.resend({
+      type: 'signup',
+      email: pendingConfirmEmail,
+      options: { emailRedirectTo: authRedirectUrl('confirm') },
+    });
+    if (error) {
+      toast.showToast('Kunde inte skicka igen. Försök om en stund.', 'error');
+    } else {
+      toast.showToast('Bekräftelsemejl skickat igen.', 'success');
+    }
+    setResending(false);
+  }, [pendingConfirmEmail, resending, toast]);
+
+  const handleBackToLogin = React.useCallback(() => {
+    setPendingConfirmEmail(null);
+    setMode('login');
+    setPassword('');
+  }, []);
 
   const modeLabel = mode === 'login' ? 'Logga in' : 'Skapa konto';
 
@@ -267,10 +381,45 @@ export default function AuthScreen() {
         <Text style={[styles.title, isDesktop && styles.titleDesktop]}>{modeLabel}</Text>
         {mode === 'signup' ? (
           <Text style={[styles.helperText, isDesktop && styles.helperTextDesktop]}>
-            Skapa konto med en inbjudningskod från en medlem.
+            {signupIntent === 'create'
+              ? 'Starta ett nytt stall och bli ägare.'
+              : 'Gå med i ett befintligt stall med en inbjudningskod.'}
           </Text>
         ) : null}
       </View>
+
+      {mode === 'signup' ? (
+        <View style={[styles.modeRow, isDesktop && styles.modeRowDesktop]}>
+          {(['create', 'join'] as const).map((id) => {
+            const active = signupIntent === id;
+            return (
+              <TouchableOpacity
+                key={id}
+                onPress={() => setSignupIntent(id)}
+                style={[
+                  styles.modeChip,
+                  isDesktop && styles.modeChipDesktop,
+                  active && styles.modeChipActive,
+                ]}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={id === 'create' ? 'Skapa eget stall' : 'Har inbjudningskod'}
+                accessibilityState={{ selected: active }}
+              >
+                <Text
+                  style={[
+                    styles.modeChipText,
+                    isDesktop && styles.modeChipTextDesktop,
+                    active && styles.modeChipTextActive,
+                  ]}
+                >
+                  {id === 'create' ? 'Skapa stall' : 'Har kod'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
 
       {mode === 'signup' ? (
         <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
@@ -335,7 +484,20 @@ export default function AuthScreen() {
         ) : null}
       </View>
 
-      {mode === 'signup' ? (
+      {mode === 'signup' && signupIntent === 'create' ? (
+        <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
+          <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Stallets namn</Text>
+          <TextInput
+            value={stableName}
+            onChangeText={setStableName}
+            placeholder="T.ex. Soltorps Ridklubb"
+            placeholderTextColor={palette.secondaryText}
+            style={[styles.input, isDesktop && styles.inputDesktop]}
+          />
+        </View>
+      ) : null}
+
+      {mode === 'signup' && signupIntent === 'join' ? (
         <View style={[styles.field, isDesktop && styles.fieldDesktop]}>
           <Text style={[styles.label, isDesktop && styles.labelDesktop]}>Inbjudningskod</Text>
           <TextInput
@@ -375,6 +537,44 @@ export default function AuthScreen() {
     </Card>
   );
 
+  const confirmCard = (
+    <Card elevated style={[styles.card, isDesktop && styles.cardDesktop]}>
+      <View style={styles.formHeader}>
+        <Text style={[styles.title, isDesktop && styles.titleDesktop]}>Bekräfta din e-post</Text>
+        <Text style={[styles.helperText, isDesktop && styles.helperTextDesktop]}>
+          {`Vi har skickat en bekräftelselänk till ${pendingConfirmEmail ?? 'din e-post'}. Öppna den för att aktivera kontot och logga sedan in.`}
+        </Text>
+      </View>
+      <TouchableOpacity
+        style={[
+          styles.primaryButton,
+          isDesktop && styles.primaryButtonDesktop,
+          resending && styles.primaryButtonDisabled,
+        ]}
+        onPress={handleResendConfirmation}
+        activeOpacity={0.9}
+        disabled={resending}
+        accessibilityRole="button"
+        accessibilityLabel="Skicka bekräftelsemejl igen"
+        accessibilityState={{ disabled: resending }}
+      >
+        <Text style={[styles.primaryButtonText, isDesktop && styles.primaryButtonTextDesktop]}>
+          {resending ? 'Skickar...' : 'Skicka igen'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        onPress={handleBackToLogin}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Till inloggning"
+      >
+        <Text style={[styles.footerText, isDesktop && styles.footerTextDesktop]}>
+          Till inloggning
+        </Text>
+      </TouchableOpacity>
+    </Card>
+  );
+
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
@@ -390,12 +590,12 @@ export default function AuthScreen() {
             {isDesktop ? (
               <View style={styles.desktopLayout}>
                 {heroPanel}
-                {formCard}
+                {pendingConfirmEmail ? confirmCard : formCard}
               </View>
             ) : (
               <>
                 {heroPanel}
-                {formCard}
+                {pendingConfirmEmail ? confirmCard : formCard}
               </>
             )}
           </ScrollView>
@@ -509,7 +709,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(45, 108, 246, 0.4)',
+    backgroundColor: 'rgba(62, 155, 95, 0.4)',
   },
   heroListDotDesktop: {
     width: 7,

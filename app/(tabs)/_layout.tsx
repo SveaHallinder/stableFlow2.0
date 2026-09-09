@@ -1,7 +1,9 @@
 import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
-import { ActivityIndicator, View, StyleSheet, Platform } from 'react-native';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAuth } from '@/context/AuthContext';
@@ -25,6 +27,7 @@ const radii = theme.radii;
 export default function TabLayout() {
   const { session, loading } = useAuth();
   const isDesktopWeb = useIsDesktopWeb();
+  const insets = useSafeAreaInsets();
   const searchParams = useGlobalSearchParams();
   const fromOnboardingRaw = searchParams.fromOnboarding;
   const fromOnboarding = Array.isArray(fromOnboardingRaw)
@@ -42,25 +45,29 @@ export default function TabLayout() {
 
   const tabs = (
     <Tabs
+      safeAreaInsets={{ bottom: 0 }}
       screenOptions={{
         headerShown: false,
         tabBarStyle: hideTabs
           ? styles.tabBarHidden
           : isDesktopWeb
             ? [styles.tabBar, styles.tabBarHidden]
-            : styles.tabBar,
+            : [styles.tabBar, { bottom: Math.max(20, insets.bottom) }],
         tabBarBackground: isDesktopWeb
           ? undefined
           : () => <BlurView intensity={12.5} style={styles.blurBackground} />,
         tabBarActiveTintColor: palette.icon,
         tabBarInactiveTintColor: palette.secondaryText,
         tabBarItemStyle: styles.tabBarItem,
-        tabBarShowLabel: false,
+        tabBarShowLabel: true,
+        tabBarLabelPosition: 'below-icon',
+        tabBarLabelStyle: styles.tabBarLabel,
       }}>
       <Tabs.Screen
         name="index"
         options={{
-          tabBarAccessibilityLabel: 'Överblick',
+          title: 'Idag',
+          tabBarAccessibilityLabel: 'Idag',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <DashFillIcon width={23} height={25} />
@@ -71,8 +78,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="stable-horses"
+        options={{
+          title: 'Hästar',
+          tabBarAccessibilityLabel: 'Hästar',
+          tabBarIcon: ({ color }) => (
+            <MaterialCommunityIcons name="horse-variant" size={25} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="calendar"
         options={{
+          title: 'Schema',
           tabBarAccessibilityLabel: 'Schema',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
@@ -86,7 +104,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="feed"
         options={{
-          tabBarAccessibilityLabel: 'Inlägg',
+          title: 'Feed',
+          tabBarAccessibilityLabel: 'Feed',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <HomeFillIcon width={24} height={24} />
@@ -99,7 +118,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="messages"
         options={{
-          tabBarAccessibilityLabel: 'Meddelanden',
+          title: 'Chat',
+          tabBarAccessibilityLabel: 'Chat',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
               <MessageFillIcon width={25} height={25} />
@@ -112,6 +132,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
+          href: null,
           tabBarAccessibilityLabel: 'Profil',
           tabBarIcon: ({ color, focused }) => (
             focused ? (
@@ -145,10 +166,11 @@ const styles = StyleSheet.create({
     bottom: 20,
     marginLeft: 20,
     marginRight: 20,
-    paddingTop: 5,
+    paddingTop: 0,
+    paddingBottom: 0,
     alignItems: 'center',
-    height: 60,
-    backgroundColor: 'rgba(224, 224, 224, 0.25)',
+    height: 72,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
     borderWidth: 1.5,
     borderRadius: radii.full,
     borderColor: palette.border,
@@ -166,12 +188,17 @@ const styles = StyleSheet.create({
     borderRadius: radii.full,
   },
   tabBarItem: {
-    paddingVertical: 8,
+    paddingVertical: 6,
     paddingHorizontal: 0,
-    minHeight: 25,
+    minHeight: 56,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
+  },
+  tabBarLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 3,
   },
   tabBarHidden: {
     display: 'none',
@@ -188,7 +215,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: 'rgba(27, 30, 47, 0.06)',
-    backgroundColor: '#FBFCFE',
+    backgroundColor: '#FFFFFF',
     shadowColor: 'rgba(15,22,34,0.04)',
     shadowOpacity: 0.06,
     shadowRadius: 20,
@@ -198,6 +225,6 @@ const styles = StyleSheet.create({
   desktopMain: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: '#F8FAFD',
+    backgroundColor: '#FBFCFB',
   },
 });

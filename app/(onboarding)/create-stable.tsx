@@ -8,7 +8,6 @@ import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
-import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
 
@@ -19,98 +18,45 @@ export default function OnboardingStables() {
   const returnToParam = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
   const returnTo: Href =
     returnToParam && returnToParam.startsWith('/') ? (returnToParam as Href) : '/(onboarding)/setup';
-  const { actions, state } = useAppData();
+  const { actions } = useAppData();
 
   const [draft, setDraft] = React.useState({ name: '', location: '' });
   const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false);
+  const stableIdRef = React.useRef<string | null>(null);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
 
   const handleBack = React.useCallback(() => {
+    if (savingRef.current) return;
     router.replace(returnTo);
   }, [router, returnTo]);
 
   const handleCreateStable = React.useCallback(async () => {
-    if (saving) {
-      return;
-    }
+    if (savingRef.current) return;
     const name = draft.name.trim();
-    if (!name) {
-      toast.showToast('Stallnamn krävs.', 'error');
-      return;
-    }
+    if (!name) { setSaveError('Stallnamn krävs.'); return; }
+    savingRef.current = true;
     setSaving(true);
+    setSaveError(null);
+    stableIdRef.current ??= generateId();
     try {
-      let userId = state.currentUserId;
-      if (!userId) {
-        const userResult = await supabase.auth.getUser();
-        userId = userResult.data.user?.id ?? '';
-      }
-      if (!userId) {
-        toast.showToast('Du måste logga in igen.', 'error');
-        return;
-      }
-
-      const stableId = generateId();
-      const location = draft.location.trim();
-      const stablePayload = {
-        id: stableId,
-        name,
-        description: null,
-        location: location || null,
-        farm_id: null,
-        created_by: userId,
-        ride_types: [],
-        settings: null,
-      };
-      const stableInsert = await supabase.from('stables').insert(stablePayload);
-      if (stableInsert.error) {
-        toast.showToast(`Kunde inte skapa stall. ${stableInsert.error.message}`, 'error');
-        return;
-      }
-
-      const memberPayload = {
-        stable_id: stableId,
-        user_id: userId,
-        role: 'admin',
-        access: 'owner',
-        rider_role: 'owner',
-      };
-      const memberInsert = await supabase.from('stable_members').insert(memberPayload);
-      if (memberInsert.error) {
-        toast.showToast(`Kunde inte koppla admin till stallet. ${memberInsert.error.message}`, 'error');
-        return;
-      }
-
-      const conversationPayload = {
-        stable_id: stableId,
-        title: name,
-        is_group: true,
-        created_by_user_id: userId,
-      };
-      const conversationInsert = await supabase.from('conversations').insert(conversationPayload);
-      if (conversationInsert.error && conversationInsert.error.code !== '23505') {
-        toast.showToast('Kunde inte skapa stallchatten.', 'error');
-      }
-
-      const result = actions.upsertStable(
-        {
-          id: stableId,
-          name,
-          location: location || undefined,
-        },
-        { skipPersist: true, skipPermission: true },
-      );
+      const result = await actions.upsertStable({
+        requestId: stableIdRef.current, name, location: draft.location.trim() || undefined,
+      }, { skipPermission: true });
       if (!result.success || !result.data) {
-        toast.showToast(result.success ? 'Kunde inte skapa stall.' : result.reason, 'error');
+        setSaveError(result.success ? 'Servern bekräftade inte stallet. Försök igen.' : result.reason);
         return;
       }
-      actions.setCurrentStable(stableId);
+      actions.setCurrentStable(result.data.id);
       toast.showToast('Stall skapat.', 'success');
       setDraft({ name: '', location: '' });
+      stableIdRef.current = null;
       router.replace(returnTo);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [actions, draft.location, draft.name, router, saving, state.currentUserId, toast, returnTo]);
+  }, [actions, draft.location, draft.name, router, toast, returnTo]);
 
   return (
     <OnboardingShell
@@ -124,10 +70,12 @@ export default function OnboardingStables() {
     >
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Stall</Text>
+        {saveError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text> : null}
         <View style={styles.form}>
           <TextInput
             placeholder="Stallnamn"
             placeholderTextColor={palette.mutedText}
+            editable={!saving}
             value={draft.name}
             onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
             style={styles.input}
@@ -135,6 +83,7 @@ export default function OnboardingStables() {
           <TextInput
             placeholder="Plats (valfritt)"
             placeholderTextColor={palette.mutedText}
+            editable={!saving}
             value={draft.location}
             onChangeText={(text) => setDraft((prev) => ({ ...prev, location: text }))}
             style={styles.input}
