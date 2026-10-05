@@ -3501,6 +3501,7 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     padding: space.xs,
     width: '100%',
     alignItems: 'center',

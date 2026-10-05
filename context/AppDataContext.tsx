@@ -3889,6 +3889,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true, data: booking };
       } catch (error) {
         console.warn('[arena booking save] Kunde inte spara ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23P01') return { success: false, reason: 'Tiden blev bokad av någon annan. Uppdatera schemat och välj en annan tid. Dina uppgifter finns kvar.' };
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3916,6 +3919,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           purpose: data.purpose, note: data.note ?? undefined, bookedByUserId: data.booked_by_user_id } };
       } catch (error) {
         console.warn('[arena booking update] Kunde inte uppdatera ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23P01') return { success: false, reason: 'Tiden blev bokad av någon annan. Uppdatera schemat och välj en annan tid. Dina uppgifter finns kvar.' };
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte uppdateras. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3935,6 +3941,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true };
       } catch (error) {
         console.warn('[arena booking delete] Kunde inte ta bort ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4692,6 +4700,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         } };
       } catch (error) {
         console.warn('[member update] Kunde inte uppdatera medlem', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23514' && error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.startsWith('[last owner]')) {
+          return { success: false, reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.' };
+        }
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Medlemsändringen kunde inte sparas. Uppdatera eller försök igen.' };
       } finally {
         clearTimeout(timeout);
@@ -4716,6 +4729,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true };
       } catch (error) {
         console.warn('[member delete] Kunde inte ta bort medlem', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23514' && error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.startsWith('[last owner]')) {
+          return { success: false, reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.' };
+        }
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Medlemmen kunde inte tas bort. Uppdatera eller försök igen.' };
       } finally {
         clearTimeout(timeout);
@@ -4867,25 +4885,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
-        const pendingJoinCode = await loadPendingJoinCode();
+        const inviteResult = await supabase.rpc('accept_pending_invites');
+        if (inviteResult.error) {
+          console.warn('[invite accept] Kunde inte kontrollera inbjudningar', inviteResult.error);
+          return fail('Kunde inte kontrollera dina inbjudningar. Kontrollera anslutningen och försök igen.');
+        }
+
+        const pendingJoinCode = await loadPendingJoinCode(authEmail);
         if (pendingJoinCode) {
+          // Accept email roles first; a generic code cannot downgrade them via
+          // ON CONFLICT and may belong to a different stable. An email invite's
+          // own code is not a generic code, so discard only a confirmed invalid one.
           const joinResult = await supabase.rpc('accept_join_code', { p_code: pendingJoinCode });
           if (joinResult.error) {
-            console.warn('Kunde inte använda inbjudningskod', joinResult.error);
-            if (
-              typeof joinResult.error.message === 'string' &&
-              joinResult.error.message.includes('Invalid join code')
-            ) {
+            console.warn('[invite join] Kunde inte använda inbjudningskod', joinResult.error);
+            if (joinResult.error.message?.includes('Invalid join code')) {
               await clearPendingJoinCode();
+            } else {
+              return fail('Kunde inte gå med i stallet. Din kod finns kvar. Kontrollera anslutningen och försök igen.');
             }
           } else {
             await clearPendingJoinCode();
           }
-        }
-
-        const inviteResult = await supabase.rpc('accept_pending_invites');
-        if (inviteResult.error) {
-          console.warn('Kunde inte hämta inbjudan', inviteResult.error);
         }
 
         const membershipResult = await supabase
@@ -9118,8 +9139,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const { data, error } = await supabase.rpc('accept_join_code', { p_code: trimmed });
       const stableId = extractStableId(data);
       if (error || !stableId) {
-        console.warn('Kunde inte använda inbjudningskod', error);
-        return { success: false, reason: 'Inbjudningskoden är ogiltig.' };
+        console.warn('[invite join] Kunde inte använda inbjudningskod', error);
+        const reason = error?.message?.includes('Invalid join code')
+          ? 'Inbjudningskoden är ogiltig eller har gått ut. Kontrollera koden eller be om en ny kod.'
+          : 'Kunde inte gå med i stallet. Din kod finns kvar. Kontrollera anslutningen och försök igen.';
+        return { success: false, reason };
       }
       return { success: true, data: { stableId } };
     },
@@ -9130,12 +9154,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     async (): Promise<ActionResult<{ count: number }>> => {
       const { data, error } = await supabase.rpc('accept_pending_invites');
       if (error) {
-        console.warn('Kunde inte acceptera inbjudningar', error);
-        return { success: false, reason: 'Kunde inte acceptera inbjudningar.' };
+        console.warn('[invite accept] Kunde inte acceptera inbjudningar', error);
+        return { success: false, reason: 'Kunde inte acceptera inbjudningar. Kontrollera anslutningen och försök igen.' };
       }
       const count = typeof data === 'number' ? data : 0;
       if (count <= 0) {
-        return { success: false, reason: 'Ingen inbjudan hittades.' };
+        return { success: false, reason: 'Ingen giltig inbjudan hittades. Den kan redan vara accepterad eller ha gått ut. Uppdatera eller be om en ny inbjudan.' };
       }
       return { success: true, data: { count } };
     },
