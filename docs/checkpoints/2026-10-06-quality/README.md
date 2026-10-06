@@ -1,5 +1,9 @@
 # StableFlow: kvalitetskontroll 2026-10-06
 
+Detta är den tidigare kvalitetskontrollen. Den efterföljande
+[ID-implementationen för hagar](../2026-10-06-paddock-ids/README.md) ersätter
+dess kvarstående namnbytesfel i koden; driftaktiveringen redovisas separat där.
+
 Målet är en pilot där stallmedlemmar kan gå med, få rätt åtkomst och sköta dagens
 pass, hästar och hagar från dator eller telefon. Det nya kodpaketet är lokalt
 verifierat. Skarp release återstår tills namnbytesfelet och de externa
