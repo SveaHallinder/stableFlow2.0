@@ -179,7 +179,7 @@ export default function HorsesScreen() {
             ) : null}
             {!canEditHorses ? (
               <View style={styles.notice}>
-                <Text style={styles.noticeText}>Du kan läsa detta, men inte ändra.</Text>
+                <Text style={styles.noticeText}>Du kan läsa hästarnas grunduppgifter. För att ändra dem behöver du Redigera.</Text>
               </View>
             ) : null}
           </Card>
