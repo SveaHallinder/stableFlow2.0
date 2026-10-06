@@ -540,7 +540,11 @@ export type Paddock = {
   id: string;
   name: string;
   stableId: string;
-  horseNames: string[];
+  horseNames: (string | null)[];
+  horseIds: string[];
+  revision: number;
+  linksReady: boolean;
+  lastSaveRequestId?: string;
   image?: PaddockImage;
   updatedAt: string;
   season?: 'summer' | 'winter' | 'yearRound';
@@ -617,7 +621,8 @@ export type UserProfile = {
 export type UpsertPaddockInput = {
   id?: string;
   name: string;
-  horseNames: string[];
+  horseIds: string[];
+  expectedRevision: number | null;
   stableId: string;
   image?: PaddockImage | null;
   season?: Paddock['season'];
@@ -845,6 +850,7 @@ export type AppDataState = {
   arenaStatuses: ArenaStatus[];
   rideLogs: RideLogEntry[];
   paddocks: Paddock[];
+  paddockLinksReady: boolean;
   horseDayStatuses: HorseDayStatus[];
   horseResponsibilities: HorseResponsibility[];
   feedPlans: FeedPlanItem[];
@@ -921,6 +927,10 @@ type PaddockUpsertAction = {
 type PaddockDeleteAction = {
   type: 'PADDOCK_DELETE';
   payload: { id: string };
+};
+
+type PaddockLinksUnavailableAction = {
+  type: 'PADDOCK_LINKS_UNAVAILABLE';
 };
 
 type DayEventAddAction = {
@@ -1123,6 +1133,7 @@ type AppDataAction =
   | UserUpsertAction
   | PaddockUpsertAction
   | PaddockDeleteAction
+  | PaddockLinksUnavailableAction
   | DayEventAddAction
   | DayEventDeleteAction
   | ArenaBookingAddAction
@@ -1228,7 +1239,7 @@ type AppDataContextValue = {
     resolveStableAlert: (alertId: string) => Promise<ActionResult<StableAlert>>;
     toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => Promise<ActionResult<UserProfile>>;
     upsertPaddock: (input: UpsertPaddockInput) => Promise<ActionResult<Paddock>>;
-    deletePaddock: (paddockId: string) => Promise<ActionResult>;
+    deletePaddock: (paddockId: string, expectedRevision: number) => Promise<ActionResult>;
     updateHorseDayStatus: (input: UpdateHorseDayStatusInput) => Promise<ActionResult<HorseDayStatus>>;
     upsertFeedPlan: (input: UpsertFeedPlanInput) => Promise<ActionResult<FeedPlanItem>>;
     deleteFeedPlan: (feedPlanId: string) => Promise<ActionResult>;
@@ -1525,6 +1536,7 @@ const initialState: AppDataState = {
   arenaStatuses: [],
   rideLogs: [],
   paddocks: [],
+  paddockLinksReady: false,
   horseDayStatuses: [],
   horseResponsibilities: [],
   feedPlans: [],
@@ -1652,10 +1664,14 @@ function createQaDemoState(): AppDataState {
         stableId,
         name: 'Vinterhagen',
         horseNames: ['Saga'],
+        horseIds: [horseId],
+        revision: 1,
+        linksReady: true,
         updatedAt: now,
         season: 'winter',
       },
     ],
+    paddockLinksReady: true,
     assignments: [
       {
         id: 'qa-assignment-open',
@@ -2181,6 +2197,9 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     case 'SESSION_CLEAR': {
       return { ...state, sessionUserId: null };
     }
+    case 'PADDOCK_LINKS_UNAVAILABLE': {
+      return { ...state, paddockLinksReady: false };
+    }
     case 'PADDOCK_UPSERT': {
       const existingIndex = state.paddocks.findIndex((paddock) => paddock.id === action.payload.id);
       if (existingIndex >= 0) {
@@ -2704,24 +2723,14 @@ function formatNextUpdate(assignments: Assignment[]) {
   })}`;
 }
 
-function normalizeHorseNames(names: string[]) {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  names.forEach((name) => {
-    const cleaned = name.trim();
-    if (!cleaned) {
-      return;
-    }
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    result.push(cleaned);
-  });
-
-  return result;
+async function fetchPaddocks(stableIds: string[]) {
+  const result = await supabase.from('paddocks').select('*, paddock_horses(horse_id)').in('stable_id', stableIds);
+  if (result.error && ['PGRST200', 'PGRST205', '42P01'].includes(result.error.code)) {
+    console.warn('[paddock load] ID-kopplingen är inte installerad', { code: result.error.code });
+    const legacy = await supabase.from('paddocks').select('*').in('stable_id', stableIds);
+    return { ...legacy, linksReady: false };
+  }
+  return { ...result, linksReady: !result.error };
 }
 
 function hasOwnProperty<T extends object>(target: T, key: keyof T) {
@@ -3038,6 +3047,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const refreshRequestId = React.useRef(0);
   const pendingDataWrites = React.useRef(new Set<string>());
+  const paddockSaveAttempts = React.useRef(new Map<string, {
+    signature: string;
+    requestId: string;
+    imageUrl?: Promise<string | null>;
+  }>());
   const dataWriteVersion = React.useRef(0);
   const defaultPassesStableId = React.useRef('');
   const autoAssignmentAttempts = React.useRef(new Map<string, string>());
@@ -3348,42 +3362,80 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistPaddockUpsert = React.useCallback(
-    async (paddock: Paddock, imageInput: PaddockImage | null | undefined, existing: boolean): Promise<ActionResult<Paddock>> => {
-      if (isQaDemoMode) return { success: true, data: paddock };
+    async (paddock: Paddock, imageInput: PaddockImage | null | undefined, expectedRevision: number | null,
+      attempt: { requestId: string; imageUrl?: Promise<string | null> }): Promise<ActionResult<Paddock>> => {
+      if (isQaDemoMode) {
+        const saved = stateRef.current.paddocks.find((item) => item.id === paddock.id);
+        if ((saved?.revision ?? null) !== expectedRevision) {
+          return { success: false, reason: 'Hagen har ändrats. Dina val finns kvar. Uppdatera hagen innan du sparar igen.' };
+        }
+        return { success: true, data: { ...paddock, revision: (expectedRevision ?? 0) + 1,
+          linksReady: true, lastSaveRequestId: attempt.requestId } };
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Sparningen kunde inte bekräftas.')), { once: true }));
+      let stage = 'image';
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const payload: Record<string, unknown> = {
-          id: paddock.id, stable_id: paddock.stableId, name: paddock.name,
-          horse_names: paddock.horseNames, season: paddock.season ?? 'yearRound', updated_at: paddock.updatedAt,
-        };
-        if (imageInput === null) {
-          payload.image_url = null;
-        } else if (imageInput) {
-          const uploadable = getUploadableImage(imageInput);
-          if (uploadable) {
-            payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
+        if (!attempt.imageUrl) {
+          attempt.imageUrl = (async () => {
+            if (imageInput === null) return null;
+            if (!imageInput) return paddock.image?.uri ?? null;
+            const uploadable = getUploadableImage(imageInput);
+            if (!uploadable) throw new Error('Bilden kunde inte förberedas.');
+            return isRemoteUri(uploadable.uri) ? uploadable.uri
               : (await uploadImageToStorage('paddocks', paddock.stableId, uploadable)).publicUrl;
-          }
+          })().catch((error) => { attempt.imageUrl = undefined; throw error; });
         }
-        const query = existing
-          ? supabase.from('paddocks').update(payload).eq('id', paddock.id).eq('stable_id', paddock.stableId)
-          : supabase.from('paddocks').upsert(payload);
-        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
-        if (error || data?.id !== paddock.id || data.stable_id !== paddock.stableId
-          || data.name !== paddock.name || JSON.stringify(data.horse_names) !== JSON.stringify(paddock.horseNames)
-          || data.season !== (paddock.season ?? 'yearRound')
-          || ('image_url' in payload && data.image_url !== payload.image_url)) {
-          throw error ?? new Error('Servern bekräftade inte hagen.');
+        const imageUrl = await Promise.race([attempt.imageUrl, aborted]);
+        stage = 'save';
+        const { data, error } = await Promise.race([
+          supabase.rpc('save_paddock', {
+            p_paddock_id: paddock.id, p_stable_id: paddock.stableId, p_name: paddock.name,
+            p_horse_ids: paddock.horseIds, p_season: paddock.season ?? 'yearRound',
+            p_image_url: imageUrl, p_expected_revision: expectedRevision, p_request_id: attempt.requestId,
+          }).abortSignal(controller.signal),
+          aborted,
+        ]);
+        if (error) throw error;
+        stage = 'acknowledgement';
+        if (data?.id !== paddock.id || data.stable_id !== paddock.stableId || data.name !== paddock.name
+          || data.request_id !== attempt.requestId || data.last_save_request_id !== attempt.requestId
+          || data.revision !== (expectedRevision ?? 0) + 1
+          || !Array.isArray(data.horse_ids)
+          || JSON.stringify([...data.horse_ids].sort()) !== JSON.stringify([...paddock.horseIds].sort())
+          || data.season !== (paddock.season ?? 'yearRound') || data.image_url !== imageUrl
+          || typeof data.updated_at !== 'string' || !Number.isFinite(Date.parse(data.updated_at))
+          || (data.horse_names !== null && (!Array.isArray(data.horse_names)
+            || data.horse_names.some((name: unknown) => name !== null && typeof name !== 'string')))) {
+          throw new Error('Servern bekräftade inte hagen och hästvalet.');
         }
         return { success: true, data: {
-          id: data.id, stableId: data.stable_id, name: data.name, horseNames: data.horse_names,
+          id: data.id, stableId: data.stable_id, name: data.name, horseNames: data.horse_names ?? [],
+          horseIds: data.horse_ids, revision: data.revision, linksReady: true,
+          lastSaveRequestId: data.last_save_request_id,
           season: data.season, updatedAt: data.updated_at,
           image: data.image_url ? { uri: data.image_url } : undefined,
         } };
       } catch (error) {
-        console.warn('[paddock save] Kunde inte spara hage', error);
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'client_error';
+        console.warn('[paddock save] Kunde inte spara hage', { code, stage });
+        if (code === '40001' || code === '40P01' || code === '55P03' || code === 'P0002') {
+          return { success: false, reason: 'Hagen har ändrats. Dina val finns kvar. Uppdatera hagen innan du sparar igen.' };
+        }
+        if (code === 'PGRST202' || code === '42883') {
+          dispatch({ type: 'PADDOCK_LINKS_UNAVAILABLE' });
+          return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan spara. Kontakta stalladministratören.' };
+        }
+        if (code === '42501') return { success: false, reason: 'Du har inte behörighet att ändra den här hagen.' };
+        if (code === '22023' || code === '23503') {
+          return { success: false, reason: 'Hästvalet kunde inte bekräftas i detta stall. Uppdatera hästlistan och försök igen.' };
+        }
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Sparningen kunde inte bekräftas. Dina val finns kvar. Försök igen.' };
+        }
         return { success: false, reason: 'Hagen kunde inte sparas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3391,19 +3443,45 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistPaddockDelete = React.useCallback(
-    async (paddock: Paddock): Promise<ActionResult> => {
-      if (isQaDemoMode) return { success: true };
+    async (paddock: Paddock, expectedRevision: number): Promise<ActionResult> => {
+      if (isQaDemoMode) {
+        if (stateRef.current.paddocks.find((item) => item.id === paddock.id)?.revision !== expectedRevision) {
+          return { success: false, reason: 'Hagen har ändrats. Uppdatera hagen innan du tar bort den.' };
+        }
+        return { success: true };
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Borttagningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const { data, error } = await supabase.from('paddocks').delete().eq('id', paddock.id)
-          .eq('stable_id', paddock.stableId).select('id').abortSignal(controller.signal);
+        const { data, error } = await Promise.race([
+          supabase.rpc('delete_paddock', {
+            p_paddock_id: paddock.id, p_stable_id: paddock.stableId, p_expected_revision: expectedRevision,
+          }).abortSignal(controller.signal),
+          aborted,
+        ]);
         if (error) throw error;
-        if (!data?.some((row) => row.id === paddock.id)) throw new Error('Servern bekräftade inte borttagningen av hagen.');
+        if (data?.id !== paddock.id || data.stable_id !== paddock.stableId || data.deleted !== true
+          || data.revision !== expectedRevision) {
+          throw new Error('Servern bekräftade inte borttagningen av hagen.');
+        }
         return { success: true };
       } catch (error) {
-        console.warn('[paddock delete] Kunde inte ta bort hage', error);
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'client_error';
+        console.warn('[paddock delete] Kunde inte ta bort hage', { code });
+        if (code === '40001' || code === '40P01' || code === '55P03' || code === 'P0002') {
+          return { success: false, reason: 'Hagen har ändrats. Uppdatera hagen innan du tar bort den.' };
+        }
+        if (code === 'PGRST202' || code === '42883') {
+          dispatch({ type: 'PADDOCK_LINKS_UNAVAILABLE' });
+          return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan ta bort hagen. Kontakta stalladministratören.' };
+        }
+        if (code === '42501') return { success: false, reason: 'Du har inte behörighet att ta bort den här hagen.' };
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Borttagningen kunde inte bekräftas. Uppdatera haglistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hagen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4951,6 +5029,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 farms: [],
                 horses: [],
                 paddocks: [],
+                paddockLinksReady: false,
                 assignments: [],
                 assignmentHistory: [],
                 dayEvents: [],
@@ -5035,7 +5114,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('stables').select('*').in('id', stableIds),
           supabase.from('farms').select('*'),
           supabase.from('horses').select('*').in('stable_id', stableIds),
-          supabase.from('paddocks').select('*').in('stable_id', stableIds),
+          fetchPaddocks(stableIds),
           supabase.from('assignments').select('*').in('stable_id', stableIds),
           supabase.from('assignment_history').select('*').in('stable_id', stableIds),
           supabase.from('day_events').select('*').in('stable_id', stableIds),
@@ -5464,6 +5543,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           name: row.name,
           stableId: row.stable_id,
           horseNames: row.horse_names ?? [],
+          horseIds: Array.isArray(row.paddock_horses)
+            ? row.paddock_horses.filter((link: { horse_id?: unknown } | null) => typeof link?.horse_id === 'string')
+              .map((link: { horse_id: string }) => link.horse_id) : [],
+          revision: Number.isSafeInteger(row.revision) && row.revision > 0 ? row.revision : 0,
+          linksReady: paddocksResult.linksReady && Number.isSafeInteger(row.revision) && row.revision > 0
+            && Array.isArray(row.paddock_horses)
+            && row.paddock_horses.every((link: { horse_id?: unknown } | null) => typeof link?.horse_id === 'string'),
+          lastSaveRequestId: row.last_save_request_id ?? undefined,
           updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
           season: row.season ?? 'yearRound',
           image: row.image_url ? { uri: row.image_url } : undefined,
@@ -5679,6 +5766,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             stables: formattedStables,
             horses: formattedHorses,
             paddocks: formattedPaddocks,
+            paddockLinksReady: paddocksResult.linksReady,
             assignments: formattedAssignments,
             assignmentHistory: formattedAssignmentHistory,
             dayEvents: formattedDayEvents,
@@ -6881,10 +6969,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         : undefined;
 
       if (existing && existing.stableId !== stableId) return { success: false, reason: 'Hagen tillhör ett annat stall.' };
+      if (!current.paddockLinksReady || existing?.linksReady === false) {
+        return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan spara. Kontakta stalladministratören.' };
+      }
+      if (!Array.isArray(input.horseIds) || new Set(input.horseIds).size !== input.horseIds.length
+        || input.horseIds.some((id) => !(current.horses ?? []).some((horse) => horse.id === id && horse.stableId === stableId))) {
+        return { success: false, reason: 'Välj hästar från detta stall. Varje häst ska väljas en gång.' };
+      }
+      if (input.expectedRevision !== null && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision <= 0)) {
+        return { success: false, reason: 'Öppna hagen igen innan du sparar. Uppdateringsversion saknas.' };
+      }
 
       const id = existing?.id ?? input.id ?? generateId();
       const updatedAt = new Date().toISOString();
-      const horseNames = normalizeHorseNames(input.horseNames);
+      const horseIds = [...input.horseIds].sort();
       const image =
         input.image === null ? undefined : input.image ?? existing?.image;
       const season = input.season ?? existing?.season ?? 'yearRound';
@@ -6893,7 +6991,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         id,
         name,
         stableId,
-        horseNames,
+        horseNames: existing?.horseNames ?? [],
+        horseIds,
+        revision: input.expectedRevision ?? 0,
+        linksReady: true,
         image,
         updatedAt,
         season,
@@ -6904,9 +7005,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       pendingDataWrites.current.add(writeKey);
       dataWriteVersion.current += 1;
       try {
-        const result = await persistPaddockUpsert(paddock, input.image, Boolean(existing));
+        const signature = JSON.stringify([current.currentUserId, id, stableId, name, horseIds, season, input.expectedRevision, image ?? null]);
+        let attempt = paddockSaveAttempts.current.get(id);
+        if (!attempt || attempt.signature !== signature) {
+          attempt = { signature, requestId: generateId() };
+          paddockSaveAttempts.current.set(id, attempt);
+        }
+        const result = await persistPaddockUpsert(paddock, input.image, input.expectedRevision, attempt);
         if (!result.success) return result;
         if (!result.data) return { success: false, reason: 'Servern bekräftade inte hagen. Försök igen.' };
+        paddockSaveAttempts.current.delete(id);
         dispatch({ type: 'PADDOCK_UPSERT', payload: result.data });
         return result;
       } finally { pendingDataWrites.current.delete(writeKey); }
@@ -6915,7 +7023,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistPaddockUpsert],
   );
 
-  const deletePaddock = React.useCallback(async (paddockId: string): Promise<ActionResult> => {
+  const deletePaddock = React.useCallback(async (paddockId: string, expectedRevision: number): Promise<ActionResult> => {
     const current = stateRef.current;
     const existing = current.paddocks.find((paddock) => paddock.id === paddockId);
     if (!existing) {
@@ -6925,14 +7033,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     if (!accessCheck.success) {
       return accessCheck;
     }
+    if (!current.paddockLinksReady || !existing.linksReady || !Number.isSafeInteger(expectedRevision) || expectedRevision <= 0) {
+      return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan ta bort hagen. Kontakta stalladministratören.' };
+    }
 
     const writeKey = `paddock:${paddockId}`;
     if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Hagen sparas redan. Vänta och försök igen.' };
     pendingDataWrites.current.add(writeKey);
     dataWriteVersion.current += 1;
     try {
-      const result = await persistPaddockDelete(existing);
+      const result = await persistPaddockDelete(existing, expectedRevision);
       if (!result.success) return result;
+      paddockSaveAttempts.current.delete(paddockId);
       dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
       return result;
     } finally { pendingDataWrites.current.delete(writeKey); }

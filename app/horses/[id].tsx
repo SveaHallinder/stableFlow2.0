@@ -16,9 +16,7 @@ import {
   type ExternalContact,
   type FeedPlanItem,
   type FeedSlot,
-  type Horse,
   type HorseDayStatus,
-  type Paddock,
   type PlannedRide,
   type RideLogEntry,
   type Stable,
@@ -29,21 +27,13 @@ import { toISODate } from '@/lib/schedule';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
 import { feedSlotLabels } from '@/lib/today';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const FEED_SLOTS: FeedSlot[] = ['morning', 'lunch', 'evening'];
 
 const palette = theme.colors;
-
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function getHorsePaddock(horse: Horse, paddocks: Paddock[]) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
 
 export default function HorseProfileScreen() {
   const router = useRouter();
@@ -56,12 +46,13 @@ export default function HorseProfileScreen() {
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
   const stable = state.stables.find((item) => item.id === stableId);
-  const paddock = horse
-    ? getHorsePaddock(
-        horse,
-        state.paddocks.filter((item) => item.stableId === stableId),
-      )
-    : undefined;
+  const stablePaddocks = state.paddocks.filter((item) => item.stableId === stableId);
+  const horsePaddocks = horse ? getHorsePaddocks(horse, stablePaddocks) : [];
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, state.horses);
+  const paddockLabel = horsePaddocks.length
+    ? horsePaddocks.map((paddock) => paddock.name).join(', ')
+    : paddockLinksUnconfirmed ? 'Hage ej bekräftad' : 'Ingen hage satt';
   const status = horse
     ? state.horseDayStatuses.find(
         (item) => item.stableId === stableId && item.horseId === horse.id && item.date === todayIso,
@@ -160,7 +151,7 @@ export default function HorseProfileScreen() {
               <View style={styles.heroText}>
                 <Text style={styles.heroTitle}>{horse.name}</Text>
                 <Text style={styles.heroMeta}>
-                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddock?.name ?? 'Ingen hage satt']
+                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel]
                     .filter(Boolean)
                     .join(' · ')}
                 </Text>

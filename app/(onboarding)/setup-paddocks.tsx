@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
@@ -10,6 +10,7 @@ import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
+import { getPaddockHorseNames, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 
 const palette = theme.colors;
 
@@ -75,7 +76,7 @@ export default function OnboardingPaddocks() {
   }, []);
 
   const handleAddPaddock = React.useCallback(async () => {
-    if (savingPaddockRef.current) return;
+    if (savingPaddockRef.current || !state.paddockLinksReady) return;
     if (!activeStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -85,47 +86,52 @@ export default function OnboardingPaddocks() {
       toast.showToast('Hagens namn krävs.', 'error');
       return;
     }
-    const horseNames = stableHorses
-      .filter((horse) => draft.horseIds.includes(horse.id))
-      .map((horse) => horse.name);
     savingPaddockRef.current = true;
     setPaddockPending('save');
     setPaddockError(null);
     newPaddockIdRef.current ??= generateId();
-    const result = await actions.upsertPaddock({
-      id: newPaddockIdRef.current,
-      stableId: activeStableId,
-      name,
-      horseNames,
-      season: 'yearRound',
-    });
-    savingPaddockRef.current = false;
-    setPaddockPending(null);
-    if (result.success) {
-      newPaddockIdRef.current = null;
-      toast.showToast('Hage sparad.', 'success');
-      setDraft({ name: '', horseIds: [] });
-    } else {
-      setPaddockError(result.reason);
+    try {
+      const result = await actions.upsertPaddock({
+        id: newPaddockIdRef.current,
+        stableId: activeStableId,
+        name,
+        horseIds: [...draft.horseIds],
+        expectedRevision: null,
+        season: 'yearRound',
+      });
+      if (result.success) {
+        newPaddockIdRef.current = null;
+        toast.showToast('Hage sparad.', 'success');
+        setDraft({ name: '', horseIds: [] });
+      } else {
+        setPaddockError(result.reason);
+      }
+    } catch (error) {
+      setPaddockError(error instanceof Error ? error.message : 'Hagen kunde inte sparas. Dina val finns kvar.');
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
     }
-  }, [actions, activeStableId, draft.horseIds, draft.name, stableHorses, toast]);
+  }, [actions, activeStableId, draft.horseIds, draft.name, state.paddockLinksReady, toast]);
 
-  const handleDeletePaddock = React.useCallback(async (paddockId: string) => {
-    if (savingPaddockRef.current) return;
+  const handleDeletePaddock = React.useCallback(async (paddockId: string, expectedRevision: number, linksReady: boolean) => {
+    if (savingPaddockRef.current || !state.paddockLinksReady || !linksReady) return;
     savingPaddockRef.current = true;
     try {
       const confirmed = await confirmAction({ title: 'Ta bort hage?', message: 'Detta går inte att ångra.', confirmLabel: 'Ta bort', destructive: true });
       if (!confirmed) return;
       setPaddockPending('delete');
       setPaddockError(null);
-      const result = await actions.deletePaddock(paddockId);
+      const result = await actions.deletePaddock(paddockId, expectedRevision);
       if (result.success) toast.showToast('Hage borttagen.', 'success');
       else setPaddockError(result.reason);
+    } catch (error) {
+      setPaddockError(error instanceof Error ? error.message : 'Hagen kunde inte tas bort. Dina uppgifter finns kvar.');
     } finally {
       savingPaddockRef.current = false;
       setPaddockPending(null);
     }
-  }, [actions, toast]);
+  }, [actions, state.paddockLinksReady, toast]);
 
   const handleBack = React.useCallback(() => {
     if (returnTo) {
@@ -172,10 +178,13 @@ export default function OnboardingPaddocks() {
         <Text style={styles.sectionTitle}>Ny hage</Text>
         {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
         {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
+        {!state.paddockLinksReady ? (
+          <Text style={styles.sectionHint}>Hästkopplingarna är inte aktiverade ännu. Hagar kan inte skapas, ändras eller tas bort.</Text>
+        ) : null}
         <TextInput
           placeholder="Namn på hage"
           placeholderTextColor={palette.mutedText}
-          editable={!paddockPending}
+          editable={!paddockPending && state.paddockLinksReady}
           value={draft.name}
           onChangeText={(text) => setDraft((prev) => ({ ...prev, name: text }))}
           style={styles.input}
@@ -184,15 +193,21 @@ export default function OnboardingPaddocks() {
         <View style={styles.chipRow}>
           {stableHorses.map((horse) => {
             const active = draft.horseIds.includes(horse.id);
+            const label = [horse.name, horse.boxNumber ? `Box ${horse.boxNumber}` : '',
+              horse.ownerUserId ? state.users[horse.ownerUserId]?.name : '',
+              stableHorses.some((other) => other.id !== horse.id && other.name === horse.name) ? horse.id : '',
+            ].filter(Boolean).join(' · ');
             return (
               <TouchableOpacity
                 key={horse.id}
                 style={[styles.chip, active && styles.chipActive]}
-                disabled={Boolean(paddockPending)}
+                disabled={Boolean(paddockPending) || !state.paddockLinksReady}
+                accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }}
+                {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                 onPress={() => handleToggleHorse(horse.id)}
                 activeOpacity={0.85}
               >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>{horse.name}</Text>
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
               </TouchableOpacity>
             );
           })}
@@ -200,7 +215,7 @@ export default function OnboardingPaddocks() {
             <Text style={styles.emptyText}>Lägg till hästar först.</Text>
           ) : null}
         </View>
-        <TouchableOpacity style={styles.primaryButton} disabled={Boolean(paddockPending)} onPress={handleAddPaddock} activeOpacity={0.9}>
+        <TouchableOpacity style={styles.primaryButton} disabled={Boolean(paddockPending) || !state.paddockLinksReady} onPress={handleAddPaddock} activeOpacity={0.9}>
           <Text style={styles.primaryLabel}>Spara hage</Text>
         </TouchableOpacity>
       </Card>
@@ -213,22 +228,26 @@ export default function OnboardingPaddocks() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.listTitle}>{paddock.name}</Text>
                 <Text style={styles.listMeta}>
-                  {paddock.horseNames.length ? paddock.horseNames.join(', ') : 'Inga hästar valda'}
+                  {!paddock.linksReady ? 'Tidigare uppgifter (ej bekräftade): ' : ''}
+                  {getPaddockHorseNames(paddock, horses).join(', ') || (!state.paddockLinksReady || hasUnconfirmedPaddockLinks([paddock], horses) ? 'Hästkopplingar ej bekräftade' : 'Inga hästar valda')}
                 </Text>
+                {!state.paddockLinksReady || hasUnconfirmedPaddockLinks([paddock], horses) ? (
+                  <Text style={styles.listMeta}>Hästkopplingarna väntar på godkänd konvertering eller behöver kontrolleras.</Text>
+                ) : null}
               </View>
               <TouchableOpacity
                 style={[styles.iconButton, { minWidth: 44, minHeight: 44 }]}
                 accessibilityRole="button"
                 accessibilityLabel={`Ta bort ${paddock.name}`}
-                disabled={Boolean(paddockPending)}
-                onPress={() => handleDeletePaddock(paddock.id)}
+                disabled={Boolean(paddockPending) || !state.paddockLinksReady || !paddock.linksReady}
+                onPress={() => handleDeletePaddock(paddock.id, paddock.revision, paddock.linksReady)}
                 activeOpacity={0.85}
               >
                 <Feather name="x" size={14} color={palette.secondaryText} />
               </TouchableOpacity>
             </View>
           ))}
-          {stablePaddocks.length === 0 ? (
+          {stablePaddocks.length === 0 && state.paddockLinksReady ? (
             <Text style={styles.emptyText}>Inga hagar inlagda ännu.</Text>
           ) : null}
         </View>

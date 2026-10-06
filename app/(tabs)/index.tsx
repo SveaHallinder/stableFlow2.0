@@ -38,6 +38,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { deriveFeedFocus, deriveTodayOverview, getCurrentFeedSlot } from '@/lib/today';
+import { getPaddockHorses, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useWeather } from '@/hooks/useWeather';
@@ -284,9 +285,13 @@ export default function OverviewScreen() {
 
   const paddockSummary = React.useMemo(() => {
     const paddockCount = activePaddocks.length;
-    const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
-    return { paddockCount, horseCount };
-  }, [activePaddocks]);
+    const horseCount = new Set(activePaddocks.flatMap((paddock) =>
+      getPaddockHorses(paddock, state.horses).map((horse) => horse.id),
+    )).size;
+    const linksUnconfirmed = state.paddockLinksReady !== true ||
+      hasUnconfirmedPaddockLinks(activePaddocks, state.horses);
+    return { paddockCount, horseCount, linksUnconfirmed };
+  }, [activePaddocks, state.horses, state.paddockLinksReady]);
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
       {
@@ -324,9 +329,11 @@ export default function OverviewScreen() {
       {
         id: 'paddocks',
         label: 'Hagar',
-        caption: paddockSummary.paddockCount
-          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
-          : 'Lägg in hagar\nSkriv ut haglista',
+        caption: paddockSummary.linksUnconfirmed
+          ? 'Hästkopplingar ej bekräftade\nÖppna hagar'
+          : paddockSummary.paddockCount
+            ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
+            : 'Lägg in hagar\nSkriv ut haglista',
         icon: 'map',
         tint: 'primary',
         highlight: paddockSummary.paddockCount === 0,
@@ -679,6 +686,9 @@ export default function OverviewScreen() {
           <Feather name="activity" size={15} color={palette.primary} />
           <Text style={styles.priorityHorseButtonText}>
             Öppna {todayOverview.myHorseSummaries[0].horse.name}
+            {todayOverview.myHorseSummaries[0].paddocks.length
+              ? ` · ${todayOverview.myHorseSummaries[0].paddocks.map((paddock) => paddock.name).join(', ')}`
+              : todayOverview.myHorseSummaries[0].paddockLinksUnconfirmed ? ' · Hage ej bekräftad' : ' · Ingen hage satt'}
           </Text>
         </TouchableOpacity>
       ) : null}

@@ -11,9 +11,7 @@ import { StableSwitcher } from '@/components/StableSwitcher';
 import { theme } from '@/components/theme';
 import {
   useAppData,
-  type Horse,
   type HorseDayStatus,
-  type Paddock,
   type RideLogEntry,
 } from '@/context/AppDataContext';
 import { color, radius } from '@/design/tokens';
@@ -26,18 +24,12 @@ import {
 } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
 import { deriveFeedFocus } from '@/lib/today';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 const palette = theme.colors;
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function getHorsePaddock(horse: Horse, paddocks: Paddock[]) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
 
 function formatStatus(status?: HorseDayStatus) {
   if (!status) {
@@ -87,6 +79,8 @@ export default function HorsesScreen() {
     () => state.paddocks.filter((paddock) => paddock.stableId === currentStableId),
     [state.paddocks, currentStableId],
   );
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, stableHorses);
   const todayStatuses = React.useMemo(
     () =>
       state.horseDayStatuses.filter(
@@ -231,7 +225,10 @@ export default function HorsesScreen() {
             <View style={styles.horseList}>
               {visibleHorses.map((horse) => {
                 const status = todayStatuses.find((entry) => entry.horseId === horse.id);
-                const paddock = getHorsePaddock(horse, stablePaddocks);
+                const horsePaddocks = getHorsePaddocks(horse, stablePaddocks);
+                const paddockLabel = horsePaddocks.length
+                  ? horsePaddocks.map((paddock) => paddock.name).join(', ')
+                  : paddockLinksUnconfirmed ? 'Hage ej bekräftad' : 'Ingen hage satt';
                 const latestRide = getLatestRide(stableRideLogs, horse.id);
                 const responsibleUsers = getResponsibleUsersForHorse(state, horse.id);
                 const isMine = isHorseOwner(state, horse.id, currentUserId);
@@ -261,7 +258,7 @@ export default function HorsesScreen() {
                           ) : null}
                         </View>
                         <Text style={styles.horseMeta}>
-                          {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddock?.name ?? 'Ingen hage satt']
+                          {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel]
                             .filter(Boolean)
                             .join(' · ')}
                         </Text>
