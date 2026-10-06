@@ -82,6 +82,7 @@ export default function AccountSettingsScreen() {
   const [savingEmail, setSavingEmail] = React.useState(false);
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const deletingRef = React.useRef(false);
 
   const handleChangePassword = React.useCallback(async () => {
     if (savingPassword) {
@@ -134,32 +135,50 @@ export default function AccountSettingsScreen() {
   }, [savingEmail, security.newEmail, user?.email, toast]);
 
   const handleDeleteAccount = React.useCallback(async () => {
-    if (deleting) {
+    if (deletingRef.current || deleting) {
       return;
     }
     if (!confirmingDelete) {
       setConfirmingDelete(true);
       return;
     }
+    deletingRef.current = true;
     setDeleting(true);
-    const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' });
-    if (error) {
-      let reason = 'Kunde inte radera kontot. Försök igen.';
-      const ctx = (error as { context?: Response }).context;
-      if (ctx) {
-        const body = await ctx.json().catch(() => null);
-        if (body?.error === 'sole_owner') {
-          reason = 'Du är ensam ägare av ett stall med fler medlemmar. Överlåt ägarskapet först.';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    const unconfirmedMessage = 'Raderingen kunde inte bekräftas. Kontrollera kontot innan du försöker igen.';
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-account', { method: 'POST', signal: controller.signal });
+      if (error) {
+        let reason = unconfirmedMessage;
+        const ctx = (error as { context?: { json?: () => Promise<{ error?: unknown }> } }).context;
+        if (typeof ctx?.json === 'function') {
+          const body = await ctx.json();
+          if (body?.error === 'sole_owner') {
+            reason = 'Du är ensam ägare av ett stall. Utse en ny ägare först.';
+          }
         }
+        toast.showToast(reason, 'error');
+        return;
       }
+      if (data?.deleted !== true) {
+        toast.showToast(unconfirmedMessage, 'error');
+        return;
+      }
+      toast.showToast('Ditt konto har raderats.', 'success');
+      await signOut().catch(() => undefined);
+      router.replace('/(auth)');
+    } catch (error) {
+      console.warn('[account delete] Raderingen kunde inte bekräftas', {
+        name: error instanceof Error ? error.name : 'unknown',
+      });
+      toast.showToast(unconfirmedMessage, 'error');
+    } finally {
+      clearTimeout(timeout);
+      deletingRef.current = false;
       setDeleting(false);
       setConfirmingDelete(false);
-      toast.showToast(reason, 'error');
-      return;
     }
-    toast.showToast('Ditt konto har raderats.', 'success');
-    await signOut().catch(() => undefined);
-    router.replace('/(auth)');
   }, [deleting, confirmingDelete, toast, signOut, router]);
 
   const handleSave = React.useCallback(async () => {
@@ -366,8 +385,9 @@ export default function AccountSettingsScreen() {
               <Text style={styles.sectionTitle}>Radera konto</Text>
             </View>
             <Text style={styles.sectionHint}>
-              Permanent radering av ditt konto och dina personuppgifter (GDPR). Detta går
-              inte att ångra. Är du ensam ägare av ett stall behöver du överlåta ägarskapet först.
+              Ditt inloggningskonto och din profil raderas permanent. Inlägg, meddelanden och
+              stallhistorik kan finnas kvar. Raderingen går inte att ångra. Är du ensam ägare
+              av ett stall behöver du utse en ny ägare först.
             </Text>
             <TouchableOpacity
               style={[styles.dangerButton, deleting && styles.saveButtonDisabled]}

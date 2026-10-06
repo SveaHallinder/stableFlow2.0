@@ -68,3 +68,54 @@ test('horse deletion shares the in-flight horse-save lock', async () => {
   assert.equal((await action('horse')).success, false);
   assert.equal(deletes, 0);
 });
+
+const horseRow = {
+  id: 'horse', stable_id: 'stable', name: 'Mira', owner_user_id: 'owner',
+  box_number: '7', can_sleep_inside: true, gender: 'mare', age: 8, note: 'Behåll', image_url: null,
+};
+
+async function loadPersistence(row, capture = {}) {
+  const query = {
+    update(payload) { capture.payload = payload; return this; },
+    upsert(payload) { capture.payload = payload; return this; },
+    eq() { return this; }, select() { return this; }, abortSignal() { return this; },
+    single: async () => ({ data: row, error: null }),
+  };
+  return loadAction('persistHorseUpsert', {
+    isQaDemoMode: false, user: { id: 'user' }, supabase: { from: () => query },
+    getUploadableImage: image => image, isRemoteUri: () => true,
+    console: { warn() {} },
+  });
+}
+
+test('horse persistence rejects a stale acknowledgement for each edited field', async (t) => {
+  const edits = [
+    ['name', 'Mira II', 'name'], ['ownerUserId', undefined, 'owner_user_id'],
+    ['boxNumber', undefined, 'box_number'], ['canSleepInside', false, 'can_sleep_inside'],
+    ['gender', 'gelding', 'gender'], ['age', 9, 'age'], ['note', undefined, 'note'],
+    ['image', { uri: 'https://example.test/new-horse.jpg' }, 'image_url'],
+  ];
+  for (const [field, value, column] of edits) {
+    await t.test(field, async () => {
+      const capture = {};
+      const persist = await loadPersistence(horseRow, capture);
+      const horse = { id: 'horse', stableId: 'stable', name: 'Mira', [field]: value };
+      const result = await persist(horse, { [field]: value }, true);
+      assert.notEqual(capture.payload[column], horseRow[column]);
+      assert.equal(result.success, false, `Stale ${column} must not confirm a save`);
+      assert.match(result.reason, /uppgifter finns kvar/);
+    });
+  }
+});
+
+test('horse persistence accepts confirmed edits without overwriting omitted fields', async () => {
+  const capture = {};
+  const row = { ...horseRow, note: null };
+  const persist = await loadPersistence(row, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira', note: undefined }, { note: '' }, true);
+  assert.equal(result.success, true);
+  assert.deepEqual(capture.payload, { id: 'horse', stable_id: 'stable', note: null });
+  assert.equal(result.data.boxNumber, '7');
+  assert.equal(result.data.canSleepInside, true);
+  assert.equal(result.data.note, undefined);
+});

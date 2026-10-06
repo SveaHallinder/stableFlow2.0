@@ -3439,7 +3439,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           ? supabase.from('horses').update(payload).eq('id', horse.id).eq('stable_id', horse.stableId)
           : supabase.from('horses').upsert(payload);
         const { data, error } = await query.select('*').abortSignal(controller.signal).single();
-        if (error || data?.id !== horse.id || data.stable_id !== horse.stableId) {
+        if (error || data?.id !== horse.id || data.stable_id !== horse.stableId
+          || Object.entries(payload).some(([field, value]) => data[field] !== value)) {
           throw error ?? new Error('Servern bekräftade inte hästen.');
         }
         return { success: true, data: {

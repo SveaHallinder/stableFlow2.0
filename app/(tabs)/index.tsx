@@ -245,7 +245,7 @@ export default function OverviewScreen() {
   );
 
   const myAssignedUpcoming = React.useMemo(() => {
-    return assignments
+    return activeAssignments
       .filter(
         (assignment) =>
           assignment.assigneeId === currentUserId &&
@@ -256,7 +256,7 @@ export default function OverviewScreen() {
         (a, b) =>
           new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
       );
-  }, [assignments, currentUserId, todayIso]);
+  }, [activeAssignments, currentUserId, todayIso]);
 
   const myNextAssignment = myAssignedUpcoming[0];
   const myNextAssignmentTimeLabel = React.useMemo(() => {

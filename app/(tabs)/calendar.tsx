@@ -735,8 +735,22 @@ export default function CalendarScreen() {
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
   const upcomingDayGroups = React.useMemo(
-    () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
-    [groupedDays, todayIso],
+    () =>
+      groupedDays
+        .filter((day) => {
+          if (day.isoDate < todayIso) return false;
+          if (passView === 'mine') {
+            return day.assignments.some(
+              (assignment) => assignment.assigneeId === currentUserId && assignment.status !== 'open',
+            );
+          }
+          if (passView === 'open') {
+            return day.assignments.some((assignment) => assignment.status === 'open');
+          }
+          return true;
+        })
+        .slice(0, 7),
+    [groupedDays, todayIso, passView, currentUserId],
   );
 
   const visiblePassDays = React.useMemo(
@@ -2871,7 +2885,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isSaving={savingAssignmentIds.has(slot.id)}
             saveError={assignmentSaveErrors[slot.id]}
             onTake={
-              slot.status === 'open'
+              slot.status === 'open' && onClaimOpenAssignment
                 ? () =>
                     onClaimOpenAssignment?.(slot.id, {
                       date: isoDate,
@@ -2879,14 +2893,14 @@ const RegularDayCard = React.memo(function RegularDayCard({
                     })
                 : undefined
             }
-            onManage={slot.status !== 'open' ? () => onEditAssignment?.(slot.id) : undefined}
+            onManage={slot.status !== 'open' && onEditAssignment ? () => onEditAssignment(slot.id) : undefined}
             onDecline={
-              slot.isMine && slot.status === 'assigned'
+              slot.isMine && slot.status === 'assigned' && onDeclineAssignment
                 ? () => onDeclineAssignment?.(slot.id)
                 : undefined
             }
             onComplete={
-              slot.isMine && slot.status === 'assigned'
+              slot.isMine && slot.status === 'assigned' && onCompleteAssignment
                 ? () => onCompleteAssignment?.(slot.id)
                 : undefined
             }

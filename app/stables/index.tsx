@@ -1016,7 +1016,7 @@ export default function StablesScreen() {
     router.replace(fallbackRoute);
   }, [router]);
 
-  if (!isAdminAny) {
+  if (horsesOnly ? !canManageHorses : !isAdminAny) {
     const restrictedContent = (
       <>
         <ScreenHeader
