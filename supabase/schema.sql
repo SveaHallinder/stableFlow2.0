@@ -1487,6 +1487,16 @@ create policy "conversations_select" on public.conversations
         and cm.user_id = (select auth.uid())
     )
   );
+-- Private creator bootstrap before membership exists.
+drop policy if exists "conversations_private_creator_select" on public.conversations;
+create policy "conversations_private_creator_select" on public.conversations
+  for select to authenticated
+  using (
+    stable_id is null
+    and not coalesce(is_group, false)
+    and created_by_user_id = (select auth.uid())
+  );
+
 create policy "conversations_insert" on public.conversations
   for insert with check (
     (select auth.uid()) is not null
@@ -1500,6 +1510,16 @@ create policy "conversations_insert" on public.conversations
       )
     )
   );
+-- Private creator fields must be bound to the authenticated caller.
+drop policy if exists "conversations_private_insert_self" on public.conversations;
+create policy "conversations_private_insert_self" on public.conversations
+  as restrictive for insert to authenticated
+  with check (
+    stable_id is not null
+    or coalesce(is_group, false)
+    or created_by_user_id = (select auth.uid())
+  );
+
 create policy "conversations_update" on public.conversations
   for update
   using (

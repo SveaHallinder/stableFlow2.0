@@ -51,6 +51,15 @@ test('database guards enforce arena and owner invariants in the schema and appro
     assert.match(schemaResult, /20 schema guard tests passed/);
     t.diagnostic('20 rollback-only checks passed against the complete schema.');
 
+    const privateChatTests = await readFile(join(root, 'supabase/tests/private_chat_bootstrap.sql'), 'utf8');
+    assert.match(sql('guards_schema', privateChatTests), /14 private chat checks passed/);
+    sql('guards_schema', 'drop policy "conversations_private_creator_select" on public.conversations; drop policy "conversations_private_insert_self" on public.conversations;');
+    const privateChatMigration = await readFile(join(root, 'supabase/migrations/20261007173218_private_chat_bootstrap.sql'), 'utf8');
+    sql('guards_schema', privateChatMigration);
+    sql('guards_schema', privateChatMigration);
+    assert.match(sql('guards_schema', privateChatTests), /14 private chat checks passed/);
+    t.diagnostic('28 rollback-only private chat checks passed against the schema and twice-replayed migration.');
+
     sql('guards_migration', await readFile(join(checkpoint, 'stableflow-next-db-setup.sql'), 'utf8'));
     const migrationSql = await readFile(migration, 'utf8');
     sql('guards_migration', migrationSql);
