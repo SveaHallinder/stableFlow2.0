@@ -1,7 +1,7 @@
 # StableFlow 2.0 — Roadmap till färdig produkt
 
 > Historiskt auditunderlag från 2026-06-13. Procentsiffrorna och äldre kvar-text nedan beskriver den tidpunkten.
-> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden, beständig ägarlista för inbjudningar och godkända privata chattpolicyer applicerade i Supabase**. Aktuella resultat och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-approved-private-chat/README.md). Återställningsmejl är mottaget; lösenordsbyte och fysisk telefonacceptans återstår.
+> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden, sessionbunden chatt, vanligt Xcode-bygge och fem simulatorprov**. Beständig inbjudningslista finns; de godkända privata chattpolicyerna är applicerade i Supabase och ZZ:s hästprofil är skapad. Resultat, lokal Expo/Device Hub-gräns och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-native-and-chat-session/README.md). Återställningsmejl är mottaget; lösenordsbyte och fysisk telefonacceptans återstår.
 > Fortfarande oavslutat: bestående oläststatus, seriehantering, automatiska vårdpåminnelser, server-rate-limit, push-receiptcleanup och native datumväljare. Mer hästidentitetsdata, chattbilagor och prenumeration kräver produktdefinitioner. Dessa funktioner räknas inte som klara.
 > Kvarvarande driftarbete: haginstallation/mappning, kontoraderingsfunktion enligt vald modell, inbjudningsleverans, realtime-publicering och EAS/native/push. Extern publicering väntar enligt användarens beslut. Slutprovet kräver dator plus den enda tillgängliga telefonen.
 

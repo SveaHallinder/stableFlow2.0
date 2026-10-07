@@ -56,5 +56,16 @@ target 'StableFlow' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+
+    minimum_ios_version = podfile_properties['ios.deploymentTarget'] || '15.1'
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |build_config|
+        deployment_target = build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        next unless deployment_target&.match?(/\A\d+(\.\d+)*\z/)
+        next unless Gem::Version.new(deployment_target) < Gem::Version.new(minimum_ios_version)
+
+        build_config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = minimum_ios_version
+      end
+    end
   end
 end

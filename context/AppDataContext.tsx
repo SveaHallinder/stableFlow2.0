@@ -5904,6 +5904,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   React.useEffect(() => {
     if (!user || isQaDemoMode) return;
 
+    const userId = user.id;
+    let active = true;
     const channel = supabase
       .channel('messages-realtime')
       .on<{
@@ -5919,7 +5921,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         (payload) => {
           const row = payload.new;
           // Skip messages we sent ourselves (already in state)
-          if (row.author_id === user.id) return;
+          if (row.author_id === userId) return;
 
           const message: ConversationMessage = {
             id: row.id,
@@ -5931,6 +5933,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           };
 
           const current = stateRef.current;
+          if (!active || current.sessionUserId !== userId || current.currentUserId !== userId) return;
           const existingPreview = current.messages.find((msg) => msg.id === row.conversation_id);
           if (!existingPreview) return; // Unknown conversation
 
@@ -5951,6 +5954,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       .subscribe();
 
     return () => {
+      active = false;
       supabase.removeChannel(channel);
     };
   }, [user]);
