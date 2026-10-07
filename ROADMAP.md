@@ -1,7 +1,9 @@
 # StableFlow 2.0 — Roadmap till färdig produkt
 
-> Genererad 2026-06-13 från en full plattformsaudit (11 agenter, hela kodbasen läst per subsystem).
-> Status idag: **visuellt färdig, funktionsbred MVP — ~57% mot kommersiell launch.**
+> Historiskt auditunderlag från 2026-06-13. Procentsiffrorna och äldre kvar-text nedan beskriver den tidpunkten.
+> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden**. Aktuella resultat och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-account-recurring-and-web/README.md). Drift och fysisk telefonacceptans återstår.
+> Fortfarande oavslutat: bestående oläststatus, seriehantering, automatiska vårdpåminnelser, server-rate-limit, push-receiptcleanup, native datumväljare och beständig adminlista för inbjudningar. Mer hästidentitetsdata, chattbilagor och prenumeration kräver produktdefinitioner. Dessa funktioner räknas inte som klara.
+> Kvarvarande driftbeslut: chattpolicyer, haginstallation/mappning, kontoraderingsmodell/funktion, inbjudningsleverans, realtime-publicering, HTTPS-host och EAS/native/push. Slutprovet kräver dator plus den enda tillgängliga telefonen.
 
 ## Produktvision (målet)
 En multi-tenant SaaS (iOS/Android/Web) för stallhantering i Sverige/EU. En stallägare kan
@@ -13,7 +15,7 @@ ridpass + ridloggar, vårdhändelser (hovslagare/veterinär) med påminnelser. P
 socialt flöde med grupp-privacy & moderering, realtidschatt, viktiga-alerts med push,
 sök, och full kontohantering under GDPR. Säljs som prenumeration till stall & ridskolor.
 
-## Var vi står (completeness per subsystem)
+## Historiskt auditresultat 2026-06-13 (completeness per subsystem)
 | % | Subsystem |
 |---|---|
 | 68 | Today / "Idag"-dashboard |
