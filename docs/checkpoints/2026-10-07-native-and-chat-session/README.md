@@ -62,8 +62,10 @@ uttryckligen godkända hästprofilen ZZ har skapats i rätt stall och kontroller
 med en separat läsning. Äldre hagnamn och dess positioner bevaras;
 haginstallationen och mappningen har ett separat schemaförslag.
 
-Återställningsmejlet är mottaget. Mottagaren behöver själv fullfölja
-lösenordsbytet och inloggningen; inga lösenord eller tokens sparades.
+Återställningsmejlet är mottaget. Email OTP expiration är läst i Supabase:
+3600 sekunder. Det tidigare testmejlet skickades 17:39 UTC och behöver
+ersättas med en färsk länk inför ett nytt prov. Mottagaren behöver själv
+fullfölja lösenordsbytet och inloggningen; inga lösenord eller tokens sparades.
 Inbjudningsleverans behöver rätt HTTPS-adress och mejlproviderkonfiguration.
 
 Realtime-publicering, haginstallation, nya bildpolicyer och kontoradering
@@ -94,7 +96,8 @@ Hela roadmapen och telefonacceptansen räknas ännu inte som klara.
 5. Öppna `stableflow:///calendar` med appen igång och
    `stableflow:///stable-horses` efter avslutad app. Kontrollera Schema
    respektive Hästar; gå till bakgrunden och tillbaka utan felbanner.
-6. Fullfölj det mottagna återställningsmejlet själv och logga in på localhost.
+6. Begär en färsk återställningslänk på localhost. Fullfölj mejlet inom en
+   timme, skriv det nya lösenordet själv och logga in på localhost.
    Efter separata driftgodkännanden: prova privat chatt mellan dator och
    den enda tillgängliga telefonen samt nekad åtkomst för tredje konto.
 
