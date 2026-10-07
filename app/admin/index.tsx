@@ -1,4 +1,5 @@
 import { InviteReceipt } from '@/components/InviteReceipt';
+import { StableInviteList } from '@/components/StableInviteList';
 import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { generateId } from '@/lib/ids';
@@ -776,6 +777,8 @@ export default function AdminDashboard() {
                   </View>
                 </View>
               </Card>
+
+              <StableInviteList confirmation={inviteReceipt} />
 
               <View style={[styles.cardGrid, isDesktopWeb && styles.cardGridDesktop]}>
                 {adminLinks.map((link) => (

@@ -62,6 +62,7 @@ export default {
     '**/pilot-db-conflicts.spec.mjs',
     '**/pilot-member-layout.spec.mjs',
     '**/stable-usability.spec.mjs',
+    '**/stable-invite-list.spec.mjs',
   ],
   use: { ...config.use, proxy, serviceWorkers: 'block' },
   projects: config.projects.map(project => ({
