@@ -1,8 +1,8 @@
 # StableFlow 2.0 — Roadmap till färdig produkt
 
 > Historiskt auditunderlag från 2026-06-13. Procentsiffrorna och äldre kvar-text nedan beskriver den tidpunkten.
-> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden**. Aktuella resultat och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-account-recurring-and-web/README.md). Drift och fysisk telefonacceptans återstår.
-> Fortfarande oavslutat: bestående oläststatus, seriehantering, automatiska vårdpåminnelser, server-rate-limit, push-receiptcleanup, native datumväljare och beständig adminlista för inbjudningar. Mer hästidentitetsdata, chattbilagor och prenumeration kräver produktdefinitioner. Dessa funktioner räknas inte som klara.
+> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden och beständig ägarlista för inbjudningar**. Aktuella resultat och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-persistent-invitation-list/README.md). Drift och fysisk telefonacceptans återstår.
+> Fortfarande oavslutat: bestående oläststatus, seriehantering, automatiska vårdpåminnelser, server-rate-limit, push-receiptcleanup och native datumväljare. Mer hästidentitetsdata, chattbilagor och prenumeration kräver produktdefinitioner. Dessa funktioner räknas inte som klara.
 > Kvarvarande driftbeslut: chattpolicyer, haginstallation/mappning, kontoraderingsmodell/funktion, inbjudningsleverans, realtime-publicering, HTTPS-host och EAS/native/push. Slutprovet kräver dator plus den enda tillgängliga telefonen.
 
 ## Produktvision (målet)
