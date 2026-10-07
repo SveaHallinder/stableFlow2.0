@@ -147,7 +147,7 @@ export default function HorsesScreen() {
                 </Text>
                 <Text style={styles.summaryText}>
                   {stableHorses.length
-                    ? `${myHorseCount} kopplade till dig. Se hage, box och dagens status.`
+                    ? `${myHorseCount} ${myHorseCount === 1 ? 'kopplad' : 'kopplade'} till dig. Se hage, box och dagens status.`
                     : currentStableId
                       ? 'Lägg till hästar i onboarding eller stallinställningar.'
                       : 'Slutför setup för att se dagens stallstatus.'}
@@ -292,7 +292,7 @@ export default function HorsesScreen() {
                           {latestRide
                             ? `Senast ${latestRide.date}${latestRide.length ? ` · ${latestRide.length}` : ''}`
                             : responsibleUsers.length
-                              ? `${responsibleUsers.length} ansvariga`
+                              ? `${responsibleUsers.length} ${responsibleUsers.length === 1 ? 'ansvarig' : 'ansvariga'}`
                               : 'Ingen logg ännu'}
                         </Text>
                       </View>

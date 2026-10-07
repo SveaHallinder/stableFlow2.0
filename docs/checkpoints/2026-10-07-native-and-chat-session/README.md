@@ -42,6 +42,11 @@ SMHI-väderanropet finns kvar; kvittensen gäller blockerad appbackend.
 GitHub-resultat ska kontrolleras på den exakta pushade SHA:n i
 [PR 2](https://github.com/SveaHallinder/stableFlow2.0/pull/2).
 
+Hästvyn använder nu singular vid en kopplad häst och en ansvarig person.
+På localhost visar den faktiskt ”1 kopplad till dig” och ”1 ansvarig”.
+Denna copyjustering passerar samma 539 Nodeprov, lint, TypeScript och webbbygge.
+Nativebyggets fem källfiler är oförändrade sedan simulatorproven ovan.
+
 ## Känd lokal verktygsgräns
 
 Installerad Expo CLI söker ovillkorligen den äldre appen Simulator. Xcode 27
@@ -77,7 +82,8 @@ Hela roadmapen och telefonacceptansen räknas ännu inte som klara.
 ## Kort QA-script
 
 1. Öppna `http://localhost:8081/?qaDemo=1`. Kontrollera dagens pass,
-   foderstatus och vägen till Saga i Vinterhagen.
+   foderstatus och vägen till Saga i Vinterhagen. I Hästar: kontrollera
+   ”1 kopplad till dig” och ”1 ansvarig”.
 2. Öppna `http://localhost:8081/messages?qaDemo=1`. Starta en privat
    demochatt och kontrollera befintlig felvisning/återförsök.
 3. Kör `node --test scripts/chat-realtime-session.test.mjs scripts/native-auth-redirects.test.mjs`.
@@ -93,6 +99,7 @@ Hela roadmapen och telefonacceptansen räknas ännu inte som klara.
    den enda tillgängliga telefonen samt nekad åtkomst för tredje konto.
 
 Ändrade filer i paketet: `context/AppDataContext.tsx`,
-`scripts/chat-realtime-session.test.mjs`, `ios/Podfile`, `ios/Podfile.lock`,
+`scripts/chat-realtime-session.test.mjs`, `app/(tabs)/stable-horses.tsx`,
+`ios/Podfile`, `ios/Podfile.lock`,
 `ios/StableFlow.xcodeproj/project.pbxproj`, `ios/StableFlow/AppDelegate.swift`,
 `ios/StableFlow/Info.plist`, `ROADMAP.md` och denna checkpoint.
