@@ -5,6 +5,7 @@ import { AppState, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
+import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
 import { supabase } from '@/lib/supabase';
 import { trackPendingWrite } from '@/lib/writeTracker';
 import { createTimeoutFetch } from '@/lib/requestTimeout';
@@ -6458,8 +6459,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!isValidTime(startTime)) {
         return { success: false, reason: 'Ange en giltig starttid i formatet HH:MM.' };
       }
-      if (!input.weekdays.length) {
+      if (!Array.isArray(input.weekdays) || !input.weekdays.length) {
         return { success: false, reason: 'Välj minst en veckodag.' };
+      }
+      if (input.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+        return { success: false, reason: 'Välj giltiga veckodagar.' };
+      }
+      const slotCount = input.slotsCount ?? 1;
+      if (!Number.isFinite(slotCount) || !Number.isInteger(slotCount) || slotCount < 1
+        || slotCount > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+        return { success: false, reason: `Ange ett helt antal pass mellan 1 och ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH}.` };
       }
 
       const startDate = new Date(`${input.dateFrom}T00:00:00`);
@@ -6471,7 +6480,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Startdatum måste vara före slutdatum.' };
       }
 
-      const slotCount = Math.max(1, Math.floor(input.slotsCount ?? 1));
       const weekdays = new Set(input.weekdays);
       const existingKeys = new Set<string>();
       current.assignments
@@ -6494,7 +6502,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           );
         });
 
-      const generatedAssignments: Assignment[] = [];
+      const plannedAssignments: Omit<Assignment, 'id'>[] = [];
       let skippedCount = 0;
       const status: AssignmentStatus = input.assignToCurrentUser ? 'assigned' : 'open';
       const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
@@ -6519,9 +6527,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             skippedCount += 1;
             continue;
           }
+          if (plannedAssignments.length === MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+            return { success: false, reason: `Högst ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH} nya pass per omgång. Minska antal pass eller välj kortare datumintervall.` };
+          }
           existingKeys.add(key);
-          generatedAssignments.push({
-            id: generateId(),
+          plannedAssignments.push({
             date: isoDate,
             stableId,
             label,
@@ -6537,7 +6547,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const batchKey = JSON.stringify([stableId, current.currentUserId, input]);
-      const assignmentsToCreate = pendingRecurringBatches.current.get(batchKey) ?? generatedAssignments;
+      const assignmentsToCreate = pendingRecurringBatches.current.get(batchKey)
+        ?? plannedAssignments.map((assignment) => ({ ...assignment, id: generateId() }));
       if (!assignmentsToCreate.length) {
         return { success: true, data: { createdCount: 0, skippedCount } };
       }

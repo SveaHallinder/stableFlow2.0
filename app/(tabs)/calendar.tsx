@@ -41,6 +41,7 @@ import type {
   WeekdayIndex,
 } from '@/context/AppDataContext';
 import {
+  MAX_RECURRING_ASSIGNMENTS_PER_BATCH,
   groupAssignmentsByDay,
   fillWeekDays,
   formatShortWeekday,
@@ -964,9 +965,13 @@ export default function CalendarScreen() {
       setRecurringSaveError('Ange en giltig sluttid i formatet HH:MM (00:00–23:59).');
       return;
     }
-    const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
-    const slotsCount =
-      Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
+    const enteredCount = recurringForm.slotsCount.trim();
+    const slotsCount = enteredCount ? Number(enteredCount) : 1;
+    if ((enteredCount && !/^\d+$/.test(enteredCount)) || !Number.isFinite(slotsCount)
+      || !Number.isInteger(slotsCount) || slotsCount < 1 || slotsCount > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+      setRecurringSaveError(`Ange ett helt antal pass mellan 1 och ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH}.`);
+      return;
+    }
     const durationMinutes = endTime
       ? calculateDurationMinutes(startTime, endTime)
       : null;
@@ -2565,6 +2570,7 @@ export default function CalendarScreen() {
             >
               <Card tone="muted" style={styles.modalCard}>
                 <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+                <Text style={styles.modalLabel}>Högst {MAX_RECURRING_ASSIGNMENTS_PER_BATCH} nya pass per omgång. Befintliga pass hoppas över.</Text>
                 {recurringSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{recurringSaveError}</Text>}
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>

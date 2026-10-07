@@ -119,3 +119,58 @@ test('Invalid recurring end retains the draft and correction saves the entered d
   await visibleText(page, 'QA återkommande med sluttid').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('recurring-valid-duration.png'), fullPage: true });
 });
+
+test('Invalid recurring count retains the draft and correction creates the intended pass', async ({ page }, testInfo) => {
+  await page.goto('/calendar?qaDemo=1&view=all');
+  await page.getByRole('button', { name: 'Skapa återkommande pass', exact: true }).click();
+  const dates = page.getByPlaceholder('ÅÅÅÅ-MM-DD', { exact: true });
+  await dates.nth(0).fill('2026-10-07');
+  await dates.nth(1).fill('2026-10-07');
+  const title = page.getByPlaceholder('Mockning', { exact: true });
+  const count = page.getByPlaceholder('1', { exact: true });
+  await title.fill('QA antal utan trunkering');
+  await page.getByPlaceholder('07:00', { exact: true }).fill('07:00');
+  await page.getByPlaceholder('08:00', { exact: true }).fill('08:30');
+  await expect(visibleText(page, 'Högst 365 nya pass per omgång. Befintliga pass hoppas över.')).toBeVisible();
+  for (const value of ['1.5', '20abc', '0', '-2', '366']) {
+    await count.fill(value);
+    await visibleText(page, 'Skapa').click();
+    await expect(visibleText(page, 'Ange ett helt antal pass mellan 1 och 365.')).toBeVisible();
+    await expect(count).toHaveValue(value);
+    await expect(title).toHaveValue('QA antal utan trunkering');
+    expect((await qaAssignments(page)).filter(assignment => assignment.label === 'QA antal utan trunkering')).toEqual([]);
+  }
+  await screenshotModal(page, testInfo, count, 'recurring-invalid-count-retained.png');
+  await count.fill('');
+  await visibleText(page, 'Skapa').click();
+  await expect(title).toHaveCount(0);
+  const assignments = (await qaAssignments(page)).filter(assignment => assignment.label === 'QA antal utan trunkering');
+  expect(assignments).toHaveLength(1);
+  expect(assignments[0]).toMatchObject({ date: '2026-10-07', note: 'Slut: 08:30' });
+});
+
+test('Recurring total cap retains the date range and a shorter retry succeeds', async ({ page }, testInfo) => {
+  await page.goto('/calendar?qaDemo=1&view=all');
+  await page.getByRole('button', { name: 'Skapa återkommande pass', exact: true }).click();
+  const dates = page.getByPlaceholder('ÅÅÅÅ-MM-DD', { exact: true });
+  await dates.nth(0).fill('2026-10-07');
+  await dates.nth(1).fill('2034-01-01');
+  const title = page.getByPlaceholder('Mockning', { exact: true });
+  const count = page.getByPlaceholder('1', { exact: true });
+  await title.fill('QA begränsad omgång');
+  await count.fill('1');
+  await page.getByPlaceholder('07:00', { exact: true }).fill('07:00');
+  await page.getByPlaceholder('08:00', { exact: true }).fill('08:30');
+  await visibleText(page, 'Skapa').click();
+  const error = page.getByRole('alert').filter({ hasText: 'Högst 365 nya pass per omgång. Minska antal pass eller välj kortare datumintervall.' });
+  await expect(error).toBeVisible();
+  await expect(dates.nth(1)).toHaveValue('2034-01-01');
+  await expect(title).toHaveValue('QA begränsad omgång');
+  await expect(count).toHaveValue('1');
+  expect((await qaAssignments(page)).filter(assignment => assignment.label === 'QA begränsad omgång')).toEqual([]);
+  await screenshotModal(page, testInfo, error, 'recurring-total-cap-retained.png');
+  await dates.nth(1).fill('2026-10-07');
+  await visibleText(page, 'Skapa').click();
+  await expect(title).toHaveCount(0);
+  expect((await qaAssignments(page)).filter(assignment => assignment.label === 'QA begränsad omgång')).toHaveLength(1);
+});

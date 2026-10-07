@@ -17,7 +17,7 @@ import { Card, HeaderIconButton } from '@/components/Primitives';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ToastProvider';
 import { useAppData } from '@/context/AppDataContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, updateAccountSecurity } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { authRedirectUrl } from '@/lib/authRedirect';
@@ -74,12 +74,27 @@ export default function AccountSettingsScreen() {
   }, [router, signOut, toast]);
 
   const [security, setSecurity] = React.useState({
+    userId: user?.id,
     newPassword: '',
     confirmPassword: '',
     newEmail: '',
   });
   const [savingPassword, setSavingPassword] = React.useState(false);
   const [savingEmail, setSavingEmail] = React.useState(false);
+  const securityAccountRef = React.useRef({ userId: user?.id });
+  if (securityAccountRef.current.userId !== user?.id) {
+    securityAccountRef.current = { userId: user?.id };
+  }
+  React.useEffect(() => {
+    const account = { userId: user?.id };
+    securityAccountRef.current = account;
+    setSecurity({ userId: user?.id, newPassword: '', confirmPassword: '', newEmail: '' });
+    setSavingPassword(false);
+    setSavingEmail(false);
+    return () => {
+      if (securityAccountRef.current === account) securityAccountRef.current = { userId: undefined };
+    };
+  }, [user?.id]);
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const deletingRef = React.useRef(false);
@@ -97,7 +112,8 @@ export default function AccountSettingsScreen() {
   }, [pendingAccountDeletionId, user?.id]);
 
   const handleChangePassword = React.useCallback(async () => {
-    if (savingPassword) {
+    const account = securityAccountRef.current;
+    if (savingPassword || !account.userId || account.userId !== user?.id || security.userId !== account.userId) {
       return;
     }
     if (security.newPassword.length < 8) {
@@ -109,18 +125,25 @@ export default function AccountSettingsScreen() {
       return;
     }
     setSavingPassword(true);
-    const { error } = await supabase.auth.updateUser({ password: security.newPassword });
-    setSavingPassword(false);
-    if (error) {
+    try {
+      await updateAccountSecurity(account.userId, { password: security.newPassword });
+      if (securityAccountRef.current !== account) return;
+      setSecurity((prev) => ({ ...prev, newPassword: '', confirmPassword: '' }));
+      toast.showToast('Lösenordet är uppdaterat.', 'success');
+    } catch (error) {
+      console.warn('[account password] Lösenordsändringen kunde inte bekräftas', {
+        name: error instanceof Error ? error.name : 'Unknown',
+      });
+      if (securityAccountRef.current !== account) return;
       toast.showToast('Kunde inte byta lösenord. Logga in igen och försök på nytt.', 'error');
-      return;
+    } finally {
+      if (securityAccountRef.current === account) setSavingPassword(false);
     }
-    setSecurity((prev) => ({ ...prev, newPassword: '', confirmPassword: '' }));
-    toast.showToast('Lösenordet är uppdaterat.', 'success');
-  }, [savingPassword, security.newPassword, security.confirmPassword, toast]);
+  }, [savingPassword, security.newPassword, security.confirmPassword, security.userId, toast, user?.id]);
 
   const handleChangeEmail = React.useCallback(async () => {
-    if (savingEmail) {
+    const account = securityAccountRef.current;
+    if (savingEmail || !account.userId || account.userId !== user?.id || security.userId !== account.userId) {
       return;
     }
     const nextEmail = security.newEmail.trim();
@@ -133,18 +156,25 @@ export default function AccountSettingsScreen() {
       return;
     }
     setSavingEmail(true);
-    const { error } = await supabase.auth.updateUser(
-      { email: nextEmail },
-      { emailRedirectTo: authRedirectUrl('confirm') },
-    );
-    setSavingEmail(false);
-    if (error) {
+    try {
+      await updateAccountSecurity(
+        account.userId,
+        { email: nextEmail },
+        { emailRedirectTo: authRedirectUrl('confirm') },
+      );
+      if (securityAccountRef.current !== account) return;
+      setSecurity((prev) => ({ ...prev, newEmail: '' }));
+      toast.showToast('Bekräftelselänk skickad till den nya adressen.', 'success');
+    } catch (error) {
+      console.warn('[account email] E-poständringen kunde inte bekräftas', {
+        name: error instanceof Error ? error.name : 'Unknown',
+      });
+      if (securityAccountRef.current !== account) return;
       toast.showToast('Kunde inte byta e-post. Försök igen.', 'error');
-      return;
+    } finally {
+      if (securityAccountRef.current === account) setSavingEmail(false);
     }
-    setSecurity((prev) => ({ ...prev, newEmail: '' }));
-    toast.showToast('Bekräftelselänk skickad till den nya adressen.', 'success');
-  }, [savingEmail, security.newEmail, user?.email, toast]);
+  }, [savingEmail, security.newEmail, security.userId, user?.email, user?.id, toast]);
 
   const handleDeleteAccount = React.useCallback(async () => {
     if (deletingRef.current || deleting) {

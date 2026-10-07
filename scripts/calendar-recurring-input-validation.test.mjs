@@ -13,6 +13,7 @@ async function loadModule(source) {
 }
 
 const validators = await loadModule(await readFile(new URL('../lib/dateValidation.ts', import.meta.url), 'utf8'));
+const { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } = await loadModule(await readFile(new URL('../lib/schedule.ts', import.meta.url), 'utf8'));
 
 async function loadSubmit(dependencies) {
   const source = await readFile(new URL('../app/(tabs)/calendar.tsx', import.meta.url), 'utf8');
@@ -40,6 +41,7 @@ async function setup(startTime, endTime) {
   const draftUpdates = [];
   const submit = await loadSubmit({
     ...validators,
+    MAX_RECURRING_ASSIGNMENTS_PER_BATCH,
     recurringForm: form,
     actions: { createRecurringAssignments: async input => {
       calls.push(input);

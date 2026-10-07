@@ -67,7 +67,7 @@ const tourSteps = [
   },
   {
     title: 'Schema & standardpass',
-    text: 'Kolla dina rid-/stallpass, markera “kan inte” eller “klart”, och välj standarddagar så schemat fylls automatiskt.',
+    text: 'Kolla dina rid-/stallpass och markera “kan inte” eller “klart”. Välj standarddagar för automatisk tilldelning av passen som admin skapar.',
   },
   {
     title: 'Hagar & kartor',

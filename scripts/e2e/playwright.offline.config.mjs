@@ -43,6 +43,7 @@ export default {
   testDir: '.',
   testMatch: [
     '**/account-delete-quality.spec.mjs',
+    '**/account-security-quality.spec.mjs',
     '**/auth-forgot-password.spec.mjs',
     '**/auth-reset.spec.mjs',
     '**/auth-submit-recovery.spec.mjs',

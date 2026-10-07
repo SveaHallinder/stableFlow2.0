@@ -1,5 +1,7 @@
 import type { Assignment } from '@/context/AppDataContext';
 
+export const MAX_RECURRING_ASSIGNMENTS_PER_BATCH = 365;
+
 export type GroupedAssignmentDay = {
   isoDate: string;
   date: Date;

@@ -254,6 +254,36 @@ export async function updateRecoveryPassword(session: Session, password: string)
     await client.auth.stopAutoRefresh();
   }
 }
+// Bind account settings to the displayed account without letting a later login
+// redirect the write or letting its acknowledgement replace the primary session.
+export async function updateAccountSecurity(
+  expectedUserId: string,
+  attributes: { password?: string; email?: string },
+  options: { emailRedirectTo?: string } = {},
+): Promise<void> {
+  if (!expectedUserId || deletedAccountIds.has(expectedUserId)) throw new Error('The account is no longer available.');
+  const { data: current, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  const session = current.session;
+  if (session?.user.id !== expectedUserId || deletedAccountIds.has(expectedUserId)) {
+    throw new Error('The active account has changed.');
+  }
+  const client = createRecoveryClient();
+  try {
+    const { data: verified, error } = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+    if (error) throw error;
+    if (verified.session?.user.id !== expectedUserId || deletedAccountIds.has(expectedUserId)) {
+      throw new Error('The session could not be verified for this account.');
+    }
+    const { data: updated, error: updateError } = await client.auth.updateUser(attributes, options);
+    if (updateError) throw updateError;
+    if (updated.user?.id !== expectedUserId || deletedAccountIds.has(expectedUserId)) {
+      throw new Error('The account update could not be confirmed.');
+    }
+  } finally {
+    await client.auth.stopAutoRefresh();
+  }
+}
 supabase.auth.onAuthStateChange((event, session) => {
   if (session && deletedAccountIds.has(session.user.id)) return;
   const previous = passwordRecoverySession;

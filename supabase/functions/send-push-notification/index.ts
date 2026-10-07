@@ -32,18 +32,27 @@ async function getEligibleTokens(
   if (!userIds.length) return [];
 
   // Get tokens
-  const { data: tokens } = await supabase
+  const { data: tokens, error: tokenError } = await supabase
     .from("push_tokens")
     .select("user_id, token")
     .in("user_id", userIds);
 
+  if (tokenError) {
+    console.error("[push notification] Token lookup failed", { code: tokenError.code });
+    throw new Error("Push token lookup failed");
+  }
   if (!tokens?.length) return [];
 
   // Check preferences — users without a row default to all enabled
-  const { data: prefs } = await supabase
+  const { data: prefs, error: preferenceError } = await supabase
     .from("notification_preferences")
     .select("user_id, " + prefKey)
     .in("user_id", userIds);
+
+  if (preferenceError) {
+    console.error("[push notification] Preference lookup failed", { code: preferenceError.code });
+    throw new Error("Notification preference lookup failed");
+  }
 
   const disabledUsers = new Set(
     (prefs ?? [])
@@ -73,30 +82,56 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
   const text = record.text as string;
 
   // Get all members of this conversation except the author
-  const { data: members } = await supabase
+  const { data: members, error: memberError } = await supabase
     .from("conversation_members")
     .select("user_id")
     .eq("conversation_id", conversationId)
     .neq("user_id", authorId);
+  if (memberError) {
+    console.error("[push notification] Conversation member lookup failed", { code: memberError.code });
+    throw new Error("Conversation member lookup failed");
+  }
 
   // Also check if this is a stable group conversation
-  const { data: convo } = await supabase
+  const { data: convo, error: conversationError } = await supabase
     .from("conversations")
     .select("stable_id, is_group")
     .eq("id", conversationId)
     .single();
+  if (conversationError) {
+    console.error("[push notification] Conversation lookup failed", { code: conversationError.code });
+    throw new Error("Conversation lookup failed");
+  }
 
   let recipientIds: string[] = (members ?? []).map((m) => m.user_id);
 
   // For stable group chats, all stable members are recipients
   if (convo?.is_group && convo?.stable_id) {
-    const { data: stableMembers } = await supabase
+    const { data: stableMembers, error: stableMemberError } = await supabase
       .from("stable_members")
       .select("user_id")
       .eq("stable_id", convo.stable_id)
       .neq("user_id", authorId);
+    if (stableMemberError) {
+      console.error("[push notification] Stable member lookup failed", { code: stableMemberError.code });
+      throw new Error("Stable member lookup failed");
+    }
     const smIds = (stableMembers ?? []).map((m) => m.user_id);
     recipientIds = [...new Set([...recipientIds, ...smIds])];
+  }
+
+  if (recipientIds.length) {
+    const { data: blocks, error: blockError } = await supabase
+      .from("blocked_users")
+      .select("blocker_user_id")
+      .eq("blocked_user_id", authorId)
+      .in("blocker_user_id", recipientIds);
+    if (blockError) {
+      console.error("[push notification] Block preference lookup failed", { code: blockError.code });
+      throw new Error("Block preference lookup failed");
+    }
+    const blockers = new Set((blocks ?? []).map((row) => row.blocker_user_id));
+    recipientIds = recipientIds.filter(id => !blockers.has(id));
   }
 
   const tokens = await getEligibleTokens(recipientIds, "messages");
@@ -164,7 +199,11 @@ async function handleAlert(record: Record<string, unknown>): Promise<ExpoPushMes
   if (authorId) {
     query = query.neq("user_id", authorId);
   }
-  const { data: members } = await query;
+  const { data: members, error: memberError } = await query;
+  if (memberError) {
+    console.error("[push notification] Alert member lookup failed", { code: memberError.code });
+    throw new Error("Alert member lookup failed");
+  }
 
   const recipientIds = (members ?? []).map((m) => m.user_id);
   const tokens = await getEligibleTokens(recipientIds, "reminders");
@@ -198,7 +237,15 @@ async function sendToExpo(messages: ExpoPushMessage[]): Promise<void> {
       body: JSON.stringify(chunk),
     });
     if (!res.ok) {
-      console.error("Expo push error:", res.status, await res.text());
+      console.error("[push notification] Provider rejected request", { status: res.status });
+      throw new Error("Expo rejected push request");
+    }
+    const acknowledgement = await res.json();
+    if (!Array.isArray(acknowledgement?.data) || acknowledgement.data.length !== chunk.length
+      || acknowledgement.data.some((ticket: { status?: unknown; id?: unknown } | null) =>
+        ticket?.status !== "ok" || typeof ticket.id !== "string" || !ticket.id)) {
+      console.error("[push notification] Provider acknowledgement unverified", { count: chunk.length });
+      throw new Error("Expo push acknowledgement unverified");
     }
   }
 }
@@ -239,8 +286,8 @@ Deno.serve(async (req) => {
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
-    console.error("Push notification error:", err);
-    return new Response(JSON.stringify({ error: String(err) }), {
+    console.error("[push notification] Delivery failed", { name: err instanceof Error ? err.name : "Unknown" });
+    return new Response(JSON.stringify({ error: "push_failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
