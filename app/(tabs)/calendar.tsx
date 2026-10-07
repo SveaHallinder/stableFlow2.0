@@ -51,6 +51,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { NewAssignmentModal } from '@/components/NewAssignmentModal';
+import { isValidTime } from '@/lib/dateValidation';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
@@ -330,6 +331,7 @@ export default function CalendarScreen() {
   const [assignmentSaveErrors, setAssignmentSaveErrors] = React.useState<Record<string, string>>({});
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
+  const [recurringSaveError, setRecurringSaveError] = React.useState<string | null>(null);
   const toast = useToast();
   const focusDate = React.useMemo(() => {
     const raw = Array.isArray(date) ? date[0] : date;
@@ -939,6 +941,7 @@ export default function CalendarScreen() {
 
   const openRecurringModal = React.useCallback(() => {
     setRecurringForm(buildRecurringDefaults());
+    setRecurringSaveError(null);
     setRecurringModalVisible(true);
   }, [buildRecurringDefaults]);
 
@@ -954,17 +957,30 @@ export default function CalendarScreen() {
 
   const handleCreateRecurringAssignments = React.useCallback(() => {
     const submittedForm = recurringForm;
+    setRecurringSaveError(null);
+    const startTime = recurringForm.startTime.trim();
+    const endTime = recurringForm.endTime.trim();
+    if (endTime && !isValidTime(endTime)) {
+      setRecurringSaveError('Ange en giltig sluttid i formatet HH:MM (00:00–23:59).');
+      return;
+    }
     const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
     const slotsCount =
       Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
-    const durationMinutes = recurringForm.endTime
-      ? calculateDurationMinutes(recurringForm.startTime, recurringForm.endTime)
+    const durationMinutes = endTime
+      ? calculateDurationMinutes(startTime, endTime)
       : null;
+    if (endTime && durationMinutes === null) {
+      setRecurringSaveError(isValidTime(startTime)
+        ? 'Sluttiden måste vara efter starttiden.'
+        : 'Ange en giltig starttid i formatet HH:MM.');
+      return;
+    }
     const payload: CreateRecurringAssignmentsInput = {
       dateFrom: recurringForm.dateFrom,
       dateTo: recurringForm.dateTo,
       weekdays: recurringForm.weekdays,
-      startTime: recurringForm.startTime,
+      startTime,
       durationMinutes: durationMinutes ?? undefined,
       title: recurringForm.title,
       slotsCount,
@@ -980,6 +996,7 @@ export default function CalendarScreen() {
         return;
       }
       setRecurringForm(submittedForm);
+      setRecurringSaveError(result.reason);
       setRecurringModalVisible(true);
       toast.showToast(result.reason, 'error');
     });
@@ -2548,6 +2565,7 @@ export default function CalendarScreen() {
             >
               <Card tone="muted" style={styles.modalCard}>
                 <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+                {recurringSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{recurringSaveError}</Text>}
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Startdatum</Text>

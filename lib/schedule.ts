@@ -106,7 +106,9 @@ export function findInitialWeekIndex(
     return 0;
   }
 
-  const referenceTime = referenceDate.getTime();
+  const referenceDay = new Date(referenceDate);
+  referenceDay.setHours(0, 0, 0, 0);
+  const referenceTime = referenceDay.getTime();
   const containingIndex = weeks.findIndex(
     (week) => referenceTime >= week.start.getTime() && referenceTime <= week.end.getTime(),
   );

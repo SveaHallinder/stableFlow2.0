@@ -432,6 +432,7 @@ export type MessagePreview = {
   group?: boolean;
   avatar?: ImageSourcePropType;
   stableId?: string;
+  participantUserIds?: string[];
 };
 
 export type ConversationMessage = {
@@ -3047,6 +3048,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const refreshRequestId = React.useRef(0);
   const pendingDataWrites = React.useRef(new Set<string>());
+  const privateConversationAttempts = React.useRef(new Map<string, string>());
   const paddockSaveAttempts = React.useRef(new Map<string, {
     signature: string;
     requestId: string;
@@ -5238,6 +5240,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           },
           {},
         );
+        conversationRows = conversationRows.filter((row) =>
+          row.is_group || membersByConversation[row.id]?.includes(authUser.id));
 
         // PII-safe: co-member name/avatar/location come from get_member_directory()
         // (phone masked for non-admins). The base profiles table is self-only RLS, so a
@@ -5513,6 +5517,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               group: row.is_group ?? false,
               stableId: row.stable_id ?? undefined,
               avatar,
+              participantUserIds: row.is_group ? undefined : membersByConversation[row.id] ?? [],
             };
             return { preview, sortMs };
           })
@@ -5815,8 +5820,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         setRefreshError(null);
         return { success: true };
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Ett okänt fel inträffade.';
-        return fail(message);
+        console.warn('[stable refresh] Kunde inte uppdatera stalldata', error instanceof Error ? error.name : 'Unknown');
+        return fail('Kunde inte uppdatera stalldata. Försök igen.');
       } finally {
         if (requestId === refreshRequestId.current) {
           setHydrating(false);
@@ -6893,71 +6898,109 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         };
       }
 
-      // Look through conversations for an existing private chat with this user
+      const key = `private-conversation:${current.currentUserId}:${otherUserId}`;
+      // A private chat can be empty or contain only our messages. Use membership,
+      // falling back to message authors for older local/demo previews.
       for (const preview of current.messages) {
         if (preview.group) continue;
         const msgs = current.conversations[preview.id] ?? [];
-        const participants = new Set<string>();
-        participants.add(current.currentUserId);
-        msgs.forEach((m) => participants.add(m.authorId));
-        if (participants.has(otherUserId)) {
+        const participants = preview.participantUserIds ?? [current.currentUserId, ...msgs.map((m) => m.authorId)];
+        if (participants.includes(current.currentUserId) && participants.includes(otherUserId)) {
+          privateConversationAttempts.current.delete(key);
           return { success: true, data: preview.id };
         }
       }
 
-      // Create new conversation. qaDemo is backend-free, so fabricate a local id and
-      // skip the Supabase round-trip (which would otherwise fail and block the chat).
-      let conversationId: string;
-      if (isQaDemoMode) {
-        conversationId = generateId();
-      } else {
-        const { data: conversationData, error: convError } = await supabase
-          .from('conversations')
-          .insert({
-            is_group: false,
-            created_by_user_id: current.currentUserId,
-          })
-          .select('id')
-          .single();
-
-        if (convError || !conversationData) {
-          return { success: false, reason: 'Kunde inte skapa konversation.' };
-        }
-
-        conversationId = conversationData.id;
-
-        // Add both users as conversation members
-        const { error: memberError } = await supabase
-          .from('conversation_members')
-          .insert([
-            { conversation_id: conversationId, user_id: current.currentUserId },
-            { conversation_id: conversationId, user_id: otherUserId },
-          ]);
-
-        if (memberError) {
-          console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
-        }
+      if (pendingDataWrites.current.has(key)) {
+        return { success: false, reason: 'Chatten öppnas redan. Vänta ett ögonblick.' };
       }
-
-      // Add preview to local state
-      const otherUser = current.users[otherUserId];
-      const preview: MessagePreview = {
-        id: conversationId,
-        title: otherUser?.name ?? 'Okänd',
-        subtitle: 'Privat chatt',
-        description: 'Inga meddelanden ännu',
-        timeAgo: '',
-        unreadCount: 0,
-        group: false,
-        avatar: otherUser?.avatar,
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Chattstarten kunde inte bekräftas.')), { once: true }));
+      const contextChanged = () => stateRef.current.currentUserId !== current.currentUserId
+        || stateRef.current.sessionUserId !== current.sessionUserId
+        || stateRef.current.currentStableId !== current.currentStableId;
+      const changedContextResult: ActionResult<string> = {
+        success: false, reason: 'Stall eller användare ändrades. Öppna medlemmen igen för att starta chatten.',
       };
 
-      dispatch({
-        type: 'CONVERSATION_APPEND',
-        payload: { conversationId, preview },
-      });
+      try {
+        // Keep this ID across lost receipts, including the render after success.
+        const conversationId = privateConversationAttempts.current.get(key) ?? generateId();
+        privateConversationAttempts.current.set(key, conversationId);
+        if (!isQaDemoMode) {
+          let { data: conversationData, error: convError } = await Promise.race([
+            supabase.from('conversations').insert({
+              id: conversationId,
+              stable_id: null,
+              is_group: false,
+              created_by_user_id: current.currentUserId,
+            }).select('id,created_by_user_id,is_group,stable_id').abortSignal(controller.signal).single(),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (convError?.code === '23505') {
+            ({ data: conversationData, error: convError } = await Promise.race([
+              supabase.from('conversations').select('id,created_by_user_id,is_group,stable_id')
+                .eq('id', conversationId).eq('created_by_user_id', current.currentUserId)
+                .eq('is_group', false).is('stable_id', null).abortSignal(controller.signal).single(),
+              aborted,
+            ]));
+          }
+          if (contextChanged()) return changedContextResult;
+          if (convError || conversationData?.id !== conversationId
+            || conversationData.created_by_user_id !== current.currentUserId
+            || conversationData.is_group !== false || conversationData.stable_id !== null) {
+            throw convError ?? new Error('Servern bekräftade inte konversationen.');
+          }
 
-      return { success: true, data: conversationId };
+          const { error: memberError } = await Promise.race([
+            supabase.from('conversation_members').insert([
+              { conversation_id: conversationId, user_id: current.currentUserId },
+              { conversation_id: conversationId, user_id: otherUserId },
+            ]).abortSignal(controller.signal),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (memberError && memberError.code !== '23505') throw memberError;
+          // SELECT runs in a separate statement so membership RLS sees the insert.
+          const { data: memberData, error: receiptError } = await Promise.race([
+            supabase.from('conversation_members').select('conversation_id,user_id')
+              .eq('conversation_id', conversationId).abortSignal(controller.signal),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (receiptError || ![current.currentUserId, otherUserId].every((userId) =>
+            memberData?.some((row) => row.conversation_id === conversationId && row.user_id === userId))) {
+            throw receiptError ?? new Error('Servern bekräftade inte chattmedlemmarna.');
+          }
+        }
+        if (contextChanged()) return changedContextResult;
+
+        const otherUser = current.users[otherUserId];
+        const preview: MessagePreview = {
+          id: conversationId,
+          title: otherUser?.name ?? 'Okänd',
+          subtitle: 'Privat chatt',
+          description: 'Inga meddelanden ännu',
+          timeAgo: '',
+          unreadCount: 0,
+          group: false,
+          avatar: otherUser?.avatar,
+          participantUserIds: [current.currentUserId, otherUserId],
+        };
+        dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, preview } });
+        return { success: true, data: conversationId };
+      } catch (error) {
+        console.warn('[chat create] Kunde inte starta privat chatt', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: 'Chatten kunde inte startas. Försök igen.' };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(key);
+      }
     },
     [],
   );

@@ -91,10 +91,8 @@ export default function MembersScreen() {
   }, [state.currentStableId, stableFilter]);
 
   React.useEffect(() => {
-    if (initialQuery && initialQuery !== query) {
-      setQuery(initialQuery);
-    }
-  }, [initialQuery, query]);
+    setQuery(initialQuery);
+  }, [initialQuery]);
 
   const membershipByStable = React.useMemo(() => {
     return new Map(currentUser?.membership?.map((entry) => [entry.stableId, entry]) ?? []);
