@@ -747,7 +747,7 @@ export type CompleteCareEventInput = {
   note?: string;
 };
 
-export type InviteConfirmation = { inviteCode: string; codes: { stableId: string; code: string }[] };
+export type InviteConfirmation = { email: string; inviteCode: string; codes: { stableId: string; code: string }[] };
 
 export type AddMemberInput = {
   name: string;
@@ -3493,6 +3493,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (isQaDemoMode) return { success: true, data: horse };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Sparningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas.');
         const payload: Record<string, unknown> = { id: horse.id, stable_id: horse.stableId };
@@ -3508,7 +3510,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const uploadable = input.image ? getUploadableImage(input.image) : null;
           if (uploadable) {
             payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
-              : (await uploadImageToStorage('avatars', horse.stableId, uploadable)).publicUrl;
+              : (await Promise.race([uploadImageToStorage('avatars', horse.stableId, uploadable), aborted])).publicUrl;
           } else if (!input.image) {
             payload.image_url = null;
           }
@@ -3516,7 +3518,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const query = existing
           ? supabase.from('horses').update(payload).eq('id', horse.id).eq('stable_id', horse.stableId)
           : supabase.from('horses').upsert(payload);
-        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
+        const { data, error } = await Promise.race([query.select('*').abortSignal(controller.signal).single(), aborted]);
         if (error || data?.id !== horse.id || data.stable_id !== horse.stableId
           || Object.entries(payload).some(([field, value]) => data[field] !== value)) {
           throw error ?? new Error('Servern bekräftade inte hästen.');
@@ -3530,6 +3532,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         } };
       } catch (error) {
         console.warn('[horse save] Kunde inte spara häst', error);
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Sparningen kunde inte bekräftas. Dina uppgifter finns kvar. Uppdatera hästlistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hästen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3541,15 +3546,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (isQaDemoMode) return { success: true };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Borttagningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const { data, error } = await supabase.from('horses').delete().eq('id', horse.id)
-          .eq('stable_id', horse.stableId).select('id').abortSignal(controller.signal);
+        const { data, error } = await Promise.race([
+          supabase.from('horses').delete().eq('id', horse.id)
+            .eq('stable_id', horse.stableId).select('id').abortSignal(controller.signal),
+          aborted,
+        ]);
         if (error) throw error;
         if (!data?.some((row) => row.id === horse.id)) throw new Error('Servern bekräftade inte borttagningen av hästen.');
         return { success: true };
       } catch (error) {
         console.warn('[horse delete] Kunde inte ta bort häst', error);
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Borttagningen kunde inte bekräftas. Uppdatera hästlistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hästen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4726,7 +4739,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           })) throw error ?? new Error('Servern bekräftade inte alla inbjudningar.');
         }
         pendingInviteDrafts.current.delete(key);
-        return { success: true, data: { inviteCode: draft.code,
+        return { success: true, data: { email: String(draft.rows[0].email), inviteCode: draft.code,
           codes: draft.rows.map((row) => ({ stableId: String(row.stable_id), code: String(row.code) })) } };
       } catch (error) {
         console.warn('[invite create] Kunde inte skapa inbjudan', error);

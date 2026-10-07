@@ -68,6 +68,19 @@ Deno.serve(async (req) => {
       return json({ error: "unauthorized" }, 401);
     }
     const uid = userData.user.id;
+    let body: { expected_user_id?: unknown };
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "invalid_request" }, 400);
+    }
+    if (typeof body?.expected_user_id !== "string" || !body.expected_user_id) {
+      return json({ error: "invalid_request" }, 400);
+    }
+    if (body.expected_user_id !== uid) {
+      logFailure("caller changed before deletion");
+      return json({ error: "account_changed" }, 409);
+    }
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
@@ -109,7 +122,7 @@ Deno.serve(async (req) => {
       return json({ error: "delete_unconfirmed" }, 500);
     }
 
-    return json({ deleted: true }, 200);
+    return json({ deleted: true, user_id: uid }, 200);
   } catch (error) {
     logFailure("unexpected deletion failure", error);
     return json({ error: "delete_failed" }, 500);

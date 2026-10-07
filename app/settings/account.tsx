@@ -27,7 +27,7 @@ const palette = theme.colors;
 export default function AccountSettingsScreen() {
   const router = useRouter();
   const toast = useToast();
-  const { signOut, user } = useAuth();
+  const { signOut, finishAccountDeletion, pendingAccountDeletionId, user } = useAuth();
   const { state, actions } = useAppData();
   const currentUser = state.users[state.currentUserId];
   const isDesktopWeb = useIsDesktopWeb();
@@ -83,6 +83,18 @@ export default function AccountSettingsScreen() {
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const deletingRef = React.useRef(false);
+  const deletedAccountRef = React.useRef<string | null>(pendingAccountDeletionId === user?.id ? pendingAccountDeletionId : null);
+  const [needsSessionCleanup, setNeedsSessionCleanup] = React.useState(Boolean(deletedAccountRef.current));
+
+  React.useEffect(() => {
+    if (pendingAccountDeletionId && pendingAccountDeletionId === user?.id) {
+      deletedAccountRef.current = pendingAccountDeletionId;
+      setNeedsSessionCleanup(true);
+    } else if (deletedAccountRef.current && deletedAccountRef.current !== user?.id) {
+      deletedAccountRef.current = null;
+      setNeedsSessionCleanup(false);
+    }
+  }, [pendingAccountDeletionId, user?.id]);
 
   const handleChangePassword = React.useCallback(async () => {
     if (savingPassword) {
@@ -138,48 +150,80 @@ export default function AccountSettingsScreen() {
     if (deletingRef.current || deleting) {
       return;
     }
-    if (!confirmingDelete) {
+    if (!deletedAccountRef.current && !confirmingDelete) {
       setConfirmingDelete(true);
       return;
     }
     deletingRef.current = true;
     setDeleting(true);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const unconfirmedMessage = 'Raderingen kunde inte bekräftas. Kontrollera kontot innan du försöker igen.';
+    const cleanupMessage = 'Kontot har raderats, men den lokala sessionen kunde inte rensas. Tryck på Rensa session och logga ut för att försöka igen.';
+    const changedAccountMessage = 'Det inloggade kontot har ändrats. Ingen lokal session har rensats.';
     try {
-      const { data, error } = await supabase.functions.invoke('delete-account', { method: 'POST', signal: controller.signal });
-      if (error) {
-        let reason = unconfirmedMessage;
-        const ctx = (error as { context?: { json?: () => Promise<{ error?: unknown }> } }).context;
-        if (typeof ctx?.json === 'function') {
-          const body = await ctx.json();
-          if (body?.error === 'sole_owner') {
-            reason = 'Du är ensam ägare av ett stall. Utse en ny ägare först.';
+      if (!deletedAccountRef.current) {
+        if (!user?.id) throw new Error('The account could not be identified.');
+        const controller = new AbortController();
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error('Account deletion verification timed out.'));
+          }, 15_000);
+        });
+        const { data, error } = await Promise.race([
+          supabase.functions.invoke('delete-account', {
+            method: 'POST', signal: controller.signal, body: { expected_user_id: user.id },
+          }), deadline,
+        ]);
+        if (error) {
+          let reason = unconfirmedMessage;
+          const ctx = (error as { context?: { json?: () => Promise<{ error?: unknown }> } }).context;
+          if (typeof ctx?.json === 'function') {
+            const body = await Promise.race([ctx.json(), deadline]);
+            if (body?.error === 'sole_owner') {
+              reason = 'Du är ensam ägare av ett stall. Utse en ny ägare först.';
+            } else if (body?.error === 'account_changed') {
+              reason = changedAccountMessage;
+            }
           }
+          toast.showToast(reason, 'error');
+          return;
         }
-        toast.showToast(reason, 'error');
+        if (data?.deleted !== true || data?.user_id !== user.id) {
+          toast.showToast(unconfirmedMessage, 'error');
+          return;
+        }
+        deletedAccountRef.current = user.id;
+      }
+      if (timeout !== undefined) clearTimeout(timeout);
+      timeout = undefined;
+      const cleanupDeadline = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Local account session cleanup timed out.')), 10_000);
+      });
+      const cleared = await Promise.race([finishAccountDeletion(deletedAccountRef.current), cleanupDeadline]);
+      if (cleared !== true) {
+        deletedAccountRef.current = null;
+        setNeedsSessionCleanup(false);
+        toast.showToast(changedAccountMessage, 'error');
         return;
       }
-      if (data?.deleted !== true) {
-        toast.showToast(unconfirmedMessage, 'error');
-        return;
-      }
+      setNeedsSessionCleanup(false);
       toast.showToast('Ditt konto har raderats.', 'success');
-      await signOut().catch(() => undefined);
       router.replace('/(auth)');
     } catch (error) {
-      console.warn('[account delete] Raderingen kunde inte bekräftas', {
+      console.warn('[account delete] Avslutet kunde inte bekräftas', {
+        stage: deletedAccountRef.current ? 'local session cleanup' : 'deletion verification',
         name: error instanceof Error ? error.name : 'unknown',
       });
-      toast.showToast(unconfirmedMessage, 'error');
+      setNeedsSessionCleanup(Boolean(deletedAccountRef.current));
+      toast.showToast(deletedAccountRef.current ? cleanupMessage : unconfirmedMessage, 'error');
     } finally {
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
       deletingRef.current = false;
       setDeleting(false);
       setConfirmingDelete(false);
     }
-  }, [deleting, confirmingDelete, toast, signOut, router]);
+  }, [deleting, confirmingDelete, toast, finishAccountDeletion, user?.id, router]);
 
   const handleSave = React.useCallback(async () => {
     if (!currentUser || savingProfileRef.current) {
@@ -389,20 +433,27 @@ export default function AccountSettingsScreen() {
               stallhistorik kan finnas kvar. Raderingen går inte att ångra. Är du ensam ägare
               av ett stall behöver du utse en ny ägare först.
             </Text>
+            {needsSessionCleanup ? (
+              <Text accessibilityRole="alert" style={styles.sectionHint}>
+                Kontot har raderats. Den lokala sessionen behöver rensas. Försök igen med knappen nedan.
+              </Text>
+            ) : null}
             <TouchableOpacity
               style={[styles.dangerButton, deleting && styles.saveButtonDisabled]}
               onPress={handleDeleteAccount}
               activeOpacity={0.85}
               disabled={deleting}
               accessibilityRole="button"
-              accessibilityLabel={confirmingDelete ? 'Bekräfta radering av konto' : 'Radera konto'}
+              accessibilityLabel={needsSessionCleanup ? 'Rensa session och logga ut' : confirmingDelete ? 'Bekräfta radering av konto' : 'Radera konto'}
             >
               <Text style={styles.dangerText}>
                 {deleting
                   ? 'Raderar...'
-                  : confirmingDelete
-                    ? 'Tryck igen för att bekräfta'
-                    : 'Radera mitt konto'}
+                  : needsSessionCleanup
+                    ? 'Rensa session och logga ut'
+                    : confirmingDelete
+                      ? 'Tryck igen för att bekräfta'
+                      : 'Radera mitt konto'}
               </Text>
             </TouchableOpacity>
             {confirmingDelete && !deleting ? (

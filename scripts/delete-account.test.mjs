@@ -58,10 +58,10 @@ async function loadHandler(overrides = {}) {
   return { handler: capture.handler, calls, logs };
 }
 
-function request(method = 'POST', authorization = 'Bearer synthetic-user-jwt') {
+function request(method = 'POST', authorization = 'Bearer synthetic-user-jwt', body = { expected_user_id: actor }) {
   return new globalThis.Request('https://synthetic.example.test/functions/v1/delete-account', {
     method, headers: authorization ? { Authorization: authorization } : {},
-    ...(method === 'POST' ? { body: JSON.stringify({ uid: '22222222-2222-2222-2222-222222222222' }) } : {}),
+    ...(method === 'POST' ? { body: typeof body === 'string' ? body : JSON.stringify(body) } : {}),
   });
 }
 
@@ -85,6 +85,26 @@ test('delete-account rejects a missing bearer token or invalid caller before adm
   const second = await loadHandler({ userResult: { data: null, error: new Error('Synthetic invalid JWT') } });
   assert.equal((await second.handler(request())).status, 401);
   assert.deepEqual(second.calls, [['createClient']]);
+});
+
+test('delete-account verifies the expected caller before any administrative read or deletion', async () => {
+  const { handler, calls, logs } = await loadHandler();
+  const response = await handler(request('POST', 'Bearer synthetic-other-session', { expected_user_id: 'other-account' }));
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: 'account_changed' });
+  assert.deepEqual(calls, [['createClient']]);
+  assert.match(logs[0][0], /^\[delete account\]/);
+  assert.doesNotMatch(JSON.stringify(logs), /other-account|synthetic-other-session/);
+});
+
+test('delete-account rejects a missing or malformed expected caller without administrative access', async () => {
+  for (const body of [{}, null, { expected_user_id: 123 }, { expected_user_id: '' }, 'invalid JSON']) {
+    const { handler, calls } = await loadHandler();
+    const response = await handler(request('POST', 'Bearer synthetic-user-jwt', body));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid_request' });
+    assert.deepEqual(calls, [['createClient']]);
+  }
 });
 
 test('delete-account blocks the last owner even when the stable has only one member', async () => {
@@ -133,7 +153,7 @@ test('delete-account uses the verified caller and performs no public cleanup bef
   const { handler, calls } = await loadHandler();
   const response = await handler(request());
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { deleted: true });
+  assert.deepEqual(await response.json(), { deleted: true, user_id: actor });
   assert.deepEqual(calls.filter(([method]) => method === 'deleteUser'), [['deleteUser', actor]]);
   assert.ok(calls.filter(([method]) => method === 'from').every(([, table]) => table === 'stable_members'));
   assert.ok(calls.some(call => call[0] === 'eq' && call[1] === 'role' && call[2] === 'admin'));

@@ -27,6 +27,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
+          <string>stableflow</string>
           <string>myapp</string>
           <string>com.stableflow.app</string>
         </array>

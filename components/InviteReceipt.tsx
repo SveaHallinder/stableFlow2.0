@@ -9,10 +9,31 @@ export function InviteReceipt({ confirmation }: { confirmation: InviteConfirmati
   const { state } = useAppData();
   const toast = useToast();
   if (!confirmation) return null;
+  const loginInstruction = confirmation.email
+    ? `Logga in med ${confirmation.email}.`
+    : 'Logga in med samma e-postadress som inbjudan skapades för.';
+  const signupInstruction = 'Vid nytt konto: välj Skapa konto → Har inbjudan och använd samma e-postadress.';
+  const codeInstruction = 'Den personliga koden kan användas när du skapar konto. I Gå med använder du en stallkod.';
+  const instructions = [loginInstruction, signupInstruction, codeInstruction,
+    ...confirmation.codes.map(({ stableId, code }) => `${state.stables.find(stable => stable.id === stableId)?.name ?? 'Stall'}: ${code}`),
+  ].join('\n');
   return (
     <View style={styles.receipt} accessibilityLiveRegion="polite">
       <Text style={styles.title}>Inbjudan skapad</Text>
-      <Text style={styles.description}>Du kan dela koden direkt med mottagaren.</Text>
+      <Text style={styles.description}>Mejlleverans är inte bekräftad. Dela koden och instruktionerna direkt med mottagaren.</Text>
+      <Text selectable style={styles.description}>{loginInstruction}</Text>
+      <Text selectable style={styles.description}>{signupInstruction}</Text>
+      <Text selectable style={styles.description}>{codeInstruction}</Text>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Kopiera inbjudan med instruktioner"
+        style={styles.copy} onPress={async () => {
+          try {
+            if (!(await Clipboard.setStringAsync(instructions))) throw new Error('Klippbordet bekräftade inte kopieringen.');
+            toast.showToast('Inbjudan med instruktioner är kopierad.', 'success');
+          }
+          catch (error) { console.warn('[invite copy] Kunde inte kopiera instruktioner', error); toast.showToast('Instruktionerna kunde inte kopieras. Markera och kopiera dem manuellt.', 'error'); }
+        }}>
+        <Text style={styles.title}>Kopiera inbjudan med instruktioner</Text>
+      </TouchableOpacity>
       {confirmation.codes.map(({ stableId, code }) => (
         <View key={stableId} style={styles.row}>
           <View style={{ flex: 1 }}>
@@ -21,7 +42,10 @@ export function InviteReceipt({ confirmation }: { confirmation: InviteConfirmati
           </View>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Kopiera inbjudningskod ${code}`}
             style={styles.copy} onPress={async () => {
-              try { await Clipboard.setStringAsync(code); toast.showToast('Inbjudningskoden är kopierad.', 'success'); }
+              try {
+                if (!(await Clipboard.setStringAsync(code))) throw new Error('Klippbordet bekräftade inte kopieringen.');
+                toast.showToast('Inbjudningskoden är kopierad.', 'success');
+              }
               catch (error) { console.warn('[invite copy] Kunde inte kopiera kod', error); toast.showToast('Koden kunde inte kopieras. Markera och kopiera den manuellt.', 'error'); }
             }}>
             <Text style={styles.title}>Kopiera</Text>

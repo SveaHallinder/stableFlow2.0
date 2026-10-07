@@ -119,3 +119,83 @@ test('horse persistence accepts confirmed edits without overwriting omitted fiel
   assert.equal(result.data.canSleepInside, true);
   assert.equal(result.data.note, undefined);
 });
+
+async function loadTimedPersistence(name) {
+  const capture = { queries: 0, timers: [], cleared: [], logs: [] };
+  const response = new Promise(resolve => { capture.finishRequest = resolve; });
+  const image = new Promise(resolve => { capture.finishImage = resolve; });
+  const query = {
+    update(payload) { capture.payload = payload; return this; },
+    upsert(payload) { capture.payload = payload; return this; },
+    delete() { return this; }, eq() { return this; }, select() { return this; },
+    abortSignal(signal) { capture.signal = signal; return this; },
+    single: () => response,
+    then: (...args) => response.then(...args),
+  };
+  const persist = await loadAction(name, {
+    isQaDemoMode: false, user: { id: 'user' },
+    supabase: { from() { capture.queries += 1; return query; } },
+    getUploadableImage: value => value, isRemoteUri: uri => uri.startsWith('https://'),
+    uploadImageToStorage: () => image,
+    setTimeout(callback, delay) { capture.timers.push({ callback, delay }); return capture.timers.length; },
+    clearTimeout: timer => capture.cleared.push(timer),
+    console: { warn: (...args) => capture.logs.push(args) },
+  });
+  return { persist, capture };
+}
+
+async function settleMicrotasks() {
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
+}
+
+test('horse image preparation times out without starting a late save', async () => {
+  const { persist, capture } = await loadTimedPersistence('persistHorseUpsert');
+  let result;
+  const operation = persist({ id: 'horse', stableId: 'stable', name: 'Mira' },
+    { image: { uri: 'file:///synthetic-horse.jpg' } }, true).then(value => { result = value; });
+  assert.equal(capture.queries, 0);
+  assert.equal(capture.timers[0].delay, 15_000);
+  capture.timers[0].callback();
+  await settleMicrotasks();
+  assert.equal(result?.success, false, 'The actual callback must settle at its deadline');
+  assert.match(result.reason, /bekräftas/);
+  assert.deepEqual(capture.cleared, [1]);
+  assert.match(capture.logs[0][0], /^\[horse save\]/);
+  capture.finishImage({ publicUrl: 'https://example.test/late-horse.jpg' });
+  await operation;
+  await settleMicrotasks();
+  assert.equal(capture.queries, 0, 'A late upload must not start an expired save');
+});
+
+for (const [actionName, persistenceName] of [['upsertHorse', 'persistHorseUpsert'], ['deleteHorse', 'persistHorseDelete']]) {
+  test(`${actionName} releases its lock and ignores a late acknowledgement after timeout`, async () => {
+    const { persist, capture } = await loadTimedPersistence(persistenceName);
+    const horse = { id: 'horse', stableId: 'stable', name: 'Mira' };
+    const dispatched = [];
+    const pendingDataWrites = { current: new Set() };
+    const action = await loadAction(actionName, {
+      stateRef: { current: { horses: [horse] } }, ensurePermission: () => ({ success: true }),
+      dispatch: value => dispatched.push(value), generateId: () => 'new-horse',
+      pendingDataWrites, dataWriteVersion: { current: 0 }, trackDataWrite() {},
+      [persistenceName]: persist,
+    });
+    let result;
+    const operation = (actionName === 'upsertHorse'
+      ? action({ id: 'horse', stableId: 'stable', name: 'Mira II' }) : action('horse'))
+      .then(value => { result = value; });
+    assert.ok(pendingDataWrites.current.has('horse:horse'));
+    capture.timers[0].callback();
+    await settleMicrotasks();
+    assert.equal(result?.success, false, 'Transport ignoring AbortSignal must not keep the UI pending');
+    assert.match(result.reason, /bekräftas/);
+    assert.equal(capture.signal.aborted, true);
+    assert.equal(pendingDataWrites.current.size, 0);
+    assert.deepEqual(dispatched, []);
+    assert.deepEqual(capture.cleared, [1]);
+    capture.finishRequest({ data: actionName === 'upsertHorse'
+      ? { ...horseRow, name: 'Mira II' } : [{ id: 'horse' }], error: null });
+    await operation;
+    await settleMicrotasks();
+    assert.deepEqual(dispatched, [], 'A late response must not change local horse state');
+  });
+}
