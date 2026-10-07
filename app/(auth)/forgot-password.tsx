@@ -27,6 +27,7 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [formError, setFormError] = React.useState<string | null>(null);
 
   const handleSend = React.useCallback(async () => {
     if (submitting) {
@@ -42,22 +43,30 @@ export default function ForgotPasswordScreen() {
       return;
     }
     if (!supabaseConfig.isConfigured) {
-      toast.showToast('Supabase är inte konfigurerad. Starta om Expo och kontrollera .env.', 'error');
+      toast.showToast('Återställning är inte tillgänglig just nu. Försök igen senare.', 'error');
       return;
     }
     setSubmitting(true);
     setMessage(null);
-    const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
-      redirectTo: authRedirectUrl('reset'),
-    });
-    if (error) {
-      toast.showToast(error.message || 'Kunde inte skicka återställningslänken.', 'error');
+    setFormError(null);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(trimmedEmail, {
+        redirectTo: authRedirectUrl('reset'),
+      });
+      if (error) throw error;
+      const confirmation = 'Om adressen har ett konto får du en återställningslänk. Kontrollera även skräpposten.';
+      toast.showToast(confirmation, 'success');
+      setMessage(confirmation);
+    } catch (error) {
+      console.warn('[auth forgot-password] Kunde inte skicka återställningslänken', { name: error instanceof Error ? error.name : 'Unknown' });
+      const errorMessage = typeof error === 'object' && error !== null && 'status' in error && error.status === 429
+        ? 'För många försök. Vänta en stund innan du skickar en ny återställningslänk.'
+        : 'Kunde inte skicka återställningslänken. Din e-post finns kvar. Försök igen.';
+      setFormError(errorMessage);
+      toast.showToast(errorMessage, 'error');
+    } finally {
       setSubmitting(false);
-      return;
     }
-    toast.showToast('Kolla din mail', 'success');
-    setMessage('Kolla din mail.');
-    setSubmitting(false);
   }, [email, submitting, toast]);
 
   return (
@@ -91,9 +100,13 @@ export default function ForgotPasswordScreen() {
                 />
               </View>
 
+              {formError ? <Text accessibilityRole="alert" style={styles.errorText}>{formError}</Text> : null}
               {message ? <Text style={styles.successText}>{message}</Text> : null}
 
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Skicka återställningslänk"
+                accessibilityState={{ disabled: submitting, busy: submitting }}
                 style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}
                 onPress={handleSend}
                 activeOpacity={0.9}
@@ -176,6 +189,10 @@ const styles = StyleSheet.create({
   successText: {
     fontSize: 13,
     color: palette.success,
+  },
+  errorText: {
+    fontSize: 13,
+    color: palette.error,
   },
   primaryButton: {
     borderRadius: radius.full,
