@@ -2,7 +2,7 @@ import 'react-native-url-polyfill/auto';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
-import { createClient, navigatorLock, processLock, type SupportedStorage } from '@supabase/supabase-js';
+import { createClient, navigatorLock, processLock, type Session, type SupportedStorage } from '@supabase/supabase-js';
 import { createTimeoutFetch } from './requestTimeout';
 
 const extra = Constants.expoConfig?.extra ?? {};
@@ -188,4 +188,84 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: Platform.OS === 'web',
   },
+});
+
+// The web SDK consumes recovery tokens before the reset screen can mount.
+// Keep only an in-memory proof from its verified event, bound to this session.
+let passwordRecoverySession: { userId: string; accessToken: string } | null = null;
+const passwordRecoverySubscribers = new Set<() => void>();
+let passwordRecoveryAttempt = 0;
+export function hasPasswordRecoverySession(session: Session | null): boolean {
+  return Boolean(session && !deletedAccountIds.has(session.user.id)
+    && passwordRecoverySession?.userId === session.user.id
+    && passwordRecoverySession.accessToken === session.access_token);
+}
+export function subscribePasswordRecovery(listener: () => void): () => void {
+  passwordRecoverySubscribers.add(listener);
+  return () => { passwordRecoverySubscribers.delete(listener); };
+}
+function consumePasswordRecoverySession(session: Session): void {
+  if (passwordRecoverySession?.userId !== session.user.id || passwordRecoverySession.accessToken !== session.access_token) return;
+  passwordRecoverySession = null;
+  passwordRecoverySubscribers.forEach(listener => listener());
+}
+function createRecoveryClient() {
+  const values = new Map<string, string>();
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: { fetch: createTimeoutFetch((input, init) => fetch(input, init)) },
+    auth: {
+      storage: {
+        getItem: key => values.get(key) ?? null,
+        setItem: (key, value) => { values.set(key, value); },
+        removeItem: key => { values.delete(key); },
+      },
+      storageKey: `${authStorageKey}-recovery-${++passwordRecoveryAttempt}`,
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+export async function verifyRecoverySession(tokens: { access_token: string; refresh_token: string }): Promise<Session> {
+  const client = createRecoveryClient();
+  try {
+    const { data, error } = await client.auth.setSession(tokens);
+    if (error) throw error;
+    if (!data.session || deletedAccountIds.has(data.session.user.id)) throw new Error('The recovery session could not be verified.');
+    return data.session;
+  } finally {
+    await client.auth.stopAutoRefresh();
+  }
+}
+export async function updateRecoveryPassword(session: Session, password: string): Promise<void> {
+  if (deletedAccountIds.has(session.user.id)) throw new Error('The recovery account is no longer available.');
+  const client = createRecoveryClient();
+  try {
+    const { data, error } = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
+    if (error) throw error;
+    if (data.session?.user.id !== session.user.id || deletedAccountIds.has(session.user.id)) {
+      throw new Error('The recovery session could not be verified for this account.');
+    }
+    const { data: updated, error: updateError } = await client.auth.updateUser({ password });
+    if (updateError) throw updateError;
+    if (updated.user?.id !== session.user.id) throw new Error('The password update could not be confirmed for this account.');
+    consumePasswordRecoverySession(session);
+  } finally {
+    await client.auth.stopAutoRefresh();
+  }
+}
+supabase.auth.onAuthStateChange((event, session) => {
+  if (session && deletedAccountIds.has(session.user.id)) return;
+  const previous = passwordRecoverySession;
+  if (event === 'PASSWORD_RECOVERY' && session) {
+    passwordRecoverySession = { userId: session.user.id, accessToken: session.access_token };
+  } else if (event === 'TOKEN_REFRESHED' && session && passwordRecoverySession?.userId === session.user.id) {
+    passwordRecoverySession = { userId: session.user.id, accessToken: session.access_token };
+  } else if ((event === 'SIGNED_IN' && (session?.user.id !== passwordRecoverySession?.userId || session?.access_token !== passwordRecoverySession?.accessToken))
+    || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+    passwordRecoverySession = null;
+  }
+  if (previous?.userId !== passwordRecoverySession?.userId || previous?.accessToken !== passwordRecoverySession?.accessToken) {
+    passwordRecoverySubscribers.forEach(listener => listener());
+  }
 });

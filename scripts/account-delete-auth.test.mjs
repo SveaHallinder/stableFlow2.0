@@ -166,7 +166,7 @@ async function loadStorage({ intercept, realSdk = false, sharedValues, project, 
       EXPO_PUBLIC_SUPABASE_ANON_KEY: 'offline-anon-key' } }, __DEV__: false,
     createClient: (url, anon, options) => realSdk
       ? createClient(url, anon, { ...options, auth: { ...options.auth, autoRefreshToken: false, detectSessionInUrl: false } })
-      : { auth: {} },
+      : { auth: { onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }) } },
     createTimeoutFetch: fetch => fetch,
     fetch: fetchStub ?? (async () => { assert.fail('No remote Auth or backend operation is allowed.'); }),
     setTimeout: (callback, delay) => { const timer = { callback, delay, cleared: false }; timers.push(timer); return timer; },

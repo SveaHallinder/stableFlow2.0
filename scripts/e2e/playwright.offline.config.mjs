@@ -43,8 +43,10 @@ export default {
   testDir: '.',
   testMatch: [
     '**/account-delete-quality.spec.mjs',
+    '**/auth-reset.spec.mjs',
     '**/auth-submit-recovery.spec.mjs',
     '**/autumn-ui.spec.mjs',
+    '**/core-stable-workflow.spec.mjs',
     '**/daily-work-quality.spec.mjs',
     '**/horse-management-quality.spec.mjs',
     '**/horse-save-timeout.spec.mjs',

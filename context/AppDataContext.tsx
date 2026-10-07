@@ -3346,7 +3346,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentHistory = React.useCallback(
     async (assignment: Assignment, action: AssignmentHistoryAction) => {
-      if (!user) return;
+      if (isQaDemoMode || !user) return;
       const { error } = await supabase.from('assignment_history').insert({
         id: generateId(),
         stable_id: assignment.stableId,

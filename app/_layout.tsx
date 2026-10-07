@@ -112,6 +112,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { session, loading, initializationError, retryInitialization } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const isResetRoute = segments[0] === '(auth)' && segments[1] === 'reset';
 
   React.useEffect(() => {
     if (loading || initializationError) {
@@ -124,10 +125,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       router.replace('/(auth)');
       return;
     }
-    if (session && (inAuthGroup || isNotFound)) {
+    if (session && (inAuthGroup || isNotFound) && !isResetRoute) {
       router.replace('/(tabs)');
     }
-  }, [loading, initializationError, router, segments, session]);
+  }, [loading, initializationError, router, segments, session, isResetRoute]);
 
   if (loading) {
     return (
@@ -178,9 +179,10 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const searchParams = useGlobalSearchParams();
   const router = useRouter();
+  const isResetRoute = segments[0] === '(auth)' && segments[1] === 'reset';
 
   React.useEffect(() => {
-    if (loading || hydrating || refreshing || refreshError || !session) {
+    if (loading || hydrating || refreshing || refreshError || !session || isResetRoute) {
       return;
     }
     const rootSegment = segments[0];
@@ -214,6 +216,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     refreshing,
     refreshError,
     session,
+    isResetRoute,
     segments,
     router,
     derived.canManageOnboardingAny,
@@ -221,7 +224,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     searchParams.fromOnboarding,
   ]);
 
-  if (session && refreshError && !state.currentStableId) {
+  if (session && refreshError && !state.currentStableId && !isResetRoute) {
     return (
       <View style={errorStyles.container}>
         <Text style={errorStyles.title}>Kunde inte hämta stallet</Text>
@@ -239,7 +242,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const waitingForStable = Boolean(session && hydrating && !state.currentUserId);
+  const waitingForStable = Boolean(session && hydrating && !state.currentUserId && !isResetRoute);
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} pointerEvents={waitingForStable ? 'none' : 'auto'}>{children}</View>
