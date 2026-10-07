@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { URL } from 'node:url';
+import { createClient } from '@supabase/supabase-js';
 import ts from 'typescript';
 
 async function compileFactory(source, dependencies) {
@@ -120,6 +121,77 @@ test('login server outages retain the form and are not described as wrong creden
   await submit();
   assert.match(messages.at(-1)?.message, /servern|anslutning/);
   assert.equal(busy.at(-1), false);
+});
+
+test('login recovers when the installed Auth SDK rejects a session-storage write', async () => {
+  const sensitive = 'Synthetic underlying storage failure with private-access-token';
+  const logs = [];
+  const sdk = createClient('https://offline-submit.example.test', 'offline-anon', {
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, storage: {
+      getItem: () => null, removeItem() {}, setItem() { throw new Error(sensitive); },
+    } },
+    global: { fetch: async input => {
+      assert.match(String(input), /\/auth\/v1\/token\?grant_type=password$/);
+      return new globalThis.Response(JSON.stringify({ access_token: 'offline-access', refresh_token: 'offline-refresh',
+        expires_in: 3600, token_type: 'bearer', user: { id: 'offline-user', aud: 'authenticated',
+          email: 'recipient@example.test', app_metadata: {}, user_metadata: {} } }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    } },
+  });
+  await sdk.auth.getSession();
+  const { deps, messages, busy, calls } = authFixture({ mode: 'login', supabase: sdk,
+    console: { warn: (...args) => logs.push(args) } });
+  await (await loadCallback('../app/(auth)/index.tsx', 'handleSubmit', deps))();
+  assert.equal(busy.at(-1), false, 'A storage exception must release the login button.');
+  assert.equal(messages.at(-1)?.type, 'error');
+  assert.match(messages.at(-1)?.message, /försök igen/i);
+  assert.ok(!messages.some(message => message.type === 'success'));
+  assert.ok(!calls.some(([name]) => name === 'navigate'));
+  assert.match(logs.at(-1)?.[0], /^\[auth submit\]/);
+  assert.doesNotMatch(JSON.stringify(logs), /private-access-token|recipient@example|SyntheticTest123/);
+});
+
+for (const stage of ['invite lookup', 'owner signup', 'join signup']) {
+  test(`signup recovers from a rejected ${stage} without losing its draft`, async () => {
+    const logs = [];
+    const fixture = authFixture({ signupIntent: stage === 'owner signup' ? 'create' : 'join',
+      stableName: 'Offline stable', console: { warn: (...args) => logs.push(args) } });
+    if (stage === 'invite lookup') fixture.deps.supabase.rpc = async () => { throw new Error('Synthetic private lookup error'); };
+    else fixture.deps.supabase.auth.signUp = async () => { throw new Error('Synthetic private signup error'); };
+    await (await loadCallback('../app/(auth)/index.tsx', 'handleSubmit', fixture.deps))();
+    assert.equal(fixture.busy.at(-1), false);
+    assert.equal(fixture.messages.at(-1)?.type, 'error');
+    assert.ok(!fixture.messages.some(message => message.type === 'success'));
+    assert.ok(!fixture.calls.some(([name]) => name === 'navigate' || name === 'confirm'));
+    assert.equal(fixture.deps.name, 'QA Invite');
+    assert.equal(fixture.deps.inviteCode, 'INVITE1');
+    assert.match(logs.at(-1)?.[0], /^\[auth submit\]/);
+    assert.doesNotMatch(JSON.stringify(logs), /private lookup|private signup|recipient@example|SyntheticTest123/);
+  });
+}
+
+test('confirmation resend recovers from an exception and keeps the same recipient for retry', async () => {
+  const busy = [];
+  const messages = [];
+  const logs = [];
+  let attempts = 0;
+  const deps = { pendingConfirmEmail: 'recipient@example.test', resending: false,
+    setResending: value => busy.push(value), authRedirectUrl: () => 'http://localhost:8081/confirm',
+    supabase: { auth: { resend: async args => {
+      assert.equal(args.email, 'recipient@example.test');
+      if (++attempts === 1) throw new Error('Synthetic private resend failure');
+      return { error: null };
+    } } }, toast: { showToast: (...args) => messages.push(args) }, console: { warn: (...args) => logs.push(args) } };
+  const resend = await loadCallback('../app/(auth)/index.tsx', 'handleResendConfirmation', deps);
+  await resend();
+  assert.equal(busy.at(-1), false);
+  assert.equal(messages.at(-1)?.[1], 'error');
+  assert.match(logs.at(-1)?.[0], /^\[auth resend\]/);
+  assert.doesNotMatch(JSON.stringify(logs), /private resend|recipient@example/);
+  await resend();
+  assert.equal(attempts, 2);
+  assert.equal(busy.at(-1), false);
+  assert.equal(messages.at(-1)?.[1], 'success');
 });
 
 function confirmFixture() {

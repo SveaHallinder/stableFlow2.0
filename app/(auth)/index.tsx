@@ -98,48 +98,117 @@ export default function AuthScreen() {
       return;
     }
     setSubmitting(true);
-    const trimmedEmail = email.trim();
-    const trimmedName = name.trim();
-    const trimmedInviteCode = inviteCode.trim().toUpperCase();
-    const trimmedStableName = stableName.trim();
-    if (mode === 'login') {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: trimmedEmail,
-        password,
-      });
-      if (error) {
-        if (error.code === 'email_not_confirmed') {
-          setPendingConfirmEmail(trimmedEmail);
+    try {
+      const trimmedEmail = email.trim();
+      const trimmedName = name.trim();
+      const trimmedInviteCode = inviteCode.trim().toUpperCase();
+      const trimmedStableName = stableName.trim();
+      if (mode === 'login') {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password,
+        });
+        if (error) {
+          if (error.code === 'email_not_confirmed') {
+            setPendingConfirmEmail(trimmedEmail);
+          }
+          const message =
+            error.code === 'email_not_confirmed'
+              ? 'Bekräfta din e-post via länken i mejlet innan du loggar in.'
+              : error.status === 0 || (error.status ?? 0) >= 500 || error.name === 'AuthRetryableFetchError'
+              ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+              : 'Fel e-post eller lösenord.';
+          toast.showToast(message, 'error');
+        } else {
+          toast.showToast('Välkommen!', 'success');
         }
-        const message =
-          error.code === 'email_not_confirmed'
-            ? 'Bekräfta din e-post via länken i mejlet innan du loggar in.'
-            : error.status === 0 || (error.status ?? 0) >= 500 || error.name === 'AuthRetryableFetchError'
-            ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
-            : 'Fel e-post eller lösenord.';
-        toast.showToast(message, 'error');
-      } else {
-        toast.showToast('Välkommen!', 'success');
+        setSubmitting(false);
+        return;
       }
-      setSubmitting(false);
-      return;
-    }
 
-    // Self-serve owner signup: no invite code. We stash the new stable so it is
-    // created (with an owner membership) on the first authenticated hydration,
-    // then the onboarding wizard takes over to finish resources/horses.
-    if (signupIntent === 'create') {
-      const stableId = generateId();
-      // Persist BEFORE signUp (so the immediate-session hydration finds it without a
-      // race) and bind it to this email. Abort if it can't be stored — otherwise we'd
-      // create an account with no stable to claim.
-      const stableSaved = await savePendingOwnerStable({
-        id: stableId,
-        name: trimmedStableName,
-        email: trimmedEmail,
+      // Self-serve owner signup: no invite code. We stash the new stable so it is
+      // created (with an owner membership) on the first authenticated hydration,
+      // then the onboarding wizard takes over to finish resources/horses.
+      if (signupIntent === 'create') {
+        const stableId = generateId();
+        // Persist BEFORE signUp (so the immediate-session hydration finds it without a
+        // race) and bind it to this email. Abort if it can't be stored — otherwise we'd
+        // create an account with no stable to claim.
+        const stableSaved = await savePendingOwnerStable({
+          id: stableId,
+          name: trimmedStableName,
+          email: trimmedEmail,
+        });
+        if (!stableSaved) {
+          toast.showToast('Kunde inte förbereda stallet. Försök igen.', 'error');
+          setSubmitting(false);
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
+          email: trimmedEmail,
+          password,
+          options: {
+            emailRedirectTo: authRedirectUrl('confirm'),
+            data: {
+              username: trimmedName,
+              full_name: trimmedName,
+            },
+          },
+        });
+
+        if (error) {
+          await clearPendingOwnerStable();
+          const message =
+            error.message === 'Network request failed'
+              ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+              : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
+          toast.showToast(message, 'error');
+          setSubmitting(false);
+          return;
+        }
+
+        if (!data.user || !data.session) {
+          // Email confirmation required. The pending stable is kept and created
+          // on the first login after the user confirms their address.
+          setPendingConfirmEmail(trimmedEmail);
+          setSubmitting(false);
+          return;
+        }
+
+        const profileUpdate = await supabase
+          .from('profiles')
+          .update({ full_name: trimmedName, username: trimmedName })
+          .eq('id', data.user.id);
+        if (profileUpdate.error) {
+          console.warn('Kunde inte uppdatera profil', profileUpdate.error);
+        }
+
+        toast.showToast('Kontot är skapat. Nu sätter vi upp ditt stall.', 'success');
+        setSubmitting(false);
+        router.replace('/');
+        return;
+      }
+
+      const inviteCheck = await supabase.rpc('validate_invite', {
+        p_email: trimmedEmail,
+        p_code: trimmedInviteCode.length > 0 ? trimmedInviteCode : null,
       });
-      if (!stableSaved) {
-        toast.showToast('Kunde inte förbereda stallet. Försök igen.', 'error');
+      if (inviteCheck.error) {
+        toast.showToast('Kunde inte verifiera inbjudan. Försök igen.', 'error');
+        setSubmitting(false);
+        return;
+      }
+      if (!inviteCheck.data) {
+        toast.showToast('Ingen giltig inbjudan hittades. Kontrollera e-post och kod, eller be om en ny inbjudan.', 'error');
+        setSubmitting(false);
+        return;
+      }
+
+      // Hydration can run as soon as signUp returns a session. Store first so that
+      // both immediate login and a later email confirmation claim the same draft.
+      if (trimmedInviteCode && !(await savePendingJoinCode(trimmedInviteCode, trimmedEmail))) {
+        toast.showToast('Kunde inte förbereda inbjudan. Dina uppgifter finns kvar. Försök igen.', 'error');
         setSubmitting(false);
         return;
       }
@@ -157,7 +226,6 @@ export default function AuthScreen() {
       });
 
       if (error) {
-        await clearPendingOwnerStable();
         const message =
           error.message === 'Network request failed'
             ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
@@ -168,8 +236,6 @@ export default function AuthScreen() {
       }
 
       if (!data.user || !data.session) {
-        // Email confirmation required. The pending stable is kept and created
-        // on the first login after the user confirms their address.
         setPendingConfirmEmail(trimmedEmail);
         setSubmitting(false);
         return;
@@ -179,81 +245,24 @@ export default function AuthScreen() {
         .from('profiles')
         .update({ full_name: trimmedName, username: trimmedName })
         .eq('id', data.user.id);
+
       if (profileUpdate.error) {
         console.warn('Kunde inte uppdatera profil', profileUpdate.error);
       }
 
-      toast.showToast('Kontot är skapat. Nu sätter vi upp ditt stall.', 'success');
+      // AppData hydration is the single acceptance owner. Consuming an invitation
+      // here as well can mistake an already accepted invite for an invalid code.
+      toast.showToast('Kontot är skapat.', 'success');
       setSubmitting(false);
-      router.replace('/');
-      return;
-    }
-
-    const inviteCheck = await supabase.rpc('validate_invite', {
-      p_email: trimmedEmail,
-      p_code: trimmedInviteCode.length > 0 ? trimmedInviteCode : null,
-    });
-    if (inviteCheck.error) {
-      toast.showToast('Kunde inte verifiera inbjudan. Försök igen.', 'error');
+      router.replace('/?tour=intro');
+    } catch (error) {
+      console.warn('[auth submit] Kunde inte avsluta inloggning eller kontoskapande', {
+        mode, name: error instanceof Error ? error.name : 'unknown',
+      });
+      toast.showToast('Kunde inte slutföra inloggning eller kontoskapande. Dina uppgifter finns kvar. Försök igen.', 'error');
+    } finally {
       setSubmitting(false);
-      return;
     }
-    if (!inviteCheck.data) {
-      toast.showToast('Ingen giltig inbjudan hittades. Kontrollera e-post och kod, eller be om en ny inbjudan.', 'error');
-      setSubmitting(false);
-      return;
-    }
-
-    // Hydration can run as soon as signUp returns a session. Store first so that
-    // both immediate login and a later email confirmation claim the same draft.
-    if (trimmedInviteCode && !(await savePendingJoinCode(trimmedInviteCode, trimmedEmail))) {
-      toast.showToast('Kunde inte förbereda inbjudan. Dina uppgifter finns kvar. Försök igen.', 'error');
-      setSubmitting(false);
-      return;
-    }
-
-    const { data, error } = await supabase.auth.signUp({
-      email: trimmedEmail,
-      password,
-      options: {
-        emailRedirectTo: authRedirectUrl('confirm'),
-        data: {
-          username: trimmedName,
-          full_name: trimmedName,
-        },
-      },
-    });
-
-    if (error) {
-      const message =
-        error.message === 'Network request failed'
-          ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
-          : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
-      toast.showToast(message, 'error');
-      setSubmitting(false);
-      return;
-    }
-
-    if (!data.user || !data.session) {
-      setPendingConfirmEmail(trimmedEmail);
-      setSubmitting(false);
-      return;
-    }
-
-    const profileUpdate = await supabase
-      .from('profiles')
-      .update({ full_name: trimmedName, username: trimmedName })
-      .eq('id', data.user.id);
-
-    if (profileUpdate.error) {
-      console.warn('Kunde inte uppdatera profil', profileUpdate.error);
-    }
-
-    // AppData hydration is the single acceptance owner. Consuming an invitation
-    // here as well can mistake an already accepted invite for an invalid code.
-    toast.showToast('Kontot är skapat.', 'success');
-    setSubmitting(false);
-    router.replace('/?tour=intro');
   }, [
     canSubmit,
     email,
@@ -277,17 +286,26 @@ export default function AuthScreen() {
       return;
     }
     setResending(true);
-    const { error } = await supabase.auth.resend({
-      type: 'signup',
-      email: pendingConfirmEmail,
-      options: { emailRedirectTo: authRedirectUrl('confirm') },
-    });
-    if (error) {
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: pendingConfirmEmail,
+        options: { emailRedirectTo: authRedirectUrl('confirm') },
+      });
+      if (error) {
+        toast.showToast('Kunde inte skicka igen. Försök om en stund.', 'error');
+      } else {
+        toast.showToast('Bekräftelsemejl skickat igen.', 'success');
+      }
+      setResending(false);
+    } catch (error) {
+      console.warn('[auth resend] Kunde inte skicka bekräftelse igen', {
+        name: error instanceof Error ? error.name : 'unknown',
+      });
       toast.showToast('Kunde inte skicka igen. Försök om en stund.', 'error');
-    } else {
-      toast.showToast('Bekräftelsemejl skickat igen.', 'success');
+    } finally {
+      setResending(false);
     }
-    setResending(false);
   }, [pendingConfirmEmail, resending, toast]);
 
   const handleBackToLogin = React.useCallback(() => {

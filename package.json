@@ -8,7 +8,7 @@
     "build:web": "expo export --platform web",
     "lint": "expo lint",
     "test": "node --test scripts/*.test.mjs",
-    "test:e2e": "playwright test --config=scripts/e2e/playwright.config.mjs",
+    "test:e2e": "playwright test --config=scripts/e2e/playwright.offline.config.mjs",
     "android": "expo run:android",
     "ios": "expo run:ios -d",
     "fix:splash": "npx expo prebuild --clean && npm run dev"
