@@ -1,0 +1,455 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createClient, initializeEdge, response, uuid } from './helpers.mjs';
+
+const ATTEMPT = uuid(7000), USER = uuid(101), GENERATION = uuid(9000), LEASE = uuid(8000);
+const MARKER = 'SYNTHETIC_PRIVATE_PROVIDER_MARKER';
+const serviceKey = 'synthetic-service-key';
+function rows(length = 1) {
+  return Array.from({ length }, (_, index) => ({
+    id: uuid(1000 + index), user_id: USER, token: `synthetic-private-push-token-${index}`,
+    registration_generation: GENERATION,
+  }));
+}
+function payload(changes = {}) {
+  return { request_id: ATTEMPT, type: 'assignment', record: {
+    assignee_id: USER, label: 'Synthetic draft', date: '2099-01-01', time: '07:00',
+  }, old_record: { assignee_id: null }, ...changes };
+}
+function request(name, body, authorization = `Bearer ${serviceKey}`, method = 'POST') {
+  return new Request(`https://synthetic-push-receipts.invalid/functions/v1/${name}`, {
+    method, headers: { authorization, 'Content-Type': 'application/json' },
+    ...(method === 'POST' ? { body: JSON.stringify(body ?? {}) } : {}),
+  });
+}
+function deferred() {
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  return { promise, resolve };
+}
+async function fixture(options = {}) {
+  const databaseCalls = [], providerCalls = [], logs = [], trace = [], handlers = {}, attempts = new Map();
+  const state = { tokens: options.tokens ?? rows(), claimItems: options.claimItems ?? [], ticketSequence: 20000 };
+  const database = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.host, 'synthetic-push-receipts.invalid');
+    assert.equal(new Headers(init.headers).get('apikey'), serviceKey);
+    const name = url.pathname.replace('/rest/v1/', '');
+    const params = init.body ? JSON.parse(init.body) : null;
+    databaseCalls.push({ name, params, method: init.method, url: url.toString(), signal: init.signal });
+    trace.push(`db:${name}`);
+    if (name.startsWith('rpc/')) {
+      const rpc = name.slice(4);
+      const intercepted = await options.rpc?.(rpc, params, { attempts, state, trace, signal: init.signal });
+      if (intercepted !== undefined) return intercepted;
+      if (rpc === 'push_receipts_prepare') {
+        assert.equal(init.method, 'POST');
+        if (attempts.has(params.p_attempt_id)) return response({ attempt_id: params.p_attempt_id, started: false });
+        attempts.set(params.p_attempt_id, params.p_registrations.map(entry => ({ ...entry, status: 'unknown', ticket_id: null, error_code: null })));
+        return response({ attempt_id: params.p_attempt_id, started: true });
+      }
+      if (rpc === 'push_receipts_record_tickets') {
+        const slots = attempts.get(params.p_attempt_id);
+        assert.ok(slots, 'Durable prepare must precede ticket recording');
+        for (const result of params.p_results) Object.assign(slots[result.position], result);
+        return response({ attempt_id: params.p_attempt_id, recorded_count: params.p_results.length });
+      }
+      if (rpc === 'push_receipts_claim_due') return response(options.claimResult ?? { lease_id: LEASE, items: state.claimItems });
+      if (rpc === 'push_receipts_apply') {
+        const results = params.p_results;
+        return response(options.applyResult ?? {
+          lease_id: params.p_lease_id, applied_count: results.length,
+          receipt_ok_count: results.filter(entry => entry.status === 'receipt_ok').length,
+          receipt_error_count: results.filter(entry => entry.status === 'receipt_error').length,
+          missing_count: results.filter(entry => entry.status === 'missing').length,
+          deleted_token_count: options.deletedTokenCount ?? 0,
+        });
+      }
+      throw new Error('Unexpected RPC in synthetic fixture');
+    }
+    assert.equal(init.method, 'GET', 'Service must never directly mutate token/profile rows');
+    if (options.lookupError === name) return response({ code: MARKER, message: MARKER, details: MARKER }, 503);
+    if (name === 'push_tokens') {
+      assert.equal(url.searchParams.get('select'), 'id,user_id,token,registration_generation');
+      return response(state.tokens);
+    }
+    if (name === 'notification_preferences') return response([]);
+    if (name === 'profiles') return response({ full_name: 'Synthetic author' });
+    if (name === 'conversation_members') return response([{ user_id: USER }]);
+    if (name === 'conversations') return response(options.conversation ?? { is_group: false, stable_id: null });
+    if (name === 'stable_members') return response([{ user_id: USER }]);
+    if (name === 'blocked_users') return response([]);
+    throw new Error('Unexpected table in synthetic fixture');
+  };
+  const client = createClient('https://synthetic-push-receipts.invalid', serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: database },
+  });
+  const provider = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.host, 'exp.host');
+    assert.ok(['/--/api/v2/push/send', '/--/api/v2/push/getReceipts'].includes(url.pathname));
+    const body = JSON.parse(init.body);
+    providerCalls.push({ url: url.toString(), body, signal: init.signal });
+    trace.push(`provider:${url.pathname}`);
+    if (options.provider) return options.provider(url, body, { attempts, state, trace, providerCalls });
+    return url.pathname.endsWith('/send')
+      ? response({ data: body.map(() => ({ status: 'ok', id: uuid(state.ticketSequence++) })) })
+      : response({ data: Object.fromEntries(body.ids.map(id => [id, { status: 'ok' }])) });
+  };
+  for (const name of ['send-push-notification', 'collect-push-receipts']) {
+    await initializeEdge(name, {
+      createClient: () => client,
+      Deno: { env: { get: key => ({ SUPABASE_URL: 'https://synthetic-push-receipts.invalid', SUPABASE_SERVICE_ROLE_KEY: options.envKey ?? serviceKey })[key] }, serve: handler => { handlers[name] = handler; } },
+      fetch: provider, crypto: { randomUUID: () => uuid(6000) },
+      console: { error: (...args) => logs.push(args) },
+    });
+  }
+  return {
+    state, attempts, databaseCalls, providerCalls, logs, trace,
+    send: (body = payload(), auth, method) => handlers['send-push-notification'](request('send-push-notification', body, auth, method)),
+    collect: (body = {}, auth, method) => handlers['collect-push-receipts'](request('collect-push-receipts', body, auth, method)),
+  };
+}
+function noLeaks(fixture) {
+  assert.doesNotMatch(JSON.stringify(fixture.logs), /SYNTHETIC_PRIVATE_PROVIDER_MARKER|synthetic-private-push-token|synthetic-service-key/);
+  assert.ok(fixture.logs.every(([prefix]) => /^\[push (notification|receipts)\]/.test(prefix)));
+}
+const claimItems = [
+  { attempt_id: ATTEMPT, position: 0, ticket_id: 'synthetic-ticket-ok' },
+  { attempt_id: ATTEMPT, position: 1, ticket_id: 'synthetic-ticket-dnr' },
+  { attempt_id: ATTEMPT, position: 2, ticket_id: 'synthetic-ticket-missing' },
+];
+
+test('actual SDK reserves all 101 generation snapshots before first HTTP and sends only original message fields', async () => {
+  const f = await fixture({ tokens: rows(101), provider: async (_url, body, context) => {
+    assert.equal(context.attempts.get(ATTEMPT).length, 101);
+    assert.deepEqual(Object.keys(body[0]).sort(), ['body', 'channelId', 'data', 'sound', 'title', 'to']);
+    return response({ data: body.map(() => ({ status: 'ok', id: uuid(context.state.ticketSequence++) })) });
+  } });
+  const result = await f.send();
+  assert.deepEqual(await result.json(), { sent: 101 });
+  assert.deepEqual(f.providerCalls.map(call => call.body.length), [100, 1]);
+  const prepare = f.databaseCalls.find(call => call.name === 'rpc/push_receipts_prepare').params;
+  assert.equal(prepare.p_attempt_id, ATTEMPT);
+  assert.equal(prepare.p_registrations.length, 101);
+  assert.deepEqual(prepare.p_registrations[0], { position: 0, token_id: uuid(1000), user_id: USER, registration_generation: GENERATION });
+  assert.doesNotMatch(JSON.stringify(prepare), /push-token|Synthetic draft|2099-01-01/);
+  assert.deepEqual(f.trace.slice(2), ['db:rpc/push_receipts_prepare', 'provider:/--/api/v2/push/send', 'db:rpc/push_receipts_record_tickets', 'provider:/--/api/v2/push/send', 'db:rpc/push_receipts_record_tickets']);
+});
+
+test('existing request ID does not resend even when recipient order and payload change', async () => {
+  const f = await fixture({ tokens: rows(2) });
+  assert.equal((await f.send()).status, 200);
+  f.state.tokens.reverse();
+  const result = await f.send(payload({ record: { assignee_id: USER, label: 'Changed payload', date: '2099-02-01', time: '08:00' } }));
+  assert.deepEqual(await result.json(), { sent: 0 });
+  assert.equal(f.providerCalls.length, 1);
+  assert.equal(f.databaseCalls.filter(call => call.name === 'rpc/push_receipts_record_tickets').length, 1);
+});
+
+test('mixed first chunk preserves every accepted ticket before failure and leaves unsent second chunk unknown', async () => {
+  const f = await fixture({ tokens: rows(101), provider: async (_url, body) => response({ data: body.map((_, index) => index === 1
+    ? { status: 'error', message: MARKER, details: { error: 'DeviceNotRegistered', token: MARKER } }
+    : index === 2 ? null : { status: 'ok', id: uuid(30000 + index) }) }) });
+  assert.equal((await f.send()).status, 500);
+  const slots = f.attempts.get(ATTEMPT);
+  assert.equal(slots.filter(slot => slot.status === 'accepted').length, 98);
+  assert.deepEqual({ status: slots[1].status, error_code: slots[1].error_code, ticket_id: slots[1].ticket_id }, { status: 'ticket_error', error_code: 'DeviceNotRegistered', ticket_id: null });
+  assert.equal(slots[2].status, 'unknown');
+  assert.equal(slots[100].status, 'unknown');
+  assert.equal(f.providerCalls.length, 1);
+  assert.deepEqual(await (await f.send()).json(), { sent: 0 });
+  assert.equal(f.providerCalls.length, 1);
+  noLeaks(f);
+});
+
+test('second-chunk network failure retains first 100 tickets and never auto-resends unknown outcomes', async () => {
+  const f = await fixture({ tokens: rows(101), provider: async (_url, body, context) => {
+    if (context.providerCalls.length === 2) { const error = new Error(MARKER); error.name = MARKER; throw error; }
+    return response({ data: body.map((_, index) => ({ status: 'ok', id: uuid(40000 + index) })) });
+  } });
+  assert.equal((await f.send()).status, 500);
+  assert.equal(f.attempts.get(ATTEMPT).filter(slot => slot.status === 'accepted').length, 100);
+  assert.equal(f.attempts.get(ATTEMPT)[100].status, 'unknown');
+  assert.deepEqual(await (await f.send()).json(), { sent: 0 });
+  assert.equal(f.providerCalls.length, 2);
+  noLeaks(f);
+});
+
+test('prepare SDK error and inconsistent prepare acknowledgement stop before provider HTTP', async () => {
+  for (const reply of [response({ code: MARKER, message: MARKER, details: MARKER }, 503), response({ attempt_id: uuid(9999), started: true })]) {
+    const f = await fixture({ rpc: name => name === 'push_receipts_prepare' ? reply : undefined });
+    assert.equal((await f.send()).status, 500);
+    assert.equal(f.providerCalls.length, 0);
+    noLeaks(f);
+  }
+});
+
+test('lost ticket-save acknowledgement blocks later HTTP whether the save committed or stayed unknown', async () => {
+  for (const committed of [false, true]) {
+    const f = await fixture({ rpc: (name, params, context) => {
+      if (name !== 'push_receipts_record_tickets') return undefined;
+      if (committed) for (const result of params.p_results) Object.assign(context.attempts.get(ATTEMPT)[result.position], result);
+      return response({ code: MARKER, message: MARKER }, 503);
+    } });
+    assert.equal((await f.send()).status, 500);
+    assert.equal(f.attempts.get(ATTEMPT)[0].status, committed ? 'accepted' : 'unknown');
+    assert.deepEqual(await (await f.send()).json(), { sent: 0 });
+    assert.equal(f.providerCalls.length, 1);
+    noLeaks(f);
+  }
+});
+
+test('concurrent retry while first provider result is pending has one HTTP and immutable registration snapshot', async () => {
+  const gate = deferred(), reached = deferred();
+  const f = await fixture({ provider: async (_url, _body, context) => {
+    reached.resolve();
+    await gate.promise;
+    assert.equal(context.attempts.get(ATTEMPT)[0].registration_generation, GENERATION);
+    return response({ data: [{ status: 'ok', id: 'synthetic-pending-ticket' }] });
+  } });
+  const first = f.send();
+  await reached.promise;
+  f.state.tokens[0].registration_generation = uuid(9001);
+  assert.deepEqual(await (await f.send()).json(), { sent: 0 });
+  assert.equal(f.providerCalls.length, 1);
+  gate.resolve();
+  assert.deepEqual(await (await first).json(), { sent: 1 });
+  assert.equal(f.attempts.get(ATTEMPT)[0].registration_generation, GENERATION);
+});
+
+test('duplicate provider ticket IDs remain unknown while a distinct accepted slot is still saved', async () => {
+  const f = await fixture({ tokens: rows(3), provider: async () => response({ data: [
+    { status: 'ok', id: 'synthetic-duplicate-ticket' }, { status: 'ok', id: 'synthetic-duplicate-ticket' }, { status: 'ok', id: 'synthetic-distinct-ticket' },
+  ] }) });
+  assert.equal((await f.send()).status, 500);
+  assert.deepEqual(f.attempts.get(ATTEMPT).map(slot => slot.status), ['unknown', 'unknown', 'accepted']);
+});
+
+test('present malformed/top-level Expo errors never persist accepted tickets or DNR cleanup eligibility', async () => {
+  for (const errors of [null, false, 0, '', {}, [{ message: MARKER, details: { error: 'DeviceNotRegistered' } }]]) {
+    const sender = await fixture({ provider: async () => response({ errors, data: [{ status: 'ok', id: 'synthetic-rejected-ticket' }] }) });
+    assert.equal((await sender.send()).status, 500);
+    assert.deepEqual(sender.attempts.get(ATTEMPT).map(slot => [slot.status, slot.error_code]), [['unknown', null]]);
+    const collector = await fixture({ claimItems: [claimItems[1]], provider: async () => response({ errors, data: {
+      'synthetic-ticket-dnr': { status: 'error', details: { error: 'DeviceNotRegistered' } },
+    } }) });
+    assert.equal((await collector.collect()).status, 500);
+    assert.deepEqual(collector.databaseCalls.find(call => call.name === 'rpc/push_receipts_apply').params.p_results,
+      [{ ...claimItems[1], status: 'missing', error_code: null }]);
+    noLeaks(sender); noLeaks(collector);
+  }
+});
+
+test('empty top-level errors array is a valid provider acknowledgement', async () => {
+  const sender = await fixture({ provider: async () => response({ errors: [], data: [{ status: 'ok', id: 'synthetic-valid-ticket' }] }) });
+  assert.equal((await sender.send()).status, 200);
+  const collector = await fixture({ claimItems: [claimItems[0]], provider: async () => response({ errors: [], data: {
+    'synthetic-ticket-ok': { status: 'ok' },
+  } }) });
+  assert.equal((await collector.collect()).status, 200);
+});
+
+test('actual SDK and provider waits end after 15s; late responses cannot send, acknowledge or delete', { timeout: 20000 }, async () => {
+  const prepareGate = deferred(), sendGate = deferred(), receiptGate = deferred();
+  const gates = [prepareGate, sendGate, receiptGate];
+  let firstPrepare = true;
+  const preparing = await fixture({ rpc: async (name, params, context) => {
+    if (name !== 'push_receipts_prepare' || !firstPrepare) return undefined;
+    firstPrepare = false;
+    context.attempts.set(ATTEMPT, params.p_registrations.map(entry => ({ ...entry, status: 'unknown' })));
+    await prepareGate.promise; // Synthetic transport deliberately ignores abort.
+    return response({ attempt_id: ATTEMPT, started: true });
+  } });
+  const sending = await fixture({ provider: async () => {
+    await sendGate.promise;
+    return response({ data: [{ status: 'ok', id: 'synthetic-late-send-ticket' }] });
+  } });
+  const collecting = await fixture({ claimItems: [claimItems[1]], provider: async () => {
+    const reply = response({});
+    reply.json = async () => {
+      await receiptGate.promise;
+      return { data: { 'synthetic-ticket-dnr': { status: 'error', details: { error: 'DeviceNotRegistered' } } } };
+    };
+    return reply;
+  } });
+  const startedAt = performance.now();
+  const pending = [preparing.send(), sending.send(), collecting.collect()];
+  try {
+    const results = await Promise.all(pending);
+    assert.ok(performance.now() - startedAt >= 14500);
+    assert.ok(performance.now() - startedAt < 19000);
+    assert.deepEqual(results.map(result => result.status), [500, 500, 500]);
+    assert.equal(preparing.providerCalls.length, 0);
+    assert.equal(preparing.databaseCalls.find(call => call.name === 'rpc/push_receipts_prepare').signal.aborted, true);
+    assert.equal(sending.providerCalls[0].signal.aborted, true);
+    assert.equal(collecting.providerCalls[0].signal.aborted, true);
+    assert.ok(!sending.databaseCalls.some(call => call.name === 'rpc/push_receipts_record_tickets'));
+    assert.deepEqual(collecting.databaseCalls.find(call => call.name === 'rpc/push_receipts_apply').params.p_results,
+      [{ ...claimItems[1], status: 'missing', error_code: null }]);
+    assert.deepEqual(await (await preparing.send()).json(), { sent: 0 });
+    assert.deepEqual(await (await sending.send()).json(), { sent: 0 });
+    for (const gate of gates) gate.resolve();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(preparing.providerCalls.length, 0);
+    assert.equal(sending.providerCalls.length, 1);
+    assert.equal(collecting.providerCalls.length, 1);
+    assert.ok(!sending.databaseCalls.some(call => call.name === 'rpc/push_receipts_record_tickets'));
+    assert.equal(collecting.databaseCalls.filter(call => call.name === 'rpc/push_receipts_apply').length, 1);
+    for (const f of [preparing, sending, collecting]) noLeaks(f);
+  } finally {
+    for (const gate of gates) gate.resolve();
+    await Promise.allSettled(pending);
+  }
+});
+
+for (const method of ['send', 'collect']) {
+  test(`${method}: wrong/empty service key and non-POST requests never query DB or provider`, async () => {
+    const f = await fixture();
+    const body = method === 'send' ? payload() : {};
+    assert.equal((await f[method](body, 'Bearer wrong')).status, 401);
+    assert.equal((await f[method](body, `Bearer ${serviceKey}`, 'GET')).status, 405);
+    const empty = await fixture({ envKey: '' });
+    assert.equal((await empty[method](body, 'Bearer ')).status, 401);
+    assert.equal(f.databaseCalls.length + empty.databaseCalls.length, 0);
+    assert.equal(f.providerCalls.length + empty.providerCalls.length, 0);
+  });
+}
+
+test('missing/invalid webhook UUID is rejected without a generated fallback or database/provider read', async () => {
+  const f = await fixture();
+  for (const request_id of [undefined, null, '', 'not-a-uuid']) assert.equal((await f.send(payload({ request_id }))).status, 400);
+  assert.equal(f.databaseCalls.length, 0);
+  assert.equal(f.providerCalls.length, 0);
+  noLeaks(f);
+});
+
+test('missing registration generation fails closed before durable prepare or provider HTTP', async () => {
+  const row = rows()[0]; delete row.registration_generation;
+  const f = await fixture({ tokens: [row] });
+  assert.equal((await f.send()).status, 500);
+  assert.ok(!f.databaseCalls.some(call => call.name.startsWith('rpc/')));
+  assert.equal(f.providerCalls.length, 0);
+});
+
+test('collector accepts only bounded limit, never caller ticket/user/token or worker IDs', async () => {
+  const f = await fixture();
+  for (const body of [{ limit: 0 }, { limit: 1001 }, { limit: 1.5 }, { ids: ['foreign-ticket'] }, { user_id: USER }, { worker_id: uuid(99) }]) assert.equal((await f.collect(body)).status, 400);
+  assert.equal(f.databaseCalls.length, 0);
+  assert.equal(f.providerCalls.length, 0);
+});
+
+test('empty DB due claim does no HTTP/apply; source has no client-side time/receipt expansion', async () => {
+  const f = await fixture();
+  assert.deepEqual(await (await f.collect()).json(), { applied_count: 0, receipt_ok_count: 0, receipt_error_count: 0, missing_count: 0, deleted_token_count: 0 });
+  assert.equal(f.databaseCalls.length, 1);
+  assert.equal(f.databaseCalls[0].name, 'rpc/push_receipts_claim_due');
+  assert.deepEqual(f.databaseCalls[0].params, { p_worker_id: uuid(6000), p_limit: 1000 });
+  assert.equal(f.providerCalls.length, 0);
+});
+
+test('collector reads only claimed tickets, ignores foreign DNR and binds results to exact lease/attempt/position', async () => {
+  const f = await fixture({ claimItems, deletedTokenCount: 1, provider: async () => response({ data: {
+    'synthetic-ticket-ok': { status: 'ok', details: { error: 'DeviceNotRegistered' } },
+    'synthetic-ticket-dnr': { status: 'error', message: MARKER, details: { error: 'DeviceNotRegistered', token: MARKER } },
+    'foreign-ticket': { status: 'error', details: { error: 'DeviceNotRegistered' } },
+  } }) });
+  assert.deepEqual(await (await f.collect()).json(), { applied_count: 3, receipt_ok_count: 1, receipt_error_count: 1, missing_count: 1, deleted_token_count: 1 });
+  assert.deepEqual(f.providerCalls[0].body, { ids: claimItems.map(item => item.ticket_id) });
+  const apply = f.databaseCalls.find(call => call.name === 'rpc/push_receipts_apply').params;
+  assert.deepEqual(apply, { p_lease_id: LEASE, p_results: [
+    { ...claimItems[0], status: 'receipt_ok', error_code: null },
+    { ...claimItems[1], status: 'receipt_error', error_code: 'DeviceNotRegistered' },
+    { ...claimItems[2], status: 'missing', error_code: null },
+  ] });
+  assert.doesNotMatch(JSON.stringify(apply), /foreign-ticket|push-token|SYNTHETIC_PRIVATE_PROVIDER_MARKER/);
+  noLeaks(f);
+});
+
+test('receipt error normalization never turns unknown details or ok+DNR into cleanup eligibility', async () => {
+  const f = await fixture({ claimItems, provider: async () => response({ data: {
+    'synthetic-ticket-ok': { status: 'ok', details: { error: 'DeviceNotRegistered' } },
+    'synthetic-ticket-dnr': { status: 'error', details: { error: MARKER }, message: MARKER },
+    'synthetic-ticket-missing': { status: 'unexpected', details: { error: 'DeviceNotRegistered' } },
+  } }) });
+  const result = await (await f.collect()).json();
+  assert.equal(result.deleted_token_count, 0);
+  const applied = f.databaseCalls.find(call => call.name === 'rpc/push_receipts_apply').params.p_results;
+  assert.deepEqual(applied.map(item => [item.status, item.error_code]), [['receipt_ok', null], ['receipt_error', 'Unknown'], ['missing', null]]);
+  noLeaks(f);
+});
+
+test('provider receipt network/HTTP/JSON failure schedules only missing exact lease items and does not report success', async () => {
+  for (const provider of [
+    async () => { const error = new Error(MARKER); error.name = MARKER; throw error; },
+    async () => response({ message: MARKER }, 503),
+    async () => new Response(MARKER, { status: 200 }),
+  ]) {
+    const f = await fixture({ claimItems, provider });
+    const result = await f.collect();
+    assert.equal(result.status, 500);
+    assert.deepEqual(await result.json(), { error: 'push_receipts_failed' });
+    assert.deepEqual(f.databaseCalls.find(call => call.name === 'rpc/push_receipts_apply').params.p_results, claimItems.map(item => ({ ...item, status: 'missing', error_code: null })));
+    assert.equal(f.providerCalls.length, 1);
+    noLeaks(f);
+  }
+});
+
+test('old-generation DNR honors server zero-delete result and never performs direct token mutation', async () => {
+  const f = await fixture({ claimItems: [claimItems[1]], deletedTokenCount: 0, provider: async () => response({ data: {
+    'synthetic-ticket-dnr': { status: 'error', details: { error: 'DeviceNotRegistered' } },
+  } }) });
+  const summary = await (await f.collect()).json();
+  assert.equal(summary.deleted_token_count, 0);
+  assert.deepEqual(f.databaseCalls.map(call => call.name), ['rpc/push_receipts_claim_due', 'rpc/push_receipts_apply']);
+  assert.deepEqual(f.databaseCalls[1].params.p_results, [{ ...claimItems[1], status: 'receipt_error', error_code: 'DeviceNotRegistered' }]);
+});
+
+test('unverified claim and stale/inconsistent apply acknowledgements fail closed without token mutations', async () => {
+  for (const claimResult of [
+    { lease_id: 'bad', items: claimItems },
+    { lease_id: LEASE, items: [claimItems[0], claimItems[0]] },
+    { lease_id: LEASE, items: [{ ...claimItems[0], position: 10000 }] },
+  ]) {
+    const f = await fixture({ claimResult });
+    assert.equal((await f.collect()).status, 500);
+    assert.equal(f.providerCalls.length, 0);
+    assert.equal(f.databaseCalls.length, 1);
+  }
+  for (const applyResult of [
+    { lease_id: uuid(9999), applied_count: 1, receipt_ok_count: 1, receipt_error_count: 0, missing_count: 0, deleted_token_count: 0 },
+    { lease_id: LEASE, applied_count: 1, receipt_ok_count: 0, receipt_error_count: 0, missing_count: 0, deleted_token_count: 0 },
+    { lease_id: LEASE, applied_count: 1, receipt_ok_count: 0, receipt_error_count: 1, missing_count: 0, deleted_token_count: 0 },
+  ]) {
+    const f = await fixture({ claimItems: [claimItems[0]], applyResult });
+    assert.equal((await f.collect()).status, 500);
+    assert.equal(f.databaseCalls.length, 2);
+    noLeaks(f);
+  }
+  const stale = await fixture({ claimItems: [claimItems[0]], rpc: name => name === 'push_receipts_apply'
+    ? response({ code: MARKER, message: MARKER }, 409) : undefined });
+  assert.equal((await stale.collect()).status, 500);
+  noLeaks(stale);
+  const impossibleDelete = await fixture({ claimItems: [claimItems[1]], deletedTokenCount: 1, provider: async () => response({ data: {
+    'synthetic-ticket-dnr': { status: 'error', details: { error: MARKER } },
+  } }) });
+  assert.equal((await impossibleDelete.collect()).status, 500);
+  noLeaks(impossibleDelete);
+});
+
+test('all existing recipient-lookup failures log fixed category, never response code/message/details', async () => {
+  const message = payload({ type: 'message', record: { conversation_id: uuid(201), author_id: uuid(102), text: 'Synthetic private message' } });
+  const alert = payload({ type: 'alert', record: { stable_id: uuid(202), created_by_user_id: uuid(102), severity: 'urgent', title: 'Synthetic alert' } });
+  for (const [lookupError, body] of [
+    ['push_tokens', payload()], ['notification_preferences', payload()], ['conversation_members', message],
+    ['conversations', message], ['stable_members', message], ['blocked_users', message], ['stable_members', alert],
+  ]) {
+    const f = await fixture({ lookupError, conversation: { is_group: true, stable_id: uuid(202) } });
+    assert.equal((await f.send(body)).status, 500);
+    assert.equal(f.providerCalls.length, 0);
+    noLeaks(f);
+    assert.ok(f.logs.some(([, details]) => typeof details?.category === 'string'));
+    assert.ok(f.logs.every(([, details]) => !details || !Object.hasOwn(details, 'code') && !Object.hasOwn(details, 'name')));
+  }
+});

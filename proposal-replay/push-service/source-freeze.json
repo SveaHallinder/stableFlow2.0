@@ -1,0 +1,26 @@
+{
+  "status": "SOURCE_FROZEN_FOR_REVIEW",
+  "base_head": "b0b5ee71a9577d3ae2b7605874befc76f55efc7f",
+  "frozen_at_utc": "2026-10-08T09:39:04.361211+00:00",
+  "files": {
+    "source/supabase/functions/_shared/push-receipts.ts": "cd030172102b37d92b1337df404f616dbb53a42e6a0e272f367a964d4ea785cf",
+    "source/supabase/functions/collect-push-receipts/index.ts": "8c79ca29aac724fae288447da944d6b3fc972772e4824f9acf45f18410dbf5e4",
+    "source/supabase/functions/send-push-notification/index.ts": "37e2ccf847ff26ff73a7def73d19fdd7225a8e1c9f0e565002f9b7e861598994",
+    "tests/helpers.mjs": "79c9430ee8d8dfc96590c51602da96f020879618894587ca69f72d7c7f2a46ed",
+    "tests/push-delivery.test.mjs": "87d756b3305b15c4a7bef3ae164c5cc41d223be3de9b4d21cbaf0f70f9cebf6a",
+    "tests/push-receipts.test.mjs": "819a3838fcc5b62ee577477fe13a76d4b3771b748fd4f86f7ce9292b438053c4"
+  },
+  "candidate_actual_source_tests": {
+    "total": 48,
+    "pass": 48,
+    "fail": 0,
+    "skip": 0,
+    "includes_real_15000_ms_deadline": true
+  },
+  "sdk_runtime_version": "2.89.0",
+  "typecheck": "PASS: strict actual installed SDK + test-only Deno ambient",
+  "lint": "PASS: 0 errors/0 lint warnings; Deno https import resolver exception; React detection notice",
+  "sql_runtime_claim": false,
+  "provider_requests": 0,
+  "repo_writes": 0
+}

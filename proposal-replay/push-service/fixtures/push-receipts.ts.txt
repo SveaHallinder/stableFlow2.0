@@ -1,0 +1,261 @@
+export interface ExpoPushMessage {
+  to: string;
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  sound?: "default";
+  channelId?: string;
+}
+
+export interface PushRegistration {
+  token_id: string;
+  user_id: string;
+  registration_generation: string;
+}
+
+export interface PushTarget {
+  message: ExpoPushMessage;
+  registration: PushRegistration;
+}
+
+interface RpcRequest extends PromiseLike<{ data: unknown; error: unknown }> {
+  abortSignal(signal: AbortSignal): RpcRequest;
+}
+
+interface RpcClient {
+  rpc(name: string, params: Record<string, unknown>): RpcRequest;
+}
+
+interface ReceiptItem {
+  attempt_id: string;
+  position: number;
+  ticket_id: string;
+}
+
+export interface ReceiptSummary {
+  applied_count: number;
+  receipt_ok_count: number;
+  receipt_error_count: number;
+  missing_count: number;
+  deleted_token_count: number;
+}
+
+const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+const EXPO_RECEIPTS_URL = "https://exp.host/--/api/v2/push/getReceipts";
+const PUSH_CHUNK_SIZE = 100;
+const MAX_REGISTRATIONS = 10000;
+export const MAX_RECEIPTS = 1000;
+const REQUEST_TIMEOUT_MS = 15000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROVIDER_ERRORS = new Set([
+  "DeviceNotRegistered", "MessageTooBig", "MessageRateExceeded", "MismatchSenderId", "InvalidCredentials",
+]);
+
+class PushReceiptStateError extends Error {
+  constructor() {
+    super("Push receipt state could not be verified");
+    this.name = "PushReceiptStateError";
+  }
+}
+
+class PushProviderError extends Error {
+  constructor() {
+    super("Push provider acknowledgement could not be verified");
+    this.name = "PushProviderError";
+  }
+}
+
+function object(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown> : null;
+}
+
+export function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+
+function ticketId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 200 && value.trim() === value;
+}
+
+function count(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function providerError(value: unknown): string {
+  const code = object(object(value)?.details)?.error;
+  return typeof code === "string" && PROVIDER_ERRORS.has(code) ? code : "Unknown";
+}
+
+export function registration(row: unknown): { registration: PushRegistration; token: string } {
+  const value = object(row);
+  if (!isUuid(value?.id) || !isUuid(value?.user_id) || !isUuid(value?.registration_generation)
+    || typeof value?.token !== "string" || !value.token || value.token.length > 4096) {
+    throw new PushReceiptStateError();
+  }
+  return {
+    registration: { token_id: value.id, user_id: value.user_id, registration_generation: value.registration_generation },
+    token: value.token,
+  };
+}
+
+async function withDeadline<T>(operation: (signal: AbortSignal) => PromiseLike<T>): Promise<T> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout>;
+  const expired = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new PushReceiptStateError());
+    }, REQUEST_TIMEOUT_MS);
+  });
+  try {
+    // Racing also bounds SDK/auth/storage or synthetic transports that ignore abort.
+    return await Promise.race([Promise.resolve().then(() => operation(controller.signal)), expired]);
+  } finally {
+    clearTimeout(timeout!);
+  }
+}
+
+async function rpc(client: RpcClient, name: string, params: Record<string, unknown>): Promise<unknown> {
+  try {
+    const response = await withDeadline(signal => client.rpc(name, params).abortSignal(signal));
+    if (response.error || response.data === null || response.data === undefined) throw new PushReceiptStateError();
+    return response.data;
+  } catch {
+    throw new PushReceiptStateError();
+  }
+}
+
+function headers(): Record<string, string> {
+  return { "Content-Type": "application/json", Accept: "application/json" };
+}
+
+export async function sendPushTargets(
+  client: RpcClient,
+  attemptId: string,
+  targets: PushTarget[],
+  transport: typeof fetch = fetch,
+): Promise<number> {
+  if (!isUuid(attemptId) || targets.length > MAX_REGISTRATIONS) throw new PushReceiptStateError();
+  const registrations = targets.map(({ registration: target }, position) => {
+    if (!isUuid(target.token_id) || !isUuid(target.user_id) || !isUuid(target.registration_generation)) {
+      throw new PushReceiptStateError();
+    }
+    return { position, token_id: target.token_id, user_id: target.user_id, registration_generation: target.registration_generation };
+  });
+  const prepared = object(await rpc(client, "push_receipts_prepare", {
+    p_attempt_id: attemptId, p_registrations: registrations,
+  }));
+  if (prepared?.attempt_id !== attemptId || typeof prepared?.started !== "boolean") throw new PushReceiptStateError();
+  if (!prepared.started) return 0;
+
+  // Every slot is already durable/unknown. A lost HTTP or save result is never resent.
+  const acceptedIds = new Set<string>();
+  for (let offset = 0; offset < targets.length; offset += PUSH_CHUNK_SIZE) {
+    const chunk = targets.slice(offset, offset + PUSH_CHUNK_SIZE);
+    let acknowledgement: Record<string, unknown> | null;
+    try {
+      acknowledgement = await withDeadline(async signal => {
+        const response = await transport(EXPO_PUSH_URL, {
+          method: "POST", headers: headers(), body: JSON.stringify(chunk.map(target => target.message)), signal,
+        });
+        if (!response.ok) throw new PushProviderError();
+        return object(await response.json());
+      });
+    } catch {
+      throw new PushProviderError();
+    }
+    const data = acknowledgement?.data;
+    const validContainer = Array.isArray(data) && data.length === chunk.length
+      && (acknowledgement?.errors === undefined || (Array.isArray(acknowledgement.errors) && acknowledgement.errors.length === 0));
+    const ids = new Map<string, number>();
+    if (validContainer) {
+      for (const entry of data) {
+        const item = object(entry);
+        if (item?.status === "ok" && ticketId(item.id)) ids.set(item.id, (ids.get(item.id) ?? 0) + 1);
+      }
+    }
+    const results = chunk.map((_, index) => {
+      const item = validContainer ? object(data[index]) : null;
+      if (item?.status === "ok" && ticketId(item.id) && ids.get(item.id) === 1 && !acceptedIds.has(item.id)) {
+        acceptedIds.add(item.id);
+        return { position: offset + index, status: "accepted", ticket_id: item.id, error_code: null };
+      }
+      if (item?.status === "error") {
+        return { position: offset + index, status: "ticket_error", ticket_id: null, error_code: providerError(item) };
+      }
+      return { position: offset + index, status: "unknown", ticket_id: null, error_code: null };
+    });
+    const saved = object(await rpc(client, "push_receipts_record_tickets", { p_attempt_id: attemptId, p_results: results }));
+    if (saved?.attempt_id !== attemptId || saved?.recorded_count !== results.length) throw new PushReceiptStateError();
+    if (results.some(result => result.status !== "accepted")) throw new PushProviderError();
+  }
+  return targets.length;
+}
+
+export async function collectPushReceipts(
+  client: RpcClient,
+  workerId: string,
+  limit: number = MAX_RECEIPTS,
+  transport: typeof fetch = fetch,
+): Promise<ReceiptSummary> {
+  if (!isUuid(workerId) || !Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RECEIPTS) throw new PushReceiptStateError();
+  const claim = object(await rpc(client, "push_receipts_claim_due", { p_worker_id: workerId, p_limit: limit }));
+  if (!isUuid(claim?.lease_id) || !Array.isArray(claim?.items) || claim.items.length > limit) throw new PushReceiptStateError();
+  const leaseId = claim.lease_id;
+  const seen = new Set<string>();
+  const tickets = new Set<string>();
+  const items: ReceiptItem[] = claim.items.map(entry => {
+    const item = object(entry);
+    if (!isUuid(item?.attempt_id) || !count(item?.position) || item.position >= MAX_REGISTRATIONS || !ticketId(item?.ticket_id)
+      || seen.has(`${item.attempt_id}:${item.position}`) || tickets.has(item.ticket_id)) throw new PushReceiptStateError();
+    seen.add(`${item.attempt_id}:${item.position}`);
+    tickets.add(item.ticket_id);
+    return { attempt_id: item.attempt_id, position: item.position, ticket_id: item.ticket_id };
+  });
+  if (!items.length) return { applied_count: 0, receipt_ok_count: 0, receipt_error_count: 0, missing_count: 0, deleted_token_count: 0 };
+
+  let data: Record<string, unknown> | null = null;
+  let providerFailed = false;
+  try {
+    data = await withDeadline(async signal => {
+      const response = await transport(EXPO_RECEIPTS_URL, {
+        method: "POST", headers: headers(), body: JSON.stringify({ ids: items.map(item => item.ticket_id) }), signal,
+      });
+      if (!response.ok) throw new PushProviderError();
+      const acknowledgement = object(await response.json());
+      const receipts = object(acknowledgement?.data);
+      if (!receipts || !(acknowledgement?.errors === undefined || (Array.isArray(acknowledgement.errors) && acknowledgement.errors.length === 0))) {
+        throw new PushProviderError();
+      }
+      return receipts;
+    });
+  } catch {
+    data = null;
+    providerFailed = true;
+  }
+  const results = items.map(item => {
+    const receipt = data && Object.hasOwn(data, item.ticket_id) ? object(data[item.ticket_id]) : null;
+    if (receipt?.status === "ok") return { ...item, status: "receipt_ok", error_code: null };
+    if (receipt?.status === "error") return { ...item, status: "receipt_error", error_code: providerError(receipt) };
+    return { ...item, status: "missing", error_code: null };
+  });
+  const applied = object(await rpc(client, "push_receipts_apply", { p_lease_id: leaseId, p_results: results }));
+  if (applied?.lease_id !== leaseId || applied?.applied_count !== items.length
+    || !count(applied?.receipt_ok_count) || !count(applied?.receipt_error_count) || !count(applied?.missing_count)
+    || !count(applied?.deleted_token_count)
+    || applied.receipt_ok_count !== results.filter(result => result.status === "receipt_ok").length
+    || applied.receipt_error_count !== results.filter(result => result.status === "receipt_error").length
+    || applied.missing_count !== results.filter(result => result.status === "missing").length
+    || applied.deleted_token_count > results.filter(result => result.status === "receipt_error" && result.error_code === "DeviceNotRegistered").length) {
+    throw new PushReceiptStateError();
+  }
+  if (providerFailed) throw new PushProviderError();
+  return {
+    applied_count: applied.applied_count as number,
+    receipt_ok_count: applied.receipt_ok_count,
+    receipt_error_count: applied.receipt_error_count,
+    missing_count: applied.missing_count,
+    deleted_token_count: applied.deleted_token_count,
+  };
+}
