@@ -1,0 +1,11 @@
+{
+  "revision": "REV2",
+  "state": "SOURCE_FROZEN; STATIC_ONLY; SQL_RUNTIME_NOT_RUN",
+  "prior_revision_sql_sha256": "cebf477de17ac141ca67698e4a42505dd6db021ced02f43393b5208fcd1d4267",
+  "files": {
+    "sql/20261008_push_device_ownership.sql": "d2a69374bbcdb5a73583c93148bcf169a41e26bf62b96411914a66a62317d81b",
+    "sql/build-rev2.py": "1b3eeabd198acc1d568dc0caa416fc49a4b6e59d518e84ca56af349f9119da3a"
+  },
+  "api_unchanged": true,
+  "provider_requests": 0
+}

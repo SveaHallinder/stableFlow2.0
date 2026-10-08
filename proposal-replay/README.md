@@ -65,3 +65,19 @@ Den befintliga vanliga CI:n kör den nya testingången genom `scripts/*.test.mjs
 Proven använder riktig installerad SDK med syntetiska transporter. Oväntad global HTTP nekas; inga riktiga pushar, konton, JWT:er eller fil-/schemaändringar provas. Den verkliga 15-sekundersgränsen i ett deadlineprov är bevarad. Ett ändrat fixture-byte stoppar körningen före testregistrering. De 17 separata oberoende granskningsproven har en annan rapportlivscykel och ingår inte i denna portabla svit.
 
 En senare oberoende granskning av produktens befintliga tokenägarskap har reproducerat ett separat kontobytesfel: misslyckad riktad A-städning kan lämna A och B registrerade för samma token, och en gammal redan skickad A-skrivning kan återskapa kopplingen. Dessa 48 kvittoprov löser eller verifierar inte tokenägarskap. Den fixen behöver ett separat atomiskt ägarskaps-/generationkontrakt och nytt uttryckligt schema/API-besked. Ingen databas- eller funktionsdrift aktiveras av denna testgren.
+
+
+## Separat tokenägarskap: REV2
+
+`push-device-ownership/` innehåller byteidentiska, uttryckligen ej applicerade SQL/testfixturer. Källfrysningen är `907b880a93ddd79dd4d3c280172ae61a23568af48ef5f552a146e6df7d294619`; migrations-SHA är `d2a69374bbcdb5a73583c93148bcf169a41e26bf62b96411914a66a62317d81b`. `check_bindings.py` verifierar samtliga femton author-SQL/Python-filer, källfrysningen, fyra tidigare kvittofiler och fullschema före runtime. Inget förslag läggs i produktens migrationsmapp.
+
+REV2 provar 42 namngivna rollback-assertions, två separata negativa DB-kopior, faktisk gammal claim kontra nytt konto och prepare kontra ägarbyte. Nya positiva/negativa AuthDelete-prov kräver observerade backendlås, inklusive den felaktiga ordningens två samtidiga wait-graph-kanter. Ingen sleep etablerar operationsordningen. Schemaägaren är vanlig NOSUPERUSER/BYPASSRLS med separat Auth-ägare och befintliga SELECT/REFERENCES/UPDATE/id-UPDATE; verkliga LOGIN-skrivarroller används. Den lokala Auth UPDATE-fixturen motsvarar läst befintlig Hosted-behörighet, ingen ny Hosted-grant ingår.
+
+```sh
+python3 -B proposal-replay/push-device-ownership/check_bindings.py
+python3 -B proposal-replay/push-device-ownership/ownership-replay.py --schema proposal-replay/fixtures/full-schema.sql --receipt-sql proposal-replay/push-receipts
+```
+
+Kommandona ovan kräver bara standardbibliotek och startar inte PostgreSQL. Lägg endast på `--runtime --receipt "$STABLEFLOW_REPLAY_REPORT_DIR/push-device-ownership-result.json"` på den separata icke-root Linux-runnern med befintlig PostgreSQL. Krävd slutstatus är `PASS_SYNTHETIC_SQL_ONLY; HOSTED_PROVIDER_PHONE_NOT_TESTED`, 42 unika PASS-labels, samtliga negativa och barriärprov PASS, `cluster_cleaned=true`, `tcp_enabled=false` och noll provideranrop. SQL-runtime är ännu inte verifierad när detta paket förbereds. Den separata SDK-lockqueue-luckan i klientens globala signOut är inte löst av dessa SQL-filer.
+
+Vanlig testgren-CI förväntas fortsatt köra 593 Node-/106 offline UI-prov. Befintliga 132 SQL-assertions kompletteras av dessa 42 (totalt 174) och särskilda negativa/barriärkvitton. En grön testgren betyder inte produktintegration, signerad JWT/PostgREST, faktisk push/telefon eller användarens schema-/API-/funktionsdeploygodkännande. Exakt godkänd sender måste deployas först med generisk payload och saknade RPC:er ska neka utskick; SQL ensamt löser inte produktens gamla råtokenläsning. Inga Hosted-/provider-/schema-/dependencyändringar utförs av denna testgren.
