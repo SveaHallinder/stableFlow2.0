@@ -53,7 +53,7 @@ export async function getExpoPushToken(): Promise<string | null> {
     );
     return tokenData.data;
   } catch (error) {
-    console.warn('Kunde inte hämta push-token', error);
+    console.warn('[push notification] Kunde inte hämta push-token', error instanceof Error ? 'Error' : 'Unknown');
     return null;
   }
 }
@@ -73,7 +73,7 @@ export async function registerPushToken(userId: string): Promise<boolean> {
     { onConflict: 'user_id,token' },
   );
   if (error) {
-    console.warn('Kunde inte spara push-token', error);
+    console.warn('[push registration] Kunde inte spara push-token', error instanceof Error ? 'Error' : 'Unknown');
     return false;
   }
   return true;

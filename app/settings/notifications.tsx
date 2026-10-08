@@ -20,7 +20,7 @@ import { useAppData } from '@/context/AppDataContext';
 import { useAuth } from '@/context/AuthContext';
 import { formatShortDate } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
-import { requestPermission, getPermissionStatus } from '@/lib/notifications';
+import { requestPermission, getPermissionStatus, registerPushToken } from '@/lib/notifications';
 import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
@@ -39,6 +39,14 @@ const defaultPrefs: NotificationPrefs = {
   reminders: true,
 };
 
+type PreferenceScope = { userId: string | undefined };
+type PreferenceView = {
+  scope: PreferenceScope;
+  prefs: NotificationPrefs;
+  status: 'loading' | 'ready' | 'saving' | 'load-error' | 'uncertain';
+  error: string | null;
+};
+
 export default function NotificationSettingsScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -47,59 +55,178 @@ export default function NotificationSettingsScreen() {
   const isDesktopWeb = useIsDesktopWeb();
 
   const [permissionStatus, setPermissionStatus] = React.useState<string>('undetermined');
-  const [prefs, setPrefs] = React.useState<NotificationPrefs>(defaultPrefs);
-  const [loadingPrefs, setLoadingPrefs] = React.useState(true);
   const userId = user?.id;
+  const preferenceScope = React.useMemo(() => ({ userId }), [userId]);
+  const currentScopeRef = React.useRef<PreferenceScope | null>(preferenceScope);
+  currentScopeRef.current = preferenceScope;
+  const preferenceViewRef = React.useRef<PreferenceView | null>(null);
+  const loadAttemptRef = React.useRef<object | null>(null);
+  const saveAttemptRef = React.useRef<object | null>(null);
+  const permissionCheckRef = React.useRef<object | null>(null);
+  const permissionAttemptRef = React.useRef<object | null>(null);
+  const [preferenceView, setPreferenceView] = React.useState<PreferenceView | null>(null);
+  const [loadRevision, setLoadRevision] = React.useState(0);
+  const [permissionError, setPermissionError] = React.useState<{
+    scope: PreferenceScope;
+    message: string;
+  } | null>(null);
+  const currentPreferenceView = preferenceView?.scope === preferenceScope ? preferenceView : null;
+  const prefs = currentPreferenceView?.prefs ?? defaultPrefs;
+  const loadingPrefs = !currentPreferenceView || currentPreferenceView.status !== 'ready';
+  const publishPreferences = React.useCallback((view: PreferenceView) => {
+    preferenceViewRef.current = view;
+    setPreferenceView(view);
+  }, []);
 
   // Check permission status
   React.useEffect(() => {
-    getPermissionStatus().then(setPermissionStatus).catch(() => {});
-  }, []);
+    let active = true;
+    const check = {};
+    permissionCheckRef.current = check;
+    setPermissionStatus('undetermined');
+    getPermissionStatus().then(status => {
+      if (active && currentScopeRef.current === preferenceScope && permissionCheckRef.current === check) {
+        setPermissionStatus(status);
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+      if (permissionCheckRef.current === check) permissionCheckRef.current = null;
+    };
+  }, [preferenceScope]);
+
+  React.useEffect(() => {
+    currentScopeRef.current = preferenceScope;
+    saveAttemptRef.current = null;
+    permissionAttemptRef.current = null;
+    return () => {
+      if (currentScopeRef.current === preferenceScope) {
+        currentScopeRef.current = null;
+        saveAttemptRef.current = null;
+        permissionAttemptRef.current = null;
+      }
+    };
+  }, [preferenceScope]);
 
   // Load saved preferences
   React.useEffect(() => {
-    if (!userId) return;
-    supabase
-      .from('notification_preferences')
-      .select('messages,assignments,feed,reminders')
-      .eq('user_id', userId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          setPrefs({
-            messages: data.messages ?? true,
-            assignments: data.assignments ?? true,
-            feed: data.feed ?? true,
-            reminders: data.reminders ?? true,
-          });
+    let active = true;
+    const attempt = {};
+    loadAttemptRef.current = attempt;
+    publishPreferences({ scope: preferenceScope, prefs: defaultPrefs, status: 'loading', error: null });
+    const isCurrent = () => active && currentScopeRef.current === preferenceScope
+      && loadAttemptRef.current === attempt;
+    const fail = () => {
+      if (!isCurrent()) return;
+      console.warn('[notification preferences] Kunde inte läsa notisinställningar', 'load_failed');
+      publishPreferences({ scope: preferenceScope, prefs: defaultPrefs, status: 'load-error',
+        error: 'Kunde inte läsa notisinställningarna. Läs in dem igen innan du gör ändringar.' });
+    };
+    if (preferenceScope.userId) {
+      void (async () => {
+        try {
+          const { data, error } = await supabase.from('notification_preferences')
+            .select('messages,assignments,feed,reminders')
+            .eq('user_id', preferenceScope.userId).maybeSingle();
+          if (!isCurrent()) return;
+          if (error || (data !== null && !(['messages', 'assignments', 'feed', 'reminders'] as const)
+            .every(key => typeof data?.[key] === 'boolean'))) { fail(); return; }
+          publishPreferences({ scope: preferenceScope, status: 'ready', error: null,
+            prefs: data ? {
+              messages: data.messages,
+              assignments: data.assignments,
+              feed: data.feed,
+              reminders: data.reminders,
+            } : defaultPrefs });
+        } catch {
+          fail();
         }
-        setLoadingPrefs(false);
-      })
-      .then(undefined, () => setLoadingPrefs(false));
-  }, [userId]);
+      })();
+    }
+    return () => {
+      active = false;
+      if (loadAttemptRef.current === attempt) loadAttemptRef.current = null;
+    };
+  }, [preferenceScope, loadRevision, publishPreferences]);
+
+  const handleReloadPreferences = React.useCallback(() => {
+    if (currentScopeRef.current !== preferenceScope || !preferenceScope.userId
+      || preferenceViewRef.current?.status === 'saving') return;
+    loadAttemptRef.current = null;
+    publishPreferences({ scope: preferenceScope, prefs: defaultPrefs, status: 'loading', error: null });
+    setLoadRevision(value => value + 1);
+  }, [preferenceScope, publishPreferences]);
 
   const handleRequestPermission = React.useCallback(async () => {
-    const granted = await requestPermission();
-    setPermissionStatus(granted ? 'granted' : 'denied');
-  }, []);
+    if (currentScopeRef.current !== preferenceScope || !preferenceScope.userId
+      || permissionStatus === 'simulator' || Platform.OS === 'web' || permissionAttemptRef.current) return;
+    const attempt = {};
+    permissionCheckRef.current = null;
+    permissionAttemptRef.current = attempt;
+    const isCurrent = () => currentScopeRef.current === preferenceScope
+      && permissionAttemptRef.current === attempt;
+    try {
+      const granted = await requestPermission();
+      if (!isCurrent()) return;
+      setPermissionStatus(granted ? 'granted' : 'denied');
+      setPermissionError(null);
+      if (granted) {
+        const registered = await registerPushToken(preferenceScope.userId);
+        if (!isCurrent()) return;
+        if (!registered) setPermissionError({ scope: preferenceScope,
+          message: 'Notisbehörigheten är aktiverad, men enheten kunde inte registreras. Försök igen.' });
+      }
+    } catch {
+      if (!isCurrent()) return;
+      console.warn('[push permission] Kunde inte aktivera push-notiser', 'activation_failed');
+      setPermissionError({ scope: preferenceScope, message: 'Kunde inte aktivera push-notiser. Försök igen.' });
+    } finally {
+      if (permissionAttemptRef.current === attempt) permissionAttemptRef.current = null;
+    }
+  }, [preferenceScope, permissionStatus]);
 
   const handleToggle = React.useCallback(
     async (key: keyof NotificationPrefs) => {
-      if (!userId) return;
-      const prev = prefs;
-      const next = { ...prefs, [key]: !prefs[key] };
-      setPrefs(next);
-      const { error } = await supabase.from('notification_preferences').upsert(
-        {
-          user_id: userId,
-          ...next,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id' },
-      );
-      if (error) setPrefs(prev);
+      const confirmed = preferenceViewRef.current;
+      if (currentScopeRef.current !== preferenceScope || !preferenceScope.userId
+        || confirmed?.scope !== preferenceScope || confirmed.status !== 'ready' || saveAttemptRef.current) return;
+      const prev = confirmed.prefs;
+      const next = { ...prev, [key]: !prev[key] };
+      const attempt = {};
+      saveAttemptRef.current = attempt;
+      publishPreferences({ scope: preferenceScope, prefs: next, status: 'saving', error: null });
+      const isCurrent = () => currentScopeRef.current === preferenceScope && saveAttemptRef.current === attempt;
+      const fail = (uncertain: boolean) => {
+        if (!isCurrent()) return;
+        console.warn('[notification preferences] Kunde inte spara notisinställningar',
+          uncertain ? 'save_uncertain' : 'save_failed');
+        publishPreferences({ scope: preferenceScope, prefs: prev, status: uncertain ? 'uncertain' : 'ready',
+          error: uncertain
+            ? 'Det gick inte att bekräfta sparningen. Läs in inställningarna igen innan du ändrar fler.'
+            : 'Kunde inte spara notisinställningarna. Dina tidigare inställningar gäller. Försök igen.' });
+      };
+      try {
+        const { data, error, status } = await supabase.from('notification_preferences').upsert(
+          { user_id: preferenceScope.userId, ...next, updated_at: new Date().toISOString() },
+          { onConflict: 'user_id' },
+        );
+        if (!isCurrent()) return;
+        const acknowledged = error === null && data === null && Number.isInteger(status)
+          && status >= 200 && status < 300;
+        if (!acknowledged) {
+          const rejected = error && Number.isInteger(status) && status >= 400 && status < 500
+            && status !== 408 && typeof error.code === 'string' && /^(?:[0-9A-Z]{5}|PGRST\d{3})$/.test(error.code);
+          fail(!rejected);
+          return;
+        }
+        publishPreferences({ scope: preferenceScope, prefs: next, status: 'ready', error: null });
+      } catch {
+        fail(true);
+      } finally {
+        if (saveAttemptRef.current === attempt) saveAttemptRef.current = null;
+      }
     },
-    [userId, prefs],
+    [preferenceScope, publishPreferences],
   );
 
   const missedAssignments = React.useMemo(
@@ -139,9 +266,11 @@ export default function NotificationSettingsScreen() {
               <Text style={styles.permissionBody}>
                 {permissionStatus === 'denied'
                   ? 'Du har nekat push-notiser. Aktivera dem i enhetens inställningar.'
-                  : 'Aktivera push-notiser för att få påminnelser om pass, meddelanden och uppdateringar.'}
+                  : permissionStatus === 'simulator'
+                  ? 'Push-notiser fungerar inte i simulator.'
+                  : 'Aktivera push-notiser för meddelanden, tilldelade pass och viktiga stallnotiser.'}
               </Text>
-              {permissionStatus !== 'denied' && (
+              {permissionStatus !== 'denied' && permissionStatus !== 'simulator' && userId && (
                 <TouchableOpacity
                   style={styles.permissionButton}
                   onPress={handleRequestPermission}
@@ -159,6 +288,29 @@ export default function NotificationSettingsScreen() {
           {!isWeb && (
             <Card tone="muted" style={styles.toggleCard}>
               <Text style={styles.sectionTitle}>Notistyper</Text>
+              {userId && (!currentPreferenceView || currentPreferenceView.status === 'loading') && (
+                <Text style={styles.toggleDescription}>Läser notisinställningar…</Text>
+              )}
+              {permissionError?.scope === preferenceScope && (
+                <View style={styles.permissionCard}>
+                  <Text style={styles.permissionBody} accessibilityRole="alert">{permissionError.message}</Text>
+                  <TouchableOpacity style={styles.permissionButton} onPress={handleRequestPermission}
+                    accessibilityRole="button" accessibilityLabel="Försök registrera igen">
+                    <Text style={styles.permissionButtonText}>Försök registrera igen</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {currentPreferenceView?.error && (
+                <View style={styles.permissionCard}>
+                  <Text style={styles.permissionBody} accessibilityRole="alert">{currentPreferenceView.error}</Text>
+                  {(currentPreferenceView.status === 'load-error' || currentPreferenceView.status === 'uncertain') && (
+                    <TouchableOpacity style={styles.permissionButton} onPress={handleReloadPreferences}
+                      accessibilityRole="button" accessibilityLabel="Läs in igen">
+                      <Text style={styles.permissionButtonText}>Läs in igen</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
               <ToggleRow
                 label="Meddelanden"
                 description="Nya chattmeddelanden"
@@ -175,17 +327,18 @@ export default function NotificationSettingsScreen() {
                 disabled={loadingPrefs || needsPermission}
               />
               <View style={styles.divider} />
-              <ToggleRow
-                label="Flödet"
-                description="Nya inlägg i stallet"
-                value={prefs.feed}
-                onToggle={() => handleToggle('feed')}
-                disabled={loadingPrefs || needsPermission}
-              />
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleText}>
+                  <Text style={styles.toggleLabel}>Flödet</Text>
+                  <Text style={styles.toggleDescription}>
+                    Vanliga inlägg visas i flödet. De skickar inga push-notiser.
+                  </Text>
+                </View>
+              </View>
               <View style={styles.divider} />
               <ToggleRow
-                label="Påminnelser"
-                description="Påminnelse innan ditt pass börjar"
+                label="Viktiga stallnotiser"
+                description="Viktiga och akuta händelser i stallet"
                 value={prefs.reminders}
                 onToggle={() => handleToggle('reminders')}
                 disabled={loadingPrefs || needsPermission}
@@ -197,8 +350,8 @@ export default function NotificationSettingsScreen() {
             <Card tone="muted" style={styles.card}>
               <Text style={styles.title}>Push-notiser</Text>
               <Text style={styles.body}>
-                Push-notiser är tillgängliga i appen. Ladda ner StableFlow på din telefon för att
-                aktivera dem.
+                Push-notiser för meddelanden, tilldelade pass och viktiga stallnotiser används i
+                telefonappen. Vanliga flödesinlägg skickar inga push-notiser.
               </Text>
             </Card>
           )}
