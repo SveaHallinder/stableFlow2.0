@@ -1,0 +1,18 @@
+{
+  "source_base_head": "b0b5ee71a9577d3ae2b7605874befc76f55efc7f",
+  "acl_sql_sha256": "62f019bffbd6073503cd9beeaf07d594293e500988439cbd59fc3c7b129d8653",
+  "fixtures": {
+    "acl.sql": "62f019bffbd6073503cd9beeaf07d594293e500988439cbd59fc3c7b129d8653",
+    "baseline-alert-trigger.sql": "1ed9476fe6d1ffd165b68fafbe317fa8f4bbb0b064a3292819a292c537c5d3e7",
+    "baseline-notify-vault.sql": "7381fd137ad3e8e5bcebb9baa7d726cdf324a9dc51eea52f184f634cd2654aad",
+    "baseline-triggers.sql": "1a4ff8a5bf891a2ecb23ee01f9354fed9d2eba1071073da7a3fbc6fd9b5d4e93",
+    "fixture.sql": "4462501e3d60184b97b29882fcfb82dfb70dcd34b11546bcd5770990a868ba8b"
+  },
+  "baseline_file_provenance": {
+    "baseline-notify-vault.sql": "supabase/migrations/20260613_fas0a_push_vault.sql",
+    "baseline-triggers.sql": "supabase/migrations/20250313_push_notification_triggers.sql",
+    "baseline-alert-trigger.sql": "supabase/migrations/20260503_alerts.sql"
+  },
+  "fixture_data": "Only zero-prefix synthetic UUIDs, synthetic-dispatch.invalid and fixed dummy authorization; no real account IDs, emails, tokens or .env.",
+  "runtime_status": "NOT_RUN"
+}

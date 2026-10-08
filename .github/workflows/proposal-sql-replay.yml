@@ -59,6 +59,11 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B proposal-replay/push-receipts/push-receipts-replay.py --schema proposal-replay/fixtures/full-schema.sql --runtime --receipt "$STABLEFLOW_REPLAY_REPORT_DIR/push-receipts-result.json" | tee "$STABLEFLOW_REPLAY_REPORT_DIR/push-receipts.log"
+      - name: Replay exact push dispatch permission proposal
+        run: |
+          set -euo pipefail
+          python3 -B proposal-replay/notify-access/test_source_only.py
+          python3 -B proposal-replay/notify-access/replay_notify_access.py --runtime --receipt "$STABLEFLOW_REPLAY_REPORT_DIR/notify-access-result.json" | tee "$STABLEFLOW_REPLAY_REPORT_DIR/notify-access.log"
       - name: Keep proposal-only replay receipts
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
