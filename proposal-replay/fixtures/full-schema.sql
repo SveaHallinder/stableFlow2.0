@@ -1,0 +1,1974 @@
+-- Bootstrap only: existing name-array data needs the explicitly mapped migration.
+begin;
+do $bootstrap$
+declare invalid_scope bigint := 0;
+begin
+  if to_regclass('public.horses') is not null then
+    lock table public.horses in share mode;
+    select count(*) into invalid_scope from public.horses where stable_id is null;
+  end if;
+  if to_regclass('public.paddocks') is not null then
+    lock table public.paddocks in share mode;
+    invalid_scope := invalid_scope + (select count(*) from public.paddocks where stable_id is null);
+    if exists(select 1 from public.paddocks where cardinality(horse_names) > 0) then
+      raise exception using errcode = '23514', message = '[paddock migration] Befintliga namnposter kräver den uttryckligen mappade migrationen.';
+    end if;
+  end if;
+  if invalid_scope > 0 then
+    raise exception using errcode = '23514', message = '[paddock migration] Befintliga rader saknar stable_id; gissa inte stall.';
+  end if;
+end
+$bootstrap$;
+
+-- Core schema for StableFlow (Supabase)
+-- Apply in Supabase SQL editor.
+
+create extension if not exists "pgcrypto";
+
+-- Helpers
+create or replace function public.generate_join_code()
+returns text
+language sql
+volatile
+set search_path = public, extensions
+as $$
+  select upper(substr(encode(gen_random_bytes(4), 'hex'), 1, 6));
+$$;
+
+-- Profiles
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  username text,
+  avatar_url text,
+  created_at timestamptz default now()
+);
+alter table public.profiles add column if not exists full_name text;
+alter table public.profiles add column if not exists phone text;
+alter table public.profiles add column if not exists location text;
+alter table public.profiles add column if not exists responsibilities text[] default '{}'::text[];
+alter table public.profiles add column if not exists onboarding_dismissed boolean default false;
+
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, username, full_name)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'username', ''),
+    coalesce(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'username', '')
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- Farms
+create table if not exists public.farms (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  name text not null,
+  location text,
+  has_indoor_arena boolean default false,
+  arena_note text
+);
+alter table public.farms add column if not exists created_by uuid references public.profiles(id) on delete set null;
+alter table public.farms alter column created_by set default auth.uid();
+alter table public.farms enable row level security;
+
+-- Stables
+create table if not exists public.stables (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  name text not null,
+  description text,
+  location text,
+  farm_id uuid references public.farms(id) on delete set null,
+  settings jsonb default '{}'::jsonb,
+  ride_types jsonb default '[]'::jsonb,
+  join_code text unique default public.generate_join_code(),
+  created_by uuid references public.profiles(id) on delete set null
+);
+alter table public.stables enable row level security;
+
+-- Stable members
+create table if not exists public.stable_members (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  user_id uuid references public.profiles(id) on delete cascade,
+  role text not null default 'rider',
+  custom_role text,
+  access text default 'view',
+  rider_role text,
+  horse_ids uuid[] default '{}'::uuid[],
+  unique (stable_id, user_id)
+);
+alter table public.stable_members enable row level security;
+
+-- Default passes
+create table if not exists public.default_passes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  stable_id uuid references public.stables(id) on delete cascade,
+  weekday integer not null,
+  slot text not null,
+  unique (user_id, stable_id, weekday, slot)
+);
+alter table public.default_passes enable row level security;
+
+-- Away notices
+create table if not exists public.away_notices (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  stable_id uuid references public.stables(id) on delete cascade,
+  start date not null,
+  "end" date not null,
+  note text,
+  created_at timestamptz default now()
+);
+alter table public.away_notices enable row level security;
+
+-- Invites
+create table if not exists public.stable_invites (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  email text not null,
+  role text not null default 'rider',
+  custom_role text,
+  access text default 'view',
+  rider_role text,
+  horse_ids uuid[] default '{}'::uuid[],
+  code text,
+  expires_at timestamptz,
+  accepted_at timestamptz
+);
+alter table public.stable_invites add column if not exists custom_role text;
+create unique index if not exists stable_invites_code_unique
+  on public.stable_invites(code)
+  where code is not null;
+alter table public.stable_invites enable row level security;
+
+-- Access helpers
+create or replace function public.is_stable_member(p_stable_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id and m.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.can_edit_stable(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and coalesce(m.access, 'view') in ('edit', 'owner')
+  );
+$$;
+
+create or replace function public.can_claim_assignments(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff', 'rider')
+  );
+$$;
+
+create or replace function public.can_manage_day_events(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff', 'rider', 'farrier', 'vet', 'trainer', 'therapist')
+  );
+$$;
+
+create or replace function public.can_manage_ride_logs(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff', 'rider')
+  );
+$$;
+
+create or replace function public.can_manage_arena_bookings(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff')
+  );
+$$;
+
+create or replace function public.can_manage_arena_status(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff')
+  );
+$$;
+
+create or replace function public.can_update_horse_status(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff')
+  );
+$$;
+
+create or replace function public.can_manage_groups(p_stable_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role in ('admin', 'staff')
+  );
+$$;
+
+create or replace function public.is_stable_owner(p_stable_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stable_members m
+    where m.stable_id = p_stable_id
+      and m.user_id = auth.uid()
+      and m.role = 'admin'
+      and coalesce(m.access, 'view') = 'owner'
+  );
+$$;
+
+create or replace function public.is_stable_creator(p_stable_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stables s
+    where s.id = p_stable_id
+      and s.created_by = auth.uid()
+  );
+$$;
+
+create or replace function public.shares_stable_with(p_other uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.stable_members a
+    join public.stable_members b on a.stable_id = b.stable_id
+    where a.user_id = auth.uid()
+      and b.user_id = p_other
+  );
+$$;
+
+create or replace function public.storage_stable_id(path text)
+returns uuid
+language sql
+stable
+set search_path = public
+as $$
+  select case
+    when path is null then null
+    when split_part(path, '/', 1) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      then split_part(path, '/', 1)::uuid
+    else null
+  end;
+$$;
+
+-- Invite accept functions
+create or replace function public.accept_pending_invites()
+returns integer
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_email text;
+  v_count integer := 0;
+begin
+  v_email := auth.jwt()->>'email';
+  if v_email is null then
+    return 0;
+  end if;
+
+  insert into public.stable_members (stable_id, user_id, role, custom_role, access, rider_role, horse_ids)
+  select i.stable_id, auth.uid(), i.role, i.custom_role, i.access, i.rider_role, i.horse_ids
+  from public.stable_invites i
+  where lower(i.email) = lower(v_email)
+    and i.accepted_at is null
+    and (i.expires_at is null or i.expires_at > now())
+  on conflict (stable_id, user_id) do nothing;
+
+  get diagnostics v_count = row_count;
+
+  update public.stable_invites
+    set accepted_at = now()
+  where lower(email) = lower(v_email)
+    and accepted_at is null
+    and (expires_at is null or expires_at > now());
+
+  return v_count;
+end;
+$$;
+
+create or replace function public.validate_invite(p_email text, p_code text default null)
+returns boolean
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_email text;
+  v_has_email boolean := false;
+  v_has_code boolean := false;
+  v_code text;
+begin
+  v_email := lower(trim(p_email));
+  v_code := upper(trim(p_code));
+
+  if v_email is not null and length(v_email) > 0 then
+    select exists(
+      select 1
+      from public.stable_invites i
+      where lower(i.email) = v_email
+        and i.accepted_at is null
+        and (i.expires_at is null or i.expires_at > now())
+    ) into v_has_email;
+  end if;
+
+  if v_code is not null and length(v_code) > 0 then
+    select exists(
+      select 1
+      from public.stable_invites i
+      where upper(i.code) = v_code
+        and i.accepted_at is null
+        and (i.expires_at is null or i.expires_at > now())
+    ) into v_has_code;
+
+    if not v_has_code then
+      select exists(
+        select 1
+        from public.stables s
+        where s.join_code = v_code
+      ) into v_has_code;
+    end if;
+  end if;
+
+  if v_code is not null and length(v_code) > 0 then
+    return v_has_code;
+  end if;
+
+  return v_has_email;
+end;
+$$;
+
+grant execute on function public.validate_invite(text, text) to anon, authenticated;
+
+create or replace function public.accept_join_code(p_code text)
+returns uuid
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_stable_id uuid;
+begin
+  select id into v_stable_id
+  from public.stables
+  where join_code = upper(trim(p_code));
+
+  if v_stable_id is null then
+    raise exception 'Invalid join code';
+  end if;
+
+  insert into public.stable_members (stable_id, user_id, role, access, rider_role)
+  values (v_stable_id, auth.uid(), 'rider', 'view', 'medryttare')
+  on conflict (stable_id, user_id) do nothing;
+
+  return v_stable_id;
+end;
+$$;
+
+-- Horses
+create table if not exists public.horses (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  name text not null,
+  owner_user_id uuid references public.profiles(id) on delete set null,
+  box_number text,
+  can_sleep_inside boolean,
+  gender text,
+  age integer,
+  note text,
+  image_url text
+);
+alter table public.horses enable row level security;
+
+-- Paddocks
+create table if not exists public.paddocks (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  name text not null,
+  horse_names text[] default '{}'::text[],
+  season text default 'yearRound',
+  image_url text
+);
+alter table public.paddocks enable row level security;
+
+-- Horse day status
+create table if not exists public.horse_day_statuses (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  horse_id uuid references public.horses(id) on delete cascade,
+  date date not null,
+  day_status text,
+  night_status text,
+  checked boolean,
+  water boolean,
+  hay boolean,
+  unique (stable_id, horse_id, date)
+);
+alter table public.horse_day_statuses enable row level security;
+
+-- Feed plans (stable defaults + per-horse overrides)
+create table if not exists public.feed_plans (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade,
+  slot text not null,
+  label text not null,
+  amount text,
+  note text,
+  is_stable_default boolean not null default false,
+  active boolean not null default true,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.feed_plans enable row level security;
+
+-- Feed checks (per horse + day + slot)
+create table if not exists public.feed_checks (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade not null,
+  date date not null,
+  slot text not null,
+  checked_by_user_id uuid references public.profiles(id) on delete set null,
+  checked_at timestamptz,
+  deviation_note text,
+  created_at timestamptz default now(),
+  unique (horse_id, date, slot)
+);
+alter table public.feed_checks enable row level security;
+
+-- Assignments
+create table if not exists public.assignments (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  date date not null,
+  slot text not null,
+  label text not null,
+  icon text not null,
+  time text not null,
+  note text,
+  status text not null,
+  assignee_id uuid references public.profiles(id) on delete set null,
+  completed_at timestamptz,
+  assigned_via text,
+  declined_by_user_ids uuid[] default '{}'::uuid[],
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.assignments enable row level security;
+
+create table if not exists public.assignment_history (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  assignment_id uuid references public.assignments(id) on delete cascade,
+  label text not null,
+  action text not null,
+  created_at timestamptz default now()
+);
+alter table public.assignment_history enable row level security;
+
+-- Alerts
+create table if not exists public.alerts (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  message text not null,
+  type text not null,
+  created_at timestamptz default now()
+);
+alter table public.alerts enable row level security;
+
+-- Stable alerts (important/urgent)
+create table if not exists public.stable_alerts (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  title text not null,
+  body text,
+  severity text not null default 'info',
+  horse_id uuid references public.horses(id) on delete set null,
+  paddock_id uuid references public.paddocks(id) on delete set null,
+  assignment_id uuid references public.assignments(id) on delete set null,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  resolved_at timestamptz,
+  constraint stable_alerts_severity_check check (severity in ('info', 'important', 'urgent'))
+);
+alter table public.stable_alerts enable row level security;
+
+-- Day events
+create table if not exists public.day_events (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  date date not null,
+  label text not null,
+  tone text not null,
+  created_at timestamptz default now()
+);
+alter table public.day_events enable row level security;
+
+-- Arena bookings/status
+create table if not exists public.arena_bookings (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  date date not null,
+  start_time text not null,
+  end_time text not null,
+  purpose text not null,
+  note text,
+  booked_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.arena_bookings enable row level security;
+
+-- Concurrency guards mirrored from 20261001_guard_arena_and_last_owner.sql.
+create or replace function public.guard_arena_booking_overlap()
+returns trigger language plpgsql volatile security definer
+set search_path = pg_catalog
+set row_security = off
+as $function$
+declare
+  parent_id uuid;
+  previous_stable_id uuid;
+  start_at time;
+  end_at time;
+begin
+  if new.stable_id is null
+    or new.start_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$'
+    or new.end_time !~ '^([01][0-9]|2[0-3]):[0-5][0-9](:[0-5][0-9])?$'
+  then
+    raise exception using errcode = '23514', message = '[arena overlap] Ange stall och giltiga klockslag.';
+  end if;
+  start_at := new.start_time::time;
+  end_at := new.end_time::time;
+  if start_at >= end_at then
+    raise exception using errcode = '23514', message = '[arena overlap] Sluttiden måste vara efter starttiden samma dag.';
+  end if;
+  if tg_op = 'UPDATE' then previous_stable_id := old.stable_id; end if;
+
+  -- Real parent-row UPDATE is intentional, not just an advisory/row lock.
+  -- It serializes same-stable writers and forces stale RR/Serializable snapshots
+  -- to fail with 40001 instead of checking against an obsolete booking snapshot.
+  for parent_id in
+    select distinct v from unnest(array[previous_stable_id, new.stable_id]) as ids(v)
+    where v is not null order by v
+  loop
+    update public.stables set created_at = created_at where id = parent_id;
+    if not found then
+      raise exception using errcode = '23503', message = '[arena overlap] Stallet finns inte längre.';
+    end if;
+  end loop;
+
+  -- Separate statement in a VOLATILE function: fresh READ COMMITTED snapshot
+  -- after the preceding parent update acquired its lock and any writer committed.
+  if exists (
+    select 1 from public.arena_bookings b
+    where b.stable_id = new.stable_id and b.date = new.date
+      and b.id <> new.id
+      and b.start_time::time < end_at and start_at < b.end_time::time
+  ) then
+    raise exception using errcode = '23P01', message = '[arena overlap] Tiden är redan bokad. Välj en annan tid.';
+  end if;
+  return new;
+end
+$function$;
+alter function public.guard_arena_booking_overlap() owner to postgres;
+revoke all on function public.guard_arena_booking_overlap() from public, anon, authenticated, service_role;
+drop trigger if exists guard_arena_booking_overlap on public.arena_bookings;
+create trigger guard_arena_booking_overlap
+before insert or update on public.arena_bookings
+for each row execute function public.guard_arena_booking_overlap();
+
+create or replace function public.guard_last_stable_owner()
+returns trigger language plpgsql volatile security definer
+set search_path = pg_catalog
+set row_security = off
+as $function$
+begin
+  -- Precisely the existing client/RLS owner definition; NULL access is not owner.
+  if old.role is distinct from 'admin' or old.access is distinct from 'owner' or old.stable_id is null then
+    if tg_op = 'DELETE' then return old; else return new; end if;
+  end if;
+  if tg_op = 'UPDATE' then
+    if new.stable_id is not distinct from old.stable_id
+      and new.role = 'admin' and new.access = 'owner' then return new; end if;
+  end if;
+
+  -- Serialize removal/demotion of owners on the same parent and invalidate
+  -- pre-existing RR/Serializable snapshots. A lock without a write is insufficient.
+  update public.stables set created_at = created_at where id = old.stable_id;
+  if not found then
+    if exists (select 1 from public.stables where id = old.stable_id) then
+      raise exception using errcode = '55000', message = '[last owner] Stallåset kunde inte tas. Försök igen.';
+    end if;
+    -- Parent DELETE already removed the stable; allow its ON DELETE CASCADE.
+    -- Deleting an auth/profile row while its stable remains is NOT exempt.
+    if tg_op = 'DELETE' then return old; else return new; end if;
+  end if;
+  if not exists (
+    select 1 from public.stable_members m
+    where m.stable_id = old.stable_id and m.id <> old.id
+      and m.role = 'admin' and m.access = 'owner'
+  ) then
+    raise exception using errcode = '23514', message = '[last owner] Stallet måste ha minst en ägare. Utse en ny ägare först.';
+  end if;
+  if tg_op = 'DELETE' then return old; else return new; end if;
+end
+$function$;
+alter function public.guard_last_stable_owner() owner to postgres;
+revoke all on function public.guard_last_stable_owner() from public, anon, authenticated, service_role;
+drop trigger if exists guard_last_stable_owner on public.stable_members;
+create trigger guard_last_stable_owner
+before update or delete on public.stable_members
+for each row execute function public.guard_last_stable_owner();
+
+create table if not exists public.arena_statuses (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  date date not null,
+  label text not null,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.arena_statuses enable row level security;
+
+-- Ride logs
+create table if not exists public.ride_logs (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  horse_id uuid references public.horses(id) on delete cascade,
+  date date not null,
+  ride_type_id text,
+  length text,
+  note text,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.ride_logs enable row level security;
+
+-- Planned rides
+create table if not exists public.planned_rides (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_id uuid references public.horses(id) on delete cascade not null,
+  rider_user_id uuid references public.profiles(id) on delete set null,
+  date date not null,
+  time text,
+  ride_type_id text,
+  note text,
+  status text not null default 'planned',
+  completed_ride_log_id uuid references public.ride_logs(id) on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.planned_rides enable row level security;
+
+-- External contacts (farrier/vet/etc)
+create table if not exists public.external_contacts (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  name text not null,
+  type text not null,
+  phone text,
+  email text,
+  note text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.external_contacts enable row level security;
+
+-- Care events (vård/hovslagare/vet etc)
+create table if not exists public.care_events (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade not null,
+  horse_ids uuid[] not null default '{}'::uuid[],
+  type text not null,
+  title text not null,
+  date date not null,
+  time text,
+  contact_id uuid references public.external_contacts(id) on delete set null,
+  responsible_user_id uuid references public.profiles(id) on delete set null,
+  status text not null default 'planned',
+  note text,
+  completed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+alter table public.care_events enable row level security;
+
+-- Riding schedule + competitions
+create table if not exists public.riding_days (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  label text not null,
+  upcoming_rides text,
+  is_today boolean default false,
+  created_at timestamptz default now()
+);
+alter table public.riding_days enable row level security;
+
+create table if not exists public.competition_events (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  start timestamptz not null,
+  "end" timestamptz not null,
+  title text not null,
+  status text not null,
+  created_at timestamptz default now()
+);
+alter table public.competition_events enable row level security;
+
+-- Groups (custom only)
+create table if not exists public.groups (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  farm_id uuid references public.farms(id) on delete set null,
+  horse_id uuid references public.horses(id) on delete set null,
+  name text not null,
+  type text not null,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+alter table public.groups enable row level security;
+
+-- Posts
+create table if not exists public.posts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  caption text,
+  image_url text,
+  created_at timestamptz default now()
+);
+alter table public.posts add column if not exists stable_id uuid references public.stables(id) on delete set null;
+alter table public.posts add column if not exists group_ids text[] default '{}'::text[];
+alter table public.posts alter column group_ids type text[] using group_ids::text[];
+alter table public.posts alter column group_ids set default '{}'::text[];
+alter table public.posts add column if not exists content text;
+alter table public.posts enable row level security;
+
+-- Likes/comments
+create table if not exists public.likes (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete cascade,
+  post_id uuid references public.posts(id) on delete cascade,
+  created_at timestamptz default now()
+);
+alter table public.likes enable row level security;
+create unique index if not exists likes_unique on public.likes(user_id, post_id);
+
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references public.profiles(id) on delete set null,
+  post_id uuid references public.posts(id) on delete cascade,
+  content text not null,
+  created_at timestamptz default now()
+);
+alter table public.comments enable row level security;
+
+-- Conversations/messages
+create table if not exists public.conversations (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete set null,
+  title text,
+  is_group boolean default false,
+  created_by_user_id uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now()
+);
+create unique index if not exists conversations_group_unique
+  on public.conversations(stable_id)
+  where is_group and stable_id is not null;
+alter table public.conversations enable row level security;
+
+create table if not exists public.conversation_members (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid references public.conversations(id) on delete cascade,
+  user_id uuid references public.profiles(id) on delete cascade,
+  joined_at timestamptz default now(),
+  unique (conversation_id, user_id)
+);
+alter table public.conversation_members enable row level security;
+
+create table if not exists public.messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid references public.conversations(id) on delete cascade,
+  author_id uuid references public.profiles(id) on delete set null,
+  text text not null,
+  status text,
+  created_at timestamptz default now()
+);
+alter table public.messages enable row level security;
+
+-- RLS policies
+alter table public.profiles enable row level security;
+
+drop policy if exists "profiles_select" on public.profiles;
+-- Legacy ad-hoc policy that leaked co-members' full profile row (incl. phone) to any
+-- stablemate; only ever existed on remote, never in source. Drop defensively.
+drop policy if exists "profiles_select_self_or_shared_stable" on public.profiles;
+drop policy if exists "profiles_update_self" on public.profiles;
+drop policy if exists "profiles_insert_self" on public.profiles;
+-- Fas 0B: self-only. Co-member name/avatar served via get_member_directory() (PII-safe).
+create policy "profiles_select" on public.profiles
+  for select using ((select auth.uid()) = id);
+create policy "profiles_update_self" on public.profiles
+  for update using ((select auth.uid()) = id);
+create policy "profiles_insert_self" on public.profiles
+  for insert with check ((select auth.uid()) = id);
+
+-- PII-safe co-member directory. Definer bypasses profiles-RLS but only exposes
+-- non-PII columns; phone is returned only for self or admins of a shared stable.
+create or replace function public.get_member_directory()
+returns table (
+  id uuid,
+  username text,
+  full_name text,
+  avatar_url text,
+  location text,
+  responsibilities text[],
+  onboarding_dismissed boolean,
+  phone text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    p.id,
+    p.username,
+    p.full_name,
+    p.avatar_url,
+    p.location,
+    p.responsibilities,
+    p.onboarding_dismissed,
+    case
+      when p.id = (select auth.uid()) then p.phone
+      when exists (
+        select 1
+        from public.stable_members m_self
+        join public.stable_members m_other
+          on m_self.stable_id = m_other.stable_id
+        where m_self.user_id = (select auth.uid())
+          and m_other.user_id = p.id
+          and m_self.role = 'admin'
+      ) then p.phone
+      else null
+    end as phone
+  from public.profiles p
+  where p.id = (select auth.uid())
+     or exists (
+       select 1
+       from public.stable_members m_self
+       join public.stable_members m_other
+         on m_self.stable_id = m_other.stable_id
+       where m_self.user_id = (select auth.uid())
+         and m_other.user_id = p.id
+     );
+$$;
+revoke all on function public.get_member_directory() from public;
+grant execute on function public.get_member_directory() to authenticated;
+
+drop policy if exists "farms_select" on public.farms;
+create policy "farms_select" on public.farms
+  for select using (created_by = auth.uid());
+drop policy if exists "farms_insert" on public.farms;
+create policy "farms_insert" on public.farms for insert with check (created_by = auth.uid());
+drop policy if exists "farms_update" on public.farms;
+create policy "farms_update" on public.farms for update using (created_by = auth.uid());
+drop policy if exists "farms_delete" on public.farms;
+create policy "farms_delete" on public.farms for delete using (created_by = auth.uid());
+
+drop policy if exists "stables_select" on public.stables;
+create policy "stables_select" on public.stables
+  for select using (
+    created_by = auth.uid()
+    or exists (
+      select 1
+      from public.stable_members m
+      where m.stable_id = stables.id
+        and m.user_id = auth.uid()
+    )
+  );
+drop policy if exists "stables_insert" on public.stables;
+create policy "stables_insert" on public.stables for insert with check (created_by = auth.uid());
+drop policy if exists "stables_update" on public.stables;
+-- Fas 0A #1: owner-only (behåll creator-fallback mot lockout). join_code ligger på
+-- samma rad, så edit-access får inte UPDATE:a stallet.
+create policy "stables_update" on public.stables
+  for update
+  using (created_by = auth.uid() or public.is_stable_owner(id))
+  with check (created_by = auth.uid() or public.is_stable_owner(id));
+drop policy if exists "stables_delete" on public.stables;
+create policy "stables_delete" on public.stables for delete using (created_by = auth.uid());
+
+drop policy if exists "stable_members_select" on public.stable_members;
+create policy "stable_members_select" on public.stable_members for select using (public.is_stable_member(stable_id));
+drop policy if exists "stable_members_insert" on public.stable_members;
+drop policy if exists "stable_members_insert_owner_bootstrap" on public.stable_members;
+drop policy if exists "stable_members_insert_bootstrap_creator" on public.stable_members;
+create policy "stable_members_insert" on public.stable_members
+  for insert with check (
+    public.is_stable_owner(stable_id)
+    or (
+      (select auth.uid()) = user_id
+      and public.is_stable_creator(stable_id)
+    )
+  );
+drop policy if exists "stable_members_update" on public.stable_members;
+drop policy if exists "stable_members_update_owner_bootstrap" on public.stable_members;
+drop policy if exists "stable_members_update_bootstrap_creator" on public.stable_members;
+create policy "stable_members_update" on public.stable_members for update using (public.is_stable_owner(stable_id));
+drop policy if exists "stable_members_delete" on public.stable_members;
+create policy "stable_members_delete" on public.stable_members for delete using (public.is_stable_owner(stable_id));
+
+drop policy if exists "default_passes_select" on public.default_passes;
+create policy "default_passes_select" on public.default_passes
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "default_passes_insert" on public.default_passes;
+create policy "default_passes_insert" on public.default_passes
+  for insert with check ((select auth.uid()) = user_id or public.is_stable_owner(stable_id));
+drop policy if exists "default_passes_delete" on public.default_passes;
+create policy "default_passes_delete" on public.default_passes
+  for delete using ((select auth.uid()) = user_id or public.is_stable_owner(stable_id));
+
+drop policy if exists "away_notices_select" on public.away_notices;
+create policy "away_notices_select" on public.away_notices
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "away_notices_insert" on public.away_notices;
+create policy "away_notices_insert" on public.away_notices
+  for insert with check ((select auth.uid()) = user_id);
+drop policy if exists "away_notices_update" on public.away_notices;
+create policy "away_notices_update" on public.away_notices
+  for update using ((select auth.uid()) = user_id);
+drop policy if exists "away_notices_delete" on public.away_notices;
+create policy "away_notices_delete" on public.away_notices
+  for delete using ((select auth.uid()) = user_id);
+
+drop policy if exists "stable_invites_select" on public.stable_invites;
+create policy "stable_invites_select" on public.stable_invites
+  for select using (
+    public.is_stable_owner(stable_id)
+    or lower(email) = lower((select auth.jwt())->>'email')
+  );
+drop policy if exists "stable_invites_insert" on public.stable_invites;
+create policy "stable_invites_insert" on public.stable_invites for insert with check (public.is_stable_owner(stable_id));
+drop policy if exists "stable_invites_update" on public.stable_invites;
+create policy "stable_invites_update" on public.stable_invites for update using (public.is_stable_owner(stable_id));
+drop policy if exists "stable_invites_delete" on public.stable_invites;
+create policy "stable_invites_delete" on public.stable_invites for delete using (public.is_stable_owner(stable_id));
+
+drop policy if exists "horses_select" on public.horses;
+create policy "horses_select" on public.horses for select using (public.is_stable_member(stable_id));
+drop policy if exists "horses_insert" on public.horses;
+create policy "horses_insert" on public.horses for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "horses_update" on public.horses;
+create policy "horses_update" on public.horses for update using (public.can_edit_stable(stable_id));
+drop policy if exists "horses_delete" on public.horses;
+create policy "horses_delete" on public.horses for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "paddocks_select" on public.paddocks;
+create policy "paddocks_select" on public.paddocks for select using (public.is_stable_member(stable_id));
+drop policy if exists "paddocks_insert" on public.paddocks;
+create policy "paddocks_insert" on public.paddocks for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "paddocks_update" on public.paddocks;
+create policy "paddocks_update" on public.paddocks for update using (public.can_edit_stable(stable_id));
+drop policy if exists "paddocks_delete" on public.paddocks;
+create policy "paddocks_delete" on public.paddocks for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "horse_day_statuses_select" on public.horse_day_statuses;
+create policy "horse_day_statuses_select" on public.horse_day_statuses for select using (public.is_stable_member(stable_id));
+drop policy if exists "horse_day_statuses_insert" on public.horse_day_statuses;
+create policy "horse_day_statuses_insert" on public.horse_day_statuses for insert with check (public.can_update_horse_status(stable_id));
+drop policy if exists "horse_day_statuses_update" on public.horse_day_statuses;
+create policy "horse_day_statuses_update" on public.horse_day_statuses for update using (public.can_update_horse_status(stable_id));
+drop policy if exists "horse_day_statuses_delete" on public.horse_day_statuses;
+create policy "horse_day_statuses_delete" on public.horse_day_statuses for delete using (public.can_update_horse_status(stable_id));
+
+drop policy if exists "feed_plans_select" on public.feed_plans;
+create policy "feed_plans_select" on public.feed_plans
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "feed_plans_insert" on public.feed_plans;
+create policy "feed_plans_insert" on public.feed_plans
+  for insert with check (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+drop policy if exists "feed_plans_update" on public.feed_plans;
+create policy "feed_plans_update" on public.feed_plans
+  for update using (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+drop policy if exists "feed_plans_delete" on public.feed_plans;
+create policy "feed_plans_delete" on public.feed_plans
+  for delete using (
+    public.can_edit_stable(stable_id)
+    or (
+      horse_id is not null
+      and exists (
+        select 1
+        from public.horses h
+        where h.id = feed_plans.horse_id
+          and h.owner_user_id = (select auth.uid())
+      )
+    )
+  );
+
+drop policy if exists "feed_checks_select" on public.feed_checks;
+create policy "feed_checks_select" on public.feed_checks
+  for select using (public.is_stable_member(stable_id));
+create or replace function public.can_check_horse_feed(p_stable_id uuid, p_horse_id uuid)
+returns boolean
+language sql
+stable
+set search_path = public
+as $$
+  select public.is_stable_member(p_stable_id)
+    and exists (
+      select 1 from public.horses h
+      where h.id = p_horse_id
+        and h.stable_id = p_stable_id
+        and (
+          public.can_update_horse_status(p_stable_id)
+          or h.owner_user_id = (select auth.uid())
+        )
+    );
+$$;
+
+drop policy if exists "feed_checks_insert" on public.feed_checks;
+create policy "feed_checks_insert" on public.feed_checks
+  for insert with check (public.can_check_horse_feed(stable_id, horse_id));
+drop policy if exists "feed_checks_update" on public.feed_checks;
+create policy "feed_checks_update" on public.feed_checks
+  for update using (public.can_check_horse_feed(stable_id, horse_id))
+  with check (public.can_check_horse_feed(stable_id, horse_id));
+drop policy if exists "feed_checks_delete" on public.feed_checks;
+create policy "feed_checks_delete" on public.feed_checks
+  for delete using (public.can_update_horse_status(stable_id));
+
+drop policy if exists "assignments_select" on public.assignments;
+create policy "assignments_select" on public.assignments for select using (public.is_stable_member(stable_id));
+drop policy if exists "assignments_insert" on public.assignments;
+create policy "assignments_insert" on public.assignments for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "assignments_update" on public.assignments;
+create policy "assignments_update" on public.assignments
+  for update using (
+    public.can_edit_stable(stable_id)
+    or (
+      public.can_claim_assignments(stable_id)
+      and (status = 'open' or assignee_id = (select auth.uid()))
+    )
+  )
+  with check (
+    public.can_edit_stable(stable_id)
+    or (
+      public.can_claim_assignments(stable_id)
+      and (
+        (status = 'open' and assignee_id is null)
+        or assignee_id = (select auth.uid())
+      )
+    )
+  );
+create or replace function public.guard_assignment_member_update()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  caller_id uuid := auth.uid();
+  previous_declines uuid[] := coalesce(old.declined_by_user_ids, '{}'::uuid[]);
+  expected_declines uuid[];
+begin
+  -- SQL dashboard/seed maintenance and service-role jobs retain their trusted access.
+  -- This function is SECURITY INVOKER: authenticated callers keep their own role.
+  if current_user in ('postgres', 'supabase_admin') or auth.role() = 'service_role' then
+    return new;
+  end if;
+
+  if caller_id is null then
+    raise exception '[assignment update] Inloggning krävs.' using errcode = '42501';
+  end if;
+
+  -- A profile UUID alone does not establish membership in this stable.
+  if new.assignee_id is not null and not exists (
+    select 1 from public.stable_members m
+    where m.stable_id = new.stable_id and m.user_id = new.assignee_id
+  ) then
+    raise exception '[assignment update] Ansvarig måste tillhöra passets stall.' using errcode = '42501';
+  end if;
+
+  if public.can_edit_stable(old.stable_id) and public.can_edit_stable(new.stable_id) then
+    return new;
+  end if;
+
+  if not public.can_claim_assignments(old.stable_id)
+    or (to_jsonb(new) - array['status', 'assignee_id', 'assigned_via',
+                            'declined_by_user_ids', 'completed_at', 'updated_at'])
+       is distinct from
+       (to_jsonb(old) - array['status', 'assignee_id', 'assigned_via',
+                            'declined_by_user_ids', 'completed_at', 'updated_at']) then
+    raise exception '[assignment update] Du får endast ta ett öppet pass eller hantera ditt eget pass.' using errcode = '42501';
+  end if;
+
+  -- Claim: only an open, unassigned row; only assign the caller; remove only
+  -- the caller from the decline list. Conditional client UPDATE still handles races.
+  if old.status = 'open' and old.assignee_id is null
+    and new.status = 'assigned' and new.assignee_id = caller_id
+    and new.assigned_via = 'manual'
+    and new.completed_at is not distinct from old.completed_at
+    and coalesce(new.declined_by_user_ids, '{}'::uuid[]) = array_remove(previous_declines, caller_id) then
+    return new;
+  end if;
+
+  if old.status = 'assigned' and old.assignee_id = caller_id then
+    -- Complete own pass without changing ownership, defaults, or decline history.
+    if new.status = 'completed' and new.completed_at is not null
+      and new.assignee_id is not distinct from old.assignee_id
+      and new.assigned_via is not distinct from old.assigned_via
+      and new.declined_by_user_ids is not distinct from old.declined_by_user_ids then
+      return new;
+    end if;
+
+    expected_declines := case when caller_id = any(previous_declines)
+      then previous_declines else array_append(previous_declines, caller_id) end;
+    -- Release own pass and record only the caller's decline.
+    if new.status = 'open' and new.assignee_id is null and new.assigned_via is null
+      and new.completed_at is not distinct from old.completed_at
+      and coalesce(new.declined_by_user_ids, '{}'::uuid[]) = expected_declines then
+      return new;
+    end if;
+  end if;
+
+  raise exception '[assignment update] Passet har ändrats eller står inte på dig. Uppdatera schemat.' using errcode = '42501';
+end;
+$$;
+
+drop trigger if exists guard_assignment_member_update on public.assignments;
+create trigger guard_assignment_member_update
+  before update on public.assignments
+  for each row execute function public.guard_assignment_member_update();
+
+
+drop policy if exists "assignments_delete" on public.assignments;
+create policy "assignments_delete" on public.assignments for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "assignment_history_select" on public.assignment_history;
+create policy "assignment_history_select" on public.assignment_history for select using (public.is_stable_member(stable_id));
+drop policy if exists "assignment_history_insert" on public.assignment_history;
+create policy "assignment_history_insert" on public.assignment_history
+  for insert with check (public.can_edit_stable(stable_id) or public.can_claim_assignments(stable_id));
+
+drop policy if exists "alerts_select" on public.alerts;
+create policy "alerts_select" on public.alerts for select using (public.is_stable_member(stable_id));
+drop policy if exists "alerts_insert" on public.alerts;
+create policy "alerts_insert" on public.alerts for insert with check (public.can_manage_day_events(stable_id));
+drop policy if exists "alerts_delete" on public.alerts;
+create policy "alerts_delete" on public.alerts for delete using (public.can_manage_day_events(stable_id));
+
+drop policy if exists "stable_alerts_select" on public.stable_alerts;
+create policy "stable_alerts_select" on public.stable_alerts
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "stable_alerts_insert" on public.stable_alerts;
+create policy "stable_alerts_insert" on public.stable_alerts
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "stable_alerts_update" on public.stable_alerts;
+create policy "stable_alerts_update" on public.stable_alerts
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "stable_alerts_delete" on public.stable_alerts;
+create policy "stable_alerts_delete" on public.stable_alerts
+  for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "day_events_select" on public.day_events;
+create policy "day_events_select" on public.day_events for select using (public.is_stable_member(stable_id));
+drop policy if exists "day_events_insert" on public.day_events;
+create policy "day_events_insert" on public.day_events for insert with check (public.can_manage_day_events(stable_id));
+drop policy if exists "day_events_delete" on public.day_events;
+create policy "day_events_delete" on public.day_events for delete using (public.can_manage_day_events(stable_id));
+
+drop policy if exists "arena_bookings_select" on public.arena_bookings;
+create policy "arena_bookings_select" on public.arena_bookings for select using (public.is_stable_member(stable_id));
+drop policy if exists "arena_bookings_insert" on public.arena_bookings;
+create policy "arena_bookings_insert" on public.arena_bookings for insert with check (public.can_manage_arena_bookings(stable_id));
+drop policy if exists "arena_bookings_update" on public.arena_bookings;
+create policy "arena_bookings_update" on public.arena_bookings for update using (public.can_manage_arena_bookings(stable_id));
+drop policy if exists "arena_bookings_delete" on public.arena_bookings;
+create policy "arena_bookings_delete" on public.arena_bookings for delete using (public.can_manage_arena_bookings(stable_id));
+
+drop policy if exists "arena_statuses_select" on public.arena_statuses;
+create policy "arena_statuses_select" on public.arena_statuses for select using (public.is_stable_member(stable_id));
+drop policy if exists "arena_statuses_insert" on public.arena_statuses;
+create policy "arena_statuses_insert" on public.arena_statuses for insert with check (public.can_manage_arena_status(stable_id));
+drop policy if exists "arena_statuses_delete" on public.arena_statuses;
+create policy "arena_statuses_delete" on public.arena_statuses for delete using (public.can_manage_arena_status(stable_id));
+
+drop policy if exists "ride_logs_select" on public.ride_logs;
+create policy "ride_logs_select" on public.ride_logs for select using (public.is_stable_member(stable_id));
+drop policy if exists "ride_logs_insert" on public.ride_logs;
+create policy "ride_logs_insert" on public.ride_logs for insert with check (public.can_manage_ride_logs(stable_id));
+drop policy if exists "ride_logs_delete" on public.ride_logs;
+create policy "ride_logs_delete" on public.ride_logs for delete using (public.can_manage_ride_logs(stable_id));
+
+drop policy if exists "planned_rides_select" on public.planned_rides;
+create policy "planned_rides_select" on public.planned_rides
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "planned_rides_insert" on public.planned_rides;
+create policy "planned_rides_insert" on public.planned_rides
+  for insert with check (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "planned_rides_update" on public.planned_rides;
+create policy "planned_rides_update" on public.planned_rides
+  for update using (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "planned_rides_delete" on public.planned_rides;
+create policy "planned_rides_delete" on public.planned_rides
+  for delete using (
+    public.can_manage_ride_logs(stable_id)
+    or exists (
+      select 1
+      from public.horses h
+      where h.id = planned_rides.horse_id
+        and h.owner_user_id = (select auth.uid())
+    )
+  );
+
+drop policy if exists "external_contacts_select" on public.external_contacts;
+create policy "external_contacts_select" on public.external_contacts
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "external_contacts_insert" on public.external_contacts;
+create policy "external_contacts_insert" on public.external_contacts
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "external_contacts_update" on public.external_contacts;
+create policy "external_contacts_update" on public.external_contacts
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "external_contacts_delete" on public.external_contacts;
+create policy "external_contacts_delete" on public.external_contacts
+  for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "care_events_select" on public.care_events;
+create policy "care_events_select" on public.care_events
+  for select using (public.is_stable_member(stable_id));
+drop policy if exists "care_events_insert" on public.care_events;
+create policy "care_events_insert" on public.care_events
+  for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "care_events_update" on public.care_events;
+create policy "care_events_update" on public.care_events
+  for update using (public.can_edit_stable(stable_id));
+drop policy if exists "care_events_delete" on public.care_events;
+create policy "care_events_delete" on public.care_events
+  for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "riding_days_select" on public.riding_days;
+create policy "riding_days_select" on public.riding_days for select using (public.is_stable_member(stable_id));
+drop policy if exists "riding_days_insert" on public.riding_days;
+create policy "riding_days_insert" on public.riding_days for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "riding_days_update" on public.riding_days;
+create policy "riding_days_update" on public.riding_days for update using (public.can_edit_stable(stable_id));
+drop policy if exists "riding_days_delete" on public.riding_days;
+create policy "riding_days_delete" on public.riding_days for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "competition_events_select" on public.competition_events;
+create policy "competition_events_select" on public.competition_events for select using (public.is_stable_member(stable_id));
+drop policy if exists "competition_events_insert" on public.competition_events;
+create policy "competition_events_insert" on public.competition_events for insert with check (public.can_edit_stable(stable_id));
+drop policy if exists "competition_events_update" on public.competition_events;
+create policy "competition_events_update" on public.competition_events for update using (public.can_edit_stable(stable_id));
+drop policy if exists "competition_events_delete" on public.competition_events;
+create policy "competition_events_delete" on public.competition_events for delete using (public.can_edit_stable(stable_id));
+
+drop policy if exists "groups_select" on public.groups;
+create policy "groups_select" on public.groups for select using (public.is_stable_member(stable_id));
+drop policy if exists "groups_insert" on public.groups;
+create policy "groups_insert" on public.groups for insert with check (public.can_manage_groups(stable_id));
+drop policy if exists "groups_update" on public.groups;
+create policy "groups_update" on public.groups for update using (public.can_manage_groups(stable_id));
+drop policy if exists "groups_delete" on public.groups;
+create policy "groups_delete" on public.groups for delete using (public.can_manage_groups(stable_id));
+
+drop policy if exists "posts_select" on public.posts;
+drop policy if exists "posts_insert_owner" on public.posts;
+drop policy if exists "posts_update_owner" on public.posts;
+drop policy if exists "posts_delete_owner" on public.posts;
+create policy "posts_select" on public.posts for select using (public.is_stable_member(stable_id));
+drop policy if exists "posts_insert" on public.posts;
+create policy "posts_insert" on public.posts for insert with check (public.is_stable_member(stable_id) and (select auth.uid()) = user_id);
+drop policy if exists "posts_update" on public.posts;
+create policy "posts_update" on public.posts for update using ((select auth.uid()) = user_id);
+drop policy if exists "posts_delete" on public.posts;
+-- Fas 0B #7: författaren eller feed-/gruppansvarig (admin/staff) får radera (moderering).
+create policy "posts_delete" on public.posts
+  for delete using (
+    (select auth.uid()) = user_id
+    or public.can_manage_groups(stable_id)
+  );
+
+drop policy if exists "likes_select" on public.likes;
+drop policy if exists "likes_insert_self" on public.likes;
+drop policy if exists "likes_delete_self" on public.likes;
+create policy "likes_select" on public.likes
+  for select using (
+    exists (
+      select 1
+      from public.posts p
+      join public.stable_members m on m.stable_id = p.stable_id
+      where p.id = likes.post_id and m.user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "likes_insert" on public.likes;
+create policy "likes_insert" on public.likes
+  for insert with check ((select auth.uid()) = user_id);
+drop policy if exists "likes_delete" on public.likes;
+create policy "likes_delete" on public.likes
+  for delete using ((select auth.uid()) = user_id);
+
+drop policy if exists "comments_select" on public.comments;
+drop policy if exists "comments_insert_self" on public.comments;
+drop policy if exists "comments_update_self" on public.comments;
+drop policy if exists "comments_delete_self" on public.comments;
+create policy "comments_select" on public.comments
+  for select using (
+    exists (
+      select 1
+      from public.posts p
+      join public.stable_members m on m.stable_id = p.stable_id
+      where p.id = comments.post_id and m.user_id = (select auth.uid())
+    )
+  );
+drop policy if exists "comments_insert" on public.comments;
+create policy "comments_insert" on public.comments
+  for insert with check ((select auth.uid()) = user_id);
+drop policy if exists "comments_update" on public.comments;
+create policy "comments_update" on public.comments
+  for update using ((select auth.uid()) = user_id);
+drop policy if exists "comments_delete" on public.comments;
+create policy "comments_delete" on public.comments
+  for delete using ((select auth.uid()) = user_id);
+
+drop policy if exists "conversations_select" on public.conversations;
+drop policy if exists "conversations_insert" on public.conversations;
+drop policy if exists "conversations_update" on public.conversations;
+create policy "conversations_select" on public.conversations
+  for select using (
+    (stable_id is not null and public.is_stable_member(stable_id))
+    or exists (
+      select 1
+      from public.conversation_members cm
+      where cm.conversation_id = conversations.id
+        and cm.user_id = (select auth.uid())
+    )
+  );
+-- Private creator bootstrap before membership exists.
+drop policy if exists "conversations_private_creator_select" on public.conversations;
+create policy "conversations_private_creator_select" on public.conversations
+  for select to authenticated
+  using (
+    stable_id is null
+    and not coalesce(is_group, false)
+    and created_by_user_id = (select auth.uid())
+  );
+
+create policy "conversations_insert" on public.conversations
+  for insert with check (
+    (select auth.uid()) is not null
+    and (
+      stable_id is null
+      or public.is_stable_member(stable_id)
+      or exists (
+        select 1
+        from public.stables s
+        where s.id = stable_id and s.created_by = (select auth.uid())
+      )
+    )
+  );
+-- Private creator fields must be bound to the authenticated caller.
+drop policy if exists "conversations_private_insert_self" on public.conversations;
+create policy "conversations_private_insert_self" on public.conversations
+  as restrictive for insert to authenticated
+  with check (
+    stable_id is not null
+    or coalesce(is_group, false)
+    or created_by_user_id = (select auth.uid())
+  );
+
+create policy "conversations_update" on public.conversations
+  for update
+  using (
+    (stable_id is not null and public.is_stable_owner(stable_id))
+    or created_by_user_id = (select auth.uid())
+  )
+  with check (
+    (stable_id is not null and public.is_stable_owner(stable_id))
+    or created_by_user_id = (select auth.uid())
+  );
+
+-- Fas 0A #4: chatt-helpers (security definer, row_security off → ingen RLS-rekursion).
+create or replace function public.is_conversation_member(p_conversation_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.conversation_members cm
+    where cm.conversation_id = p_conversation_id
+      and cm.user_id = auth.uid()
+  );
+$$;
+
+drop policy if exists "conversation_members_select" on public.conversation_members;
+-- Fas 0A #4: se medlemsrader för konversationer du tillhör (för namn-rendering).
+create policy "conversation_members_select" on public.conversation_members
+  for select using (public.is_conversation_member(conversation_id));
+drop policy if exists "conversation_members_insert" on public.conversation_members;
+-- Fas 0A #4: bara i konversationer DU skapat, och bara dig själv eller en stallkamrat
+-- (stänger self-insert-i-andras-konversation samt force-chat-på-främling).
+create policy "conversation_members_insert" on public.conversation_members
+  for insert with check (
+    exists (
+      select 1 from public.conversations c
+      where c.id = conversation_id
+        and c.created_by_user_id = (select auth.uid())
+    )
+    and (
+      user_id = (select auth.uid())
+      or public.shares_stable_with(user_id)
+    )
+  );
+drop policy if exists "conversation_members_delete" on public.conversation_members;
+create policy "conversation_members_delete" on public.conversation_members
+  for delete using ((select auth.uid()) = user_id);
+
+drop policy if exists "messages_select" on public.messages;
+drop policy if exists "messages_insert" on public.messages;
+create policy "messages_select" on public.messages
+  for select using (
+    exists (
+      select 1
+      from public.conversations c
+      where c.id = messages.conversation_id
+        and (
+          (c.stable_id is not null and public.is_stable_member(c.stable_id))
+          or exists (
+            select 1
+            from public.conversation_members cm
+            where cm.conversation_id = c.id and cm.user_id = (select auth.uid())
+          )
+        )
+    )
+  );
+create policy "messages_insert" on public.messages
+  for insert with check (
+    (select auth.uid()) = author_id
+    and exists (
+      select 1
+      from public.conversations c
+      where c.id = messages.conversation_id
+        and (
+          (c.stable_id is not null and public.is_stable_member(c.stable_id))
+          or exists (
+            select 1
+            from public.conversation_members cm
+            where cm.conversation_id = c.id and cm.user_id = (select auth.uid())
+          )
+        )
+    )
+  );
+-- Fas 0A #4: moderering. Författaren äger sina meddelanden; stall-owner får radera.
+drop policy if exists "messages_update" on public.messages;
+create policy "messages_update" on public.messages
+  for update using ((select auth.uid()) = author_id);
+drop policy if exists "messages_delete" on public.messages;
+create policy "messages_delete" on public.messages
+  for delete using (
+    (select auth.uid()) = author_id
+    or exists (
+      select 1 from public.conversations c
+      where c.id = messages.conversation_id
+        and c.stable_id is not null
+        and public.is_stable_owner(c.stable_id)
+    )
+  );
+
+-- Fas 3: content reports (UGC moderation)
+create table if not exists public.content_reports (
+  id uuid primary key default gen_random_uuid(),
+  stable_id uuid references public.stables(id) on delete cascade,
+  reporter_user_id uuid references public.profiles(id) on delete set null,
+  target_type text not null check (target_type in ('post', 'comment')),
+  target_id uuid not null,
+  reason text,
+  created_at timestamptz default now(),
+  resolved_at timestamptz,
+  resolved_by_user_id uuid references public.profiles(id) on delete set null
+);
+alter table public.content_reports enable row level security;
+drop policy if exists "content_reports_insert" on public.content_reports;
+create policy "content_reports_insert" on public.content_reports
+  for insert with check (
+    public.is_stable_member(stable_id) and reporter_user_id = (select auth.uid())
+  );
+drop policy if exists "content_reports_select" on public.content_reports;
+create policy "content_reports_select" on public.content_reports
+  for select using (
+    reporter_user_id = (select auth.uid()) or public.can_manage_groups(stable_id)
+  );
+drop policy if exists "content_reports_update" on public.content_reports;
+create policy "content_reports_update" on public.content_reports
+  for update using (public.can_manage_groups(stable_id));
+create index if not exists content_reports_stable_open_idx
+  on public.content_reports(stable_id, created_at desc)
+  where resolved_at is null;
+
+-- Fas 3: blocked users (UGC — block/mute). Each row owned by the blocker.
+create table if not exists public.blocked_users (
+  id uuid primary key default gen_random_uuid(),
+  blocker_user_id uuid not null references public.profiles(id) on delete cascade,
+  blocked_user_id uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (blocker_user_id, blocked_user_id),
+  check (blocker_user_id <> blocked_user_id)
+);
+alter table public.blocked_users enable row level security;
+drop policy if exists "blocked_users_select" on public.blocked_users;
+create policy "blocked_users_select" on public.blocked_users
+  for select using (blocker_user_id = (select auth.uid()));
+drop policy if exists "blocked_users_insert" on public.blocked_users;
+create policy "blocked_users_insert" on public.blocked_users
+  for insert with check (
+    blocker_user_id = (select auth.uid()) and blocked_user_id <> (select auth.uid())
+  );
+drop policy if exists "blocked_users_delete" on public.blocked_users;
+create policy "blocked_users_delete" on public.blocked_users
+  for delete using (blocker_user_id = (select auth.uid()));
+create index if not exists blocked_users_blocker_idx
+  on public.blocked_users(blocker_user_id);
+
+-- Foreign key indexes for performance
+create index if not exists alerts_stable_id_idx on public.alerts(stable_id);
+create index if not exists stable_alerts_stable_id_idx on public.stable_alerts(stable_id);
+create index if not exists stable_alerts_horse_id_idx on public.stable_alerts(horse_id);
+create index if not exists stable_alerts_paddock_id_idx on public.stable_alerts(paddock_id);
+create index if not exists stable_alerts_assignment_id_idx on public.stable_alerts(assignment_id);
+create index if not exists stable_alerts_active_idx
+  on public.stable_alerts(stable_id, severity, created_at desc)
+  where resolved_at is null;
+create index if not exists arena_bookings_booked_by_user_id_idx on public.arena_bookings(booked_by_user_id);
+create index if not exists arena_bookings_stable_id_idx on public.arena_bookings(stable_id);
+create index if not exists arena_statuses_created_by_user_id_idx on public.arena_statuses(created_by_user_id);
+create index if not exists arena_statuses_stable_id_idx on public.arena_statuses(stable_id);
+create index if not exists assignment_history_assignment_id_idx on public.assignment_history(assignment_id);
+create index if not exists assignment_history_stable_id_idx on public.assignment_history(stable_id);
+create index if not exists assignments_assignee_id_idx on public.assignments(assignee_id);
+create index if not exists assignments_stable_id_idx on public.assignments(stable_id);
+create index if not exists away_notices_stable_id_idx on public.away_notices(stable_id);
+create index if not exists away_notices_user_id_idx on public.away_notices(user_id);
+create index if not exists comments_post_id_idx on public.comments(post_id);
+create index if not exists comments_user_id_idx on public.comments(user_id);
+create index if not exists competition_events_stable_id_idx on public.competition_events(stable_id);
+create index if not exists conversation_members_user_id_idx on public.conversation_members(user_id);
+create index if not exists conversations_created_by_user_id_idx on public.conversations(created_by_user_id);
+create index if not exists conversations_stable_id_idx on public.conversations(stable_id);
+create index if not exists day_events_stable_id_idx on public.day_events(stable_id);
+create index if not exists day_events_stable_id_date_idx on public.day_events(stable_id, date);
+create index if not exists default_passes_stable_id_idx on public.default_passes(stable_id);
+create index if not exists groups_created_by_user_id_idx on public.groups(created_by_user_id);
+create index if not exists groups_farm_id_idx on public.groups(farm_id);
+create index if not exists groups_horse_id_idx on public.groups(horse_id);
+create index if not exists groups_stable_id_idx on public.groups(stable_id);
+create index if not exists horse_day_statuses_horse_id_idx on public.horse_day_statuses(horse_id);
+create index if not exists feed_plans_stable_id_idx on public.feed_plans(stable_id);
+create index if not exists feed_plans_horse_id_idx on public.feed_plans(horse_id);
+create index if not exists feed_checks_stable_id_idx on public.feed_checks(stable_id);
+create index if not exists feed_checks_horse_id_date_idx on public.feed_checks(horse_id, date);
+create index if not exists horses_owner_user_id_idx on public.horses(owner_user_id);
+create index if not exists horses_stable_id_idx on public.horses(stable_id);
+create index if not exists likes_post_id_idx on public.likes(post_id);
+create index if not exists messages_author_id_idx on public.messages(author_id);
+create index if not exists messages_conversation_id_idx on public.messages(conversation_id);
+create index if not exists paddocks_stable_id_idx on public.paddocks(stable_id);
+create index if not exists posts_group_ids_gin_idx on public.posts using gin (group_ids);
+create index if not exists posts_stable_id_idx on public.posts(stable_id);
+create index if not exists posts_stable_id_created_at_idx on public.posts(stable_id, created_at desc);
+create index if not exists posts_user_id_idx on public.posts(user_id);
+create index if not exists ride_logs_created_by_user_id_idx on public.ride_logs(created_by_user_id);
+create index if not exists ride_logs_horse_id_idx on public.ride_logs(horse_id);
+create index if not exists assignments_stable_id_date_idx on public.assignments(stable_id, date);
+create index if not exists arena_bookings_stable_id_date_idx on public.arena_bookings(stable_id, date);
+create index if not exists ride_logs_stable_id_idx on public.ride_logs(stable_id);
+create index if not exists planned_rides_stable_id_idx on public.planned_rides(stable_id);
+create index if not exists planned_rides_horse_id_idx on public.planned_rides(horse_id);
+create index if not exists planned_rides_stable_id_date_idx on public.planned_rides(stable_id, date);
+create index if not exists external_contacts_stable_id_idx on public.external_contacts(stable_id);
+create index if not exists care_events_stable_id_idx on public.care_events(stable_id);
+create index if not exists care_events_stable_id_date_idx on public.care_events(stable_id, date);
+create index if not exists care_events_horse_ids_gin_idx on public.care_events using gin (horse_ids);
+create index if not exists riding_days_stable_id_idx on public.riding_days(stable_id);
+create index if not exists stable_invites_stable_id_idx on public.stable_invites(stable_id);
+create index if not exists stable_members_user_id_idx on public.stable_members(user_id);
+create index if not exists stables_created_by_idx on public.stables(created_by);
+create index if not exists stables_farm_id_idx on public.stables(farm_id);
+
+-- Canonical paddock horse IDs (20261006).
+set local search_path = pg_catalog;
+-- Canonical ID links; original horse_names stays as an untouched legacy archive.
+alter table public.paddocks add column if not exists revision bigint not null default 1 check (revision > 0);
+alter table public.paddocks add column if not exists last_save_request_id uuid;
+create unique index if not exists horses_id_stable_reference on public.horses (id, stable_id);
+create unique index if not exists paddocks_id_stable_reference on public.paddocks (id, stable_id);
+create table if not exists public.paddock_horses (
+  stable_id uuid not null,
+  paddock_id uuid not null,
+  horse_id uuid not null,
+  primary key (paddock_id, horse_id),
+  foreign key (paddock_id, stable_id) references public.paddocks (id, stable_id) on delete cascade,
+  foreign key (horse_id, stable_id) references public.horses (id, stable_id) on delete cascade
+);
+create index if not exists paddock_horses_horse_reference on public.paddock_horses (horse_id, stable_id);
+alter table public.paddock_horses enable row level security;
+drop policy if exists paddock_horses_select on public.paddock_horses;
+create policy paddock_horses_select on public.paddock_horses
+  for select to authenticated using (public.is_stable_member(stable_id));
+
+-- Private deleted-ID marker. It lives only as long as its stable.
+create table if not exists public.paddock_deleted_ids (
+  paddock_id uuid primary key,
+  stable_id uuid not null references public.stables(id) on delete cascade,
+  deleted_at timestamptz not null default clock_timestamp()
+);
+alter table public.paddock_deleted_ids owner to postgres;
+alter table public.paddock_deleted_ids enable row level security;
+revoke all on table public.paddock_deleted_ids from public, anon, authenticated, service_role;
+revoke all(paddock_id, stable_id, deleted_at) on public.paddock_deleted_ids from public, anon, authenticated, service_role;
+
+-- Private helpers: all qualified objects, no client/service EXECUTE privilege.
+create or replace function public.paddock_snapshot(p_paddock_id uuid)
+returns jsonb language sql volatile security definer
+set search_path = pg_catalog set row_security = off
+as $function$
+  select to_jsonb(p) || jsonb_build_object(
+    'horse_ids', array(select ph.horse_id from public.paddock_horses ph
+      where ph.paddock_id = p.id and ph.stable_id = p.stable_id order by ph.horse_id),
+    'request_id', p.last_save_request_id)
+  from public.paddocks p where p.id = p_paddock_id;
+$function$;
+alter function public.paddock_snapshot(uuid) owner to postgres;
+revoke all on function public.paddock_snapshot(uuid) from public, anon, authenticated, service_role;
+
+create or replace function public.bump_paddock_link_revision()
+returns trigger language plpgsql volatile security definer
+set search_path = pg_catalog set row_security = off
+as $function$
+declare parent_id uuid;
+begin
+  for parent_id in
+    select distinct v from unnest(array[
+      case when tg_op <> 'INSERT' then old.paddock_id end,
+      case when tg_op <> 'DELETE' then new.paddock_id end
+    ]) ids(v) where v is not null order by v
+  loop
+    -- A horse cascade already holds the horse/link. Do not wait for a saver
+    -- holding the paddock and waiting for that horse: reject the entire cascade.
+    perform 1 from public.paddocks where id = parent_id for update nowait;
+    if found then
+      update public.paddocks set revision = revision + 1,
+        last_save_request_id = null, updated_at = clock_timestamp() where id = parent_id;
+    end if;
+  end loop;
+  return null;
+exception when lock_not_available or serialization_failure or deadlock_detected then
+  raise exception using errcode = '40001', message = '[paddock save] Hagkopplingen ändras samtidigt. Ladda om och försök igen.';
+end
+$function$;
+alter function public.bump_paddock_link_revision() owner to postgres;
+revoke all on function public.bump_paddock_link_revision() from public, anon, authenticated, service_role;
+drop trigger if exists bump_paddock_link_revision on public.paddock_horses;
+create trigger bump_paddock_link_revision after insert or update or delete on public.paddock_horses
+  for each row execute function public.bump_paddock_link_revision();
+
+create or replace function public.save_paddock(
+  p_paddock_id uuid, p_stable_id uuid, p_name text, p_horse_ids uuid[],
+  p_season text, p_image_url text, p_expected_revision bigint, p_request_id uuid
+)
+returns jsonb language plpgsql volatile security definer
+set search_path = pg_catalog set row_security = off
+as $function$
+declare
+  target public.paddocks%rowtype;
+  requested_ids uuid[];
+  current_ids uuid[];
+  reserved_id uuid;
+  created boolean := false;
+begin
+  if auth.uid() is null or not public.can_edit_stable(p_stable_id) then
+    raise exception using errcode = '42501', message = '[paddock save] Du saknar redigeringsbehörighet i stallet.';
+  end if;
+  if p_paddock_id is null or p_stable_id is null or p_request_id is null
+    or p_name is null or p_name = '' or p_horse_ids is null
+    or (p_expected_revision is not null and p_expected_revision <= 0)
+    or exists(select 1 from unnest(p_horse_ids) x where x is null)
+    or cardinality(p_horse_ids) <> (select count(distinct x) from unnest(p_horse_ids) x)
+  then
+    raise exception using errcode = '22023', message = '[paddock save] Ange ID, namn, request-ID och en lista med unika häst-ID utan null.';
+  end if;
+  requested_ids := array(select x from unnest(p_horse_ids) x order by x);
+  -- Parent first: a stable cascade must not deadlock with a locked paddock.
+  perform 1 from public.stables where id = p_stable_id for key share nowait;
+  if not found then
+    raise exception using errcode = '23503', message = '[paddock save] Stallet finns inte längre.';
+  end if;
+  -- Serialize even absent IDs, so a deleted create cannot race its old retry.
+  perform pg_advisory_xact_lock(hashtextextended('paddock:' || p_paddock_id::text, 20261006));
+  select * into target from public.paddocks
+    where id = p_paddock_id and stable_id = p_stable_id for update;
+  if not found then
+    if p_expected_revision is not null then
+      raise exception using errcode = 'P0002', message = '[paddock save] Hage saknas. Ladda om innan du sparar.';
+    end if;
+    -- Unique-check the ID even if Repeatable Read cannot see a new tombstone.
+    -- Only our new reservation is removed; committed deleted IDs remain blocked.
+    insert into public.paddock_deleted_ids(paddock_id, stable_id)
+      values(p_paddock_id, p_stable_id) on conflict(paddock_id) do nothing
+      returning paddock_id into reserved_id;
+    if not found then
+      raise exception using errcode = 'P0002', message = '[paddock save] Hage har raderats och kan inte återställas av ett gammalt sparförsök.';
+    end if;
+    delete from public.paddock_deleted_ids where paddock_id = reserved_id;
+    insert into public.paddocks(id, stable_id, name, season, image_url)
+      values(p_paddock_id, p_stable_id, p_name, p_season, p_image_url)
+      on conflict(id) do nothing returning * into target;
+    created := found;
+    if not created then
+      select * into target from public.paddocks
+        where id = p_paddock_id and stable_id = p_stable_id for update;
+      if not found then
+        raise exception using errcode = '23503', message = '[paddock save] Hagens ID är inte tillgängligt i angivet stall.';
+      end if;
+    end if;
+  end if;
+  if not created then
+    current_ids := array(select horse_id from public.paddock_horses
+      where paddock_id = p_paddock_id and stable_id = p_stable_id order by horse_id);
+    if target.last_save_request_id = p_request_id then
+      if target.name is not distinct from p_name and target.season is not distinct from p_season
+        and target.image_url is not distinct from p_image_url and current_ids = requested_ids
+        and target.revision - 1 = coalesce(p_expected_revision, 0)
+      then return public.paddock_snapshot(p_paddock_id);
+      end if;
+      raise exception using errcode = '22023', message = '[paddock save] Request-ID har redan använts med annat innehåll.';
+    end if;
+    if p_expected_revision is null or target.revision <> p_expected_revision then
+      raise exception using errcode = '40001', message = '[paddock save] Hage har ändrats. Ladda om och granska ditt utkast.';
+    end if;
+  end if;
+  if (select count(*) from public.horses where stable_id = p_stable_id and id = any(requested_ids))
+    <> cardinality(requested_ids)
+  then
+    raise exception using errcode = '23503', message = '[paddock save] En vald häst saknas eller tillhör ett annat stall.';
+  end if;
+  delete from public.paddock_horses where paddock_id = p_paddock_id
+    and not (horse_id = any(requested_ids));
+  insert into public.paddock_horses(stable_id, paddock_id, horse_id)
+    select p_stable_id, p_paddock_id, x from unnest(requested_ids) x
+    on conflict(paddock_id, horse_id) do nothing;
+  -- Coalesce all of this RPC's link-trigger changes into one visible revision.
+  update public.paddocks set name = p_name, season = p_season, image_url = p_image_url,
+    revision = case when created then 1 else target.revision + 1 end,
+    last_save_request_id = p_request_id, updated_at = clock_timestamp()
+    where id = p_paddock_id and stable_id = p_stable_id;
+  return public.paddock_snapshot(p_paddock_id);
+exception
+  when foreign_key_violation then
+    raise exception using errcode = '23503', message = '[paddock save] Stallet eller en vald häst finns inte längre.';
+  when serialization_failure or deadlock_detected or lock_not_available then
+    raise exception using errcode = '40001', message = '[paddock save] Hage ändras samtidigt. Ladda om och granska ditt utkast.';
+end
+$function$;
+alter function public.save_paddock(uuid, uuid, text, uuid[], text, text, bigint, uuid) owner to postgres;
+revoke all on function public.save_paddock(uuid, uuid, text, uuid[], text, text, bigint, uuid) from public, anon, authenticated, service_role;
+grant execute on function public.save_paddock(uuid, uuid, text, uuid[], text, text, bigint, uuid) to authenticated;
+
+create or replace function public.delete_paddock(p_paddock_id uuid, p_stable_id uuid, p_expected_revision bigint)
+returns jsonb language plpgsql volatile security definer
+set search_path = pg_catalog set row_security = off
+as $function$
+declare current_revision bigint;
+begin
+  if auth.uid() is null or not public.can_edit_stable(p_stable_id) then
+    raise exception using errcode = '42501', message = '[paddock delete] Du saknar redigeringsbehörighet i stallet.';
+  end if;
+  if p_paddock_id is null or p_stable_id is null or p_expected_revision is null or p_expected_revision <= 0 then
+    raise exception using errcode = '22023', message = '[paddock delete] Ange hagens ID, stall och aktuell revision.';
+  end if;
+  perform 1 from public.stables where id = p_stable_id for key share nowait;
+  if not found then
+    raise exception using errcode = '23503', message = '[paddock delete] Stallet finns inte längre.';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('paddock:' || p_paddock_id::text, 20261006));
+  select revision into current_revision from public.paddocks
+    where id = p_paddock_id and stable_id = p_stable_id for update;
+  if not found then
+    raise exception using errcode = 'P0002', message = '[paddock delete] Hage saknas. Ladda om.';
+  end if;
+  if current_revision <> p_expected_revision then
+    raise exception using errcode = '40001', message = '[paddock delete] Hage har ändrats. Ladda om innan du tar bort den.';
+  end if;
+  insert into public.paddock_deleted_ids(paddock_id, stable_id)
+    values(p_paddock_id, p_stable_id);
+  delete from public.paddocks where id = p_paddock_id and stable_id = p_stable_id;
+  return jsonb_build_object('id', p_paddock_id, 'stable_id', p_stable_id,
+    'deleted', true, 'revision', current_revision);
+exception when serialization_failure or deadlock_detected or lock_not_available then
+  raise exception using errcode = '40001', message = '[paddock delete] Hage ändras samtidigt. Ladda om innan du tar bort den.';
+end
+$function$;
+alter function public.delete_paddock(uuid, uuid, bigint) owner to postgres;
+revoke all on function public.delete_paddock(uuid, uuid, bigint) from public, anon, authenticated, service_role;
+grant execute on function public.delete_paddock(uuid, uuid, bigint) to authenticated;
+
+-- No direct legacy or canonical writes, even when horse_names is unchanged.
+drop policy if exists paddocks_insert on public.paddocks;
+drop policy if exists paddocks_update on public.paddocks;
+drop policy if exists paddocks_delete on public.paddocks;
+revoke insert, update, delete on table public.paddocks from public, anon, authenticated, service_role;
+-- Table revokes alone do not remove preexisting column ACLs.
+revoke insert(id, created_at, updated_at, stable_id, name, horse_names, season, image_url, revision, last_save_request_id),
+  update(id, created_at, updated_at, stable_id, name, horse_names, season, image_url, revision, last_save_request_id)
+  on public.paddocks from public, anon, authenticated, service_role;
+revoke all on table public.paddock_horses from public, anon, authenticated, service_role;
+revoke insert(stable_id, paddock_id, horse_id), update(stable_id, paddock_id, horse_id)
+  on public.paddock_horses from public, anon, authenticated, service_role;
+grant select on table public.paddocks, public.paddock_horses to authenticated;
+
+commit;

@@ -1,0 +1,23 @@
+{
+  "state": "UNAPPROVED PROPOSAL FIXTURES ONLY; no product migration or Hosted installation",
+  "source_head": "11b8ff239ff1857a71a31f20f8821de085951695",
+  "schema_sha256": "2265a4c22cfdf6eebb30e6abea1f808cf5187eb6e5ddab4eb55e6001a8f3d18b",
+  "unread": {
+    "revision": 4,
+    "sql_sha256": "14d94e4e793a1a27f52f4333155b5be2de082a20b49843a01c6a45cdc8e0a1dc",
+    "source_driver_sha256": "6878db817da27e5a3e81ffadda29f42a09f331d2748089b0c4483e65c24a84d8",
+    "negative_sql_sha256": {
+      "unread-negative-private-scope.sql": "cd0a3d2632cf01bc4f15f12ac0cfe946b7328fac94e782957134fa1a083f4a04",
+      "unread-negative-peer-prefix.sql": "147673c20ddf57f1c56e9cbf8962a28ec3a59b7db17134396a10cbaee96dd002"
+    }
+  },
+  "rate": {
+    "revision": 2,
+    "sql_sha256": "f3c695cbcc5aa858feec8afa82870f8638145e5ab424f60e57027432033fa61d",
+    "source_concurrency_driver_sha256": "d9fed0063b0fc9695b9477049aec70426e27fe5d9748587ba0b9bd64fabd774d",
+    "negative_quota_recheck_sql_sha256": "31ce924dea1894338d87859e219b6660c487321fe7c6250c5551d589000d4ad6",
+    "negative_duplicate_target_sql_sha256": "8b3723c3797fe271908bd70aa11b33966c38a8bb83158230816b15d0f24140a6",
+    "quota_values_state": "Explicit proposals only; not accepted product policy.",
+    "source_duplicate_target_driver_sha256": "cfbdb1a8f8b8f7f58e65f6ad9955faeadd4c820bb43f8b8d80b0c846e853659b"
+  }
+}
