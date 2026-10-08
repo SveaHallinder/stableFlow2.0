@@ -30,6 +30,8 @@ import { feedSlotLabels } from '@/lib/today';
 import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { DateTimeField } from '@/components/DateTimeField';
+import { useAuth } from '@/context/AuthContext';
 
 const FEED_SLOTS: FeedSlot[] = ['morning', 'lunch', 'evening'];
 
@@ -39,12 +41,14 @@ export default function HorseProfileScreen() {
   const router = useRouter();
   const isDesktopWeb = useIsDesktopWeb();
   const { state, derived, actions } = useAppData();
+  const { user: authUser } = useAuth();
   const toast = useToast();
   const { id: rawId } = useLocalSearchParams<{ id?: string }>();
   const horseId = Array.isArray(rawId) ? rawId[0] : rawId;
   const horse = horseId ? state.horses.find((item) => item.id === horseId) : undefined;
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
+  const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId, stableId, horseId]);
   const stable = state.stables.find((item) => item.id === stableId);
   const stablePaddocks = state.paddocks.filter((item) => item.stableId === stableId);
   const horsePaddocks = horse ? getHorsePaddocks(horse, stablePaddocks) : [];
@@ -253,6 +257,7 @@ export default function HorseProfileScreen() {
           <SectionCard title="Ridning/träning" icon="calendar">
             {horse ? (
               <PlannedRidesEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
                 stable={stable}
@@ -315,6 +320,7 @@ export default function HorseProfileScreen() {
           <SectionCard title="Vård" icon="heart">
             {horse ? (
               <CareEventsEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
                 events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
@@ -929,6 +935,7 @@ function FeedPlanForm({
 }
 
 type PlannedRidesEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
   stable?: Stable;
@@ -943,6 +950,7 @@ type PlannedRidesEditorProps = {
 };
 
 function PlannedRidesEditor({
+  scopeKey,
   stableId,
   horseId,
   stable,
@@ -1145,7 +1153,10 @@ function PlannedRidesEditor({
         creating ? (
           <View style={styles.feedFormBlock}>
             <Text style={styles.feedFormLabel}>Nytt ridpass</Text>
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Planerat ridpass: datum"
+              scopeKey={scopeKey}
               value={draft.date}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1153,7 +1164,11 @@ function PlannedRidesEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Planerat ridpass: tid"
+              scopeKey={scopeKey}
+              allowClear
               value={draft.time}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
@@ -1277,6 +1292,7 @@ const careEventTypeOrder: CareEventType[] = [
 ];
 
 type CareEventsEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
   events: CareEvent[];
@@ -1289,6 +1305,7 @@ type CareEventsEditorProps = {
 };
 
 function CareEventsEditor({
+  scopeKey,
   stableId,
   horseId,
   events,
@@ -1523,7 +1540,10 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Vårdhändelse: datum"
+              scopeKey={scopeKey}
               editable={saving === null}
               value={draft.date}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1531,7 +1551,11 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Vårdhändelse: tid"
+              scopeKey={scopeKey}
+              allowClear
               editable={saving === null}
               value={draft.time}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}

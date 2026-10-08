@@ -1,5 +1,7 @@
 import React from 'react';
 import {
+  AppState,
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -11,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { theme } from '@/components/theme';
 import { radius, space } from '@/design/tokens';
@@ -24,12 +27,16 @@ import type { MessagePreview } from '@/context/AppDataContext';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
+import { chatUnreadIds, scrollReadViewport, visibleMessageIds } from '@/lib/chatReadReceipts';
+import { useAuth } from '@/context/AuthContext';
 
 const palette = theme.colors;
 
 export default function ChatScreen() {
   const router = useRouter();
   const { state, actions } = useAppData();
+  const { user } = useAuth();
+  const focused = useIsFocused();
   const { markConversationRead, sendConversationMessage } = actions;
   const { id: rawId, name } = useLocalSearchParams<{ id?: string; name?: string }>();
   const conversationId = Array.isArray(rawId) ? rawId[0] : rawId ?? '';
@@ -57,11 +64,157 @@ export default function ChatScreen() {
   const toast = useToast();
   const scrollViewRef = React.useRef<ScrollView>(null);
 
+  const [foreground, setForeground] = React.useState(() =>
+    (!AppState.currentState || AppState.currentState === 'active')
+    && (Platform.OS !== 'web' || typeof document === 'undefined' || document.visibilityState !== 'hidden'));
+  const [readError, setReadError] = React.useState<string | null>(null);
+  const [savingRead, setSavingRead] = React.useState(false);
+  const [observed, setObserved] = React.useState<{ epoch: number; ids: string[] }>({ epoch: -1, ids: [] });
+  const layoutsRef = React.useRef(new Map<string, { y: number; height: number }>());
+  const viewportRef = React.useRef({ y: 0, height: 0 });
+  const pendingReadRef = React.useRef<object | null>(null);
+  const failedReadIdsRef = React.useRef<{ epoch: number; ids: string[] } | null>(null);
+  const measureVersionRef = React.useRef(0);
+  const layoutIdentity = `${user?.id ?? ''}:${state.sessionUserId ?? ''}:${conversationId}`;
+  const layoutIdentityRef = React.useRef(layoutIdentity);
+  if (layoutIdentityRef.current !== layoutIdentity) {
+    layoutIdentityRef.current = layoutIdentity;
+    layoutsRef.current.clear();
+    viewportRef.current = { y: 0, height: 0 };
+  }
+  const identity = `${user?.id ?? ''}:${state.sessionUserId ?? ''}:${conversationId}:${focused}:${foreground}`;
+  const readScopeRef = React.useRef({ identity, epoch: 0 });
+  if (readScopeRef.current.identity !== identity) {
+    readScopeRef.current = { identity, epoch: readScopeRef.current.epoch + 1 };
+  }
+  const readReady = Boolean(conversationPreview?.readMessageIds && conversationPreview.unreadMessageIds)
+    && user?.id === state.sessionUserId && user?.id === state.currentUserId;
+  const unreadIds = React.useMemo(() => readReady && conversationPreview
+    ? chatUnreadIds(conversationPreview, conversationMessages ?? [], state.currentUserId, state.blockedUserIds) : [],
+  [readReady, conversationPreview, conversationMessages, state.currentUserId, state.blockedUserIds]);
+  const observerEpoch = readScopeRef.current.epoch;
+  const visibleUnreadKey = observed.epoch === observerEpoch ? observed.ids.filter(id => unreadIds.includes(id)).sort().join(',') : '';
+  const retryReadIds = failedReadIdsRef.current?.epoch === observerEpoch ? failedReadIdsRef.current.ids : [];
+  const unloadedUnreadCount = unreadIds.filter(id => !messages.some(message => message.id === id)).length;
+  const updateObserved = React.useCallback(() => {
+    if (readScopeRef.current.identity !== identity || readScopeRef.current.epoch !== observerEpoch) return;
+    const epoch = readScopeRef.current.epoch;
+    const version = ++measureVersionRef.current;
+    const node = scrollViewRef.current?.getNativeScrollRef();
+    node?.measureInWindow((left, top, width, height) => {
+      if (readScopeRef.current.epoch !== epoch || measureVersionRef.current !== version) return;
+      const clips: { top: number; bottom: number }[] = [];
+      const horizontalClips = [{ left: 0, right: Dimensions.get('window').width }];
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const visualViewport = window.visualViewport;
+        if (visualViewport) {
+          clips.push({ top: visualViewport.offsetTop, bottom: visualViewport.offsetTop + visualViewport.height });
+          horizontalClips.push({ left: visualViewport.offsetLeft, right: visualViewport.offsetLeft + visualViewport.width });
+        }
+        // Web ancestors can clip the native scroll rectangle independently of
+        // the browser window. The returned DOM host already belongs to this view.
+        let parent = (node as unknown as HTMLElement).parentElement;
+        while (parent) {
+          const overflow = window.getComputedStyle(parent);
+          if (['auto', 'scroll', 'hidden', 'clip'].includes(overflow.overflowY)) {
+            const rect = parent.getBoundingClientRect();
+            const clipTop = rect.top + parent.clientTop;
+            clips.push({ top: clipTop, bottom: clipTop + parent.clientHeight });
+          }
+          if (['auto', 'scroll', 'hidden', 'clip'].includes(overflow.overflowX)) {
+            const clipLeft = parent.getBoundingClientRect().left + parent.clientLeft;
+            horizontalClips.push({ left: clipLeft, right: clipLeft + parent.clientWidth });
+          }
+          parent = parent.parentElement;
+        }
+      }
+      const viewport = scrollReadViewport(viewportRef.current.y, top, height, Dimensions.get('window').height, clips);
+      const horizontallyVisible = Math.min(left + width, ...horizontalClips.map(clip => clip.right))
+        > Math.max(left, ...horizontalClips.map(clip => clip.left));
+      const next = horizontallyVisible ? visibleMessageIds(layoutsRef.current, viewport,
+        messages.filter(message => message.authorId !== state.currentUserId).map(message => message.id)) : [];
+      setObserved(previous => previous.epoch === epoch && previous.ids.join(',') === next.join(',')
+        ? previous : { epoch, ids: next });
+    });
+  }, [messages, state.currentUserId, identity, observerEpoch]);
+
   React.useEffect(() => {
-    if (conversationId) {
-      markConversationRead(conversationId);
+    const update = () => setForeground((!AppState.currentState || AppState.currentState === 'active')
+      && (Platform.OS !== 'web' || typeof document === 'undefined' || document.visibilityState !== 'hidden'));
+    const subscription = AppState.addEventListener('change', update);
+    if (Platform.OS === 'web' && typeof document !== 'undefined') document.addEventListener('visibilitychange', update);
+    update();
+    return () => {
+      subscription.remove();
+      if (Platform.OS === 'web' && typeof document !== 'undefined') document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+  React.useEffect(() => {
+    setReadError(null);
+    setSavingRead(false);
+    pendingReadRef.current = null;
+    failedReadIdsRef.current = null;
+  }, [conversationId, user?.id, state.sessionUserId]);
+  React.useEffect(() => {
+    failedReadIdsRef.current = null;
+    setReadError(null);
+  }, [observerEpoch]);
+  React.useEffect(() => {
+    updateObserved();
+    const subscription = Dimensions.addEventListener('change', updateObserved);
+    const visualViewport = Platform.OS === 'web' && typeof window !== 'undefined' ? window.visualViewport : null;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') window.addEventListener('scroll', updateObserved, true);
+    visualViewport?.addEventListener('scroll', updateObserved);
+    visualViewport?.addEventListener('resize', updateObserved);
+    return () => {
+      subscription.remove();
+      if (Platform.OS === 'web' && typeof window !== 'undefined') window.removeEventListener('scroll', updateObserved, true);
+      visualViewport?.removeEventListener('scroll', updateObserved);
+      visualViewport?.removeEventListener('resize', updateObserved);
+    };
+  }, [updateObserved]);
+  React.useEffect(() => () => {
+    readScopeRef.current.epoch += 1;
+    pendingReadRef.current = null;
+  }, []);
+
+  React.useEffect(() => {
+    const failed = failedReadIdsRef.current;
+    if (readError && readReady && failed?.epoch === observerEpoch && failed.ids.length
+      && failed.ids.every(id => conversationPreview?.readMessageIds?.includes(id))) {
+      failedReadIdsRef.current = null;
+      setReadError(null);
     }
-  }, [conversationId, markConversationRead]);
+  }, [readError, readReady, conversationPreview?.readMessageIds, observerEpoch]);
+  const saveObserved = React.useCallback(async (retry = false) => {
+    if (readScopeRef.current.epoch !== observerEpoch) return;
+    const ids = retry
+      ? failedReadIdsRef.current?.epoch === observerEpoch ? [...failedReadIdsRef.current.ids] : []
+      : visibleUnreadKey ? visibleUnreadKey.split(',') : [];
+    if (!focused || !foreground || !readReady || !ids.length) return;
+    if (pendingReadRef.current) return;
+    const epoch = readScopeRef.current.epoch;
+    const attempt = {};
+    pendingReadRef.current = attempt;
+    setSavingRead(true);
+    setReadError(null);
+    try {
+      const result = await markConversationRead(conversationId, ids);
+      if (readScopeRef.current.epoch !== epoch) return;
+      if (!result.success) {
+        failedReadIdsRef.current = { epoch, ids };
+        setReadError(result.reason);
+      }
+    } finally {
+      if (pendingReadRef.current === attempt) {
+        pendingReadRef.current = null;
+        setSavingRead(false);
+      }
+    }
+  }, [focused, foreground, readReady, visibleUnreadKey, markConversationRead, conversationId, observerEpoch]);
+  React.useEffect(() => {
+    if (!savingRead && !readError) void saveObserved();
+  }, [saveObserved, savingRead, readError]);
 
   // Auto-scroll to bottom when messages change
   React.useEffect(() => {
@@ -172,7 +325,11 @@ export default function ChatScreen() {
             </ScreenHeader>
 
             <ScrollView
+              key={`${user?.id ?? ''}:${state.sessionUserId ?? ''}:${conversationId}`}
               ref={scrollViewRef}
+              onLayout={event => { if (readScopeRef.current.epoch !== observerEpoch) return; viewportRef.current.height = event.nativeEvent.layout.height; updateObserved(); }}
+              onScroll={event => { if (readScopeRef.current.epoch !== observerEpoch) return; viewportRef.current.y = event.nativeEvent.contentOffset.y; updateObserved(); }}
+              scrollEventThrottle={100}
               style={styles.scroll}
               contentContainerStyle={[
                 styles.messagesContent,
@@ -182,7 +339,7 @@ export default function ChatScreen() {
               keyboardShouldPersistTaps="handled"
             >
               {!messages.length && (
-                <Text style={styles.emptyText}>Här är det tomt än. Skriv ett meddelande för att börja prata.</Text>
+                <Text style={styles.emptyText}>Inga meddelanden har laddats här. Uppdatera chattlistan eller skriv ett meddelande.</Text>
               )}
               {messages.map((message, index) => {
                 const isMe = message.authorId === state.currentUserId;
@@ -196,6 +353,7 @@ export default function ChatScreen() {
                 return (
                   <View
                     key={message.id}
+                    onLayout={event => { if (readScopeRef.current.epoch !== observerEpoch) return; layoutsRef.current.set(message.id, event.nativeEvent.layout); updateObserved(); }}
                     style={[styles.messageGroup, isLast && styles.messageGroupLast]}
                   >
                     <View
@@ -238,6 +396,21 @@ export default function ChatScreen() {
               <View style={styles.bottomSpacer} />
             </ScrollView>
 
+            {unloadedUnreadCount > 0 && <Text style={styles.emptyText}>{unloadedUnreadCount === 1
+              ? '1 oläst meddelande finns utanför den historik som laddats. Det markeras inte som läst här.'
+              : `${unloadedUnreadCount} olästa meddelanden finns utanför den historik som laddats. De markeras inte som lästa här.`}</Text>}
+            {!readReady && <Text style={styles.emptyText}>Oläststatus har inte kunnat bekräftas. Uppdatera chattlistan och försök igen.</Text>}
+            {savingRead && <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Sparar läskvittens…</Text>}
+            {readError && (
+              <View style={{ paddingHorizontal: 20, paddingVertical: 8 }}>
+                <Text accessibilityRole="alert" style={{ color: palette.error }}>{readError}</Text>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Försök spara läskvittensen igen"
+                  disabled={savingRead || !focused || !foreground || !readReady || !retryReadIds.length}
+                  onPress={() => { void saveObserved(true); }}>
+                  <Text style={{ color: palette.primary, paddingVertical: 8 }}>Försök igen</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             {sendError && <Text accessibilityRole="alert" style={styles.errorText}>{sendError}</Text>}
             {sending && <Text accessibilityLiveRegion="polite" style={styles.emptyText}>Skickar…</Text>}
             <View style={[styles.composerContainer, isDesktopWeb && styles.composerContainerDesktop]}>

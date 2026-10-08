@@ -21,6 +21,7 @@ import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUns
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { authRedirectUrl } from '@/lib/authRedirect';
+import { type AccountDeletionPlan, type AccountDeletionStatus, persistAccountDeletionPlan, readAccountDeletionPlan, readOwnAccountDeletionStatus, reserveAccountDeletionAttempt } from '@/lib/accountDeletionResume';
 
 const palette = theme.colors;
 
@@ -96,11 +97,99 @@ export default function AccountSettingsScreen() {
       if (securityAccountRef.current === account) securityAccountRef.current = { userId: undefined };
     };
   }, [user?.id]);
+  const [deletionOwner, setDeletionOwner] = React.useState({ userId: user?.id, ownerId: '' });
+  React.useEffect(() => {
+    setDeletionOwner({ userId: user?.id, ownerId: '' });
+    setConfirmingDelete(false);
+  }, [user?.id]);
   const [confirmingDelete, setConfirmingDelete] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
   const deletingRef = React.useRef(false);
   const deletedAccountRef = React.useRef<string | null>(pendingAccountDeletionId === user?.id ? pendingAccountDeletionId : null);
   const [needsSessionCleanup, setNeedsSessionCleanup] = React.useState(Boolean(deletedAccountRef.current));
+  const deletionPlanRef = React.useRef<AccountDeletionPlan | null>(null);
+  const [deletionResume, setDeletionResume] = React.useState<{
+    userId: string | undefined;
+    status: 'loading' | 'ready' | 'pending' | 'unknown';
+    plan: AccountDeletionPlan | null;
+    receipt: AccountDeletionStatus | null;
+  }>({ userId: user?.id, status: 'loading', plan: null, receipt: null });
+  const replacementOwners = deletionResume.userId === user?.id
+    ? deletionResume.receipt?.replacement_owners.map(candidate => ({ id: candidate.user_id, name: candidate.display_name })) ?? []
+    : [];
+  const selectedOwner = deletionOwner.userId === user?.id
+    ? replacementOwners.find(candidate => candidate.id === deletionOwner.ownerId)
+    : undefined;
+  const requiresOwner = deletionResume.userId === user?.id && deletionResume.receipt?.requires_owner === true;
+  const lockedPlan = deletionResume.userId === user?.id ? deletionResume.plan : null;
+  const displayedOwnerId = lockedPlan ? lockedPlan.ownerId : selectedOwner?.id;
+  const ownerChoiceLocked = deleting || Boolean(lockedPlan) || deletionResume.userId !== user?.id || deletionResume.status !== 'ready';
+  const ownerSelectionBlocked = requiresOwner && ((!lockedPlan && replacementOwners.length === 0) || lockedPlan?.ownerId === null);
+
+  const refreshDeletionReceipt = React.useCallback(async (account: { userId: string | undefined }, signal?: AbortSignal) => {
+    if (!account.userId) throw new Error('Account deletion identity is unavailable.');
+    let plan = await readAccountDeletionPlan(account.userId);
+    if (signal?.aborted || securityAccountRef.current !== account) return null;
+    deletionPlanRef.current = plan;
+    const receipt = await readOwnAccountDeletionStatus(account.userId, signal);
+    if (signal?.aborted || securityAccountRef.current !== account) return null;
+    if (receipt.status === 'pending') {
+      plan = await persistAccountDeletionPlan(account.userId, receipt.replacement_user_id);
+      if (signal?.aborted || securityAccountRef.current !== account) return null;
+      deletionPlanRef.current = plan;
+    }
+    if (receipt.status === 'deleted') {
+      deletedAccountRef.current = account.userId;
+      setNeedsSessionCleanup(true);
+    }
+    // Even not_started cannot cancel an earlier request that has not committed.
+    setDeletionResume({ userId: account.userId, status: plan ? 'pending' : 'ready', plan, receipt });
+    return receipt;
+  }, []);
+
+  const handleCheckDeletionStatus = React.useCallback(async () => {
+    const account = securityAccountRef.current;
+    if (!account.userId || account.userId !== user?.id || deletingRef.current) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([refreshDeletionReceipt(account, controller.signal), new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => { controller.abort(); reject(new Error('Account deletion status timed out.')); }, 15_000);
+      })]);
+    } catch (error) {
+      console.warn('[account delete] Status kunde inte bekräftas', { name: error instanceof Error ? error.name : 'unknown' });
+      if (securityAccountRef.current !== account) return;
+      setDeletionResume(previous => ({ userId: account.userId, status: 'unknown', plan: deletionPlanRef.current, receipt: previous.userId === account.userId ? previous.receipt : null }));
+      toast.showToast('Status kunde inte verifieras. Ägarvalet är låst och ingen session har rensats. Kontrollera igen.', 'error');
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+      if (securityAccountRef.current === account) { deletingRef.current = false; setDeleting(false); }
+    }
+  }, [refreshDeletionReceipt, toast, user?.id]);
+
+  React.useEffect(() => {
+    const account = securityAccountRef.current;
+    deletionPlanRef.current = null;
+    deletingRef.current = false;
+    setDeleting(false);
+    setDeletionResume({ userId: user?.id, status: 'loading', plan: null, receipt: null });
+    if (!account.userId) return;
+    const controller = new AbortController();
+    let expired = false;
+    const timeout = setTimeout(() => {
+      expired = true;
+      controller.abort();
+      if (securityAccountRef.current === account) setDeletionResume(previous => ({ userId: account.userId, status: 'unknown', plan: deletionPlanRef.current, receipt: previous.userId === account.userId ? previous.receipt : null }));
+    }, 15_000);
+    void refreshDeletionReceipt(account, controller.signal).catch(error => {
+      console.warn('[account delete] Tidigare avslut kunde inte återläsas', { name: error instanceof Error ? error.name : 'unknown' });
+      if (!expired && securityAccountRef.current === account) setDeletionResume(previous => ({ userId: account.userId, status: 'unknown', plan: deletionPlanRef.current, receipt: previous.userId === account.userId ? previous.receipt : null }));
+    }).finally(() => clearTimeout(timeout));
+    return () => { controller.abort(); clearTimeout(timeout); };
+  }, [refreshDeletionReceipt, user?.id]);
+
 
   React.useEffect(() => {
     if (pendingAccountDeletionId && pendingAccountDeletionId === user?.id) {
@@ -181,6 +270,20 @@ export default function AccountSettingsScreen() {
     if (deletingRef.current || deleting) {
       return;
     }
+    const account = securityAccountRef.current;
+    if (!account.userId || account.userId !== user?.id) return;
+    if (!deletedAccountRef.current && !deletionPlanRef.current && requiresOwner && !selectedOwner) {
+      toast.showToast('Välj en ny ägare som redan är ägare i alla dina stall. Ändra medlemsroller först om ingen kan väljas.', 'error');
+      return;
+    }
+    if (!deletedAccountRef.current && (deletionResume.userId !== account.userId || !['ready', 'pending'].includes(deletionResume.status))) {
+      toast.showToast('Kontrollera raderingsstatus innan ett nytt försök. Inget ägarval eller konto har ändrats.', 'error');
+      return;
+    }
+    if (!deletedAccountRef.current && deletionPlanRef.current?.attempts === 3) {
+      toast.showToast('Gränsen på tre raderingsförsök på denna enhet är nådd. Kontrollera status; inget nytt raderingsanrop skickas.', 'error');
+      return;
+    }
     if (!deletedAccountRef.current && !confirmingDelete) {
       setConfirmingDelete(true);
       return;
@@ -188,7 +291,7 @@ export default function AccountSettingsScreen() {
     deletingRef.current = true;
     setDeleting(true);
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    const unconfirmedMessage = 'Raderingen kunde inte bekräftas. Kontrollera kontot innan du försöker igen.';
+    const unconfirmedMessage = 'Raderingen kunde inte bekräftas. Samma ägarval är låst. Kontrollera status innan du försöker igen; ett tidigare anrop kan fortfarande slutföras.';
     const cleanupMessage = 'Kontot har raderats, men den lokala sessionen kunde inte rensas. Tryck på Rensa session och logga ut för att försöka igen.';
     const changedAccountMessage = 'Det inloggade kontot har ändrats. Ingen lokal session har rensats.';
     try {
@@ -201,37 +304,82 @@ export default function AccountSettingsScreen() {
             reject(new Error('Account deletion verification timed out.'));
           }, 15_000);
         });
-        const { data, error } = await Promise.race([
-          supabase.functions.invoke('delete-account', {
-            method: 'POST', signal: controller.signal, body: { expected_user_id: user.id },
-          }), deadline,
-        ]);
-        if (error) {
-          let reason = unconfirmedMessage;
-          const ctx = (error as { context?: { json?: () => Promise<{ error?: unknown }> } }).context;
-          if (typeof ctx?.json === 'function') {
-            const body = await Promise.race([ctx.json(), deadline]);
-            if (body?.error === 'sole_owner') {
-              reason = 'Du är ensam ägare av ett stall. Utse en ny ägare först.';
-            } else if (body?.error === 'account_changed') {
-              reason = changedAccountMessage;
-            }
+        const previousPlan = deletionPlanRef.current;
+        const chosenOwnerId = selectedOwner?.id ?? null;
+        const receipt = await Promise.race([refreshDeletionReceipt(account, controller.signal), deadline]);
+        if (securityAccountRef.current !== account || !receipt) return;
+        if (receipt.status !== 'deleted') {
+          let plan = deletionPlanRef.current;
+          if (plan && ((!previousPlan && receipt.status === 'pending') || (previousPlan && previousPlan.ownerId !== plan.ownerId))) {
+            toast.showToast('Ett tidigare avslut har återlästs med sitt låsta ägarval. Kontrollera valet och bekräfta samma avslut igen.', 'error');
+            return;
           }
-          toast.showToast(reason, 'error');
-          return;
+          if (!plan) {
+            // Recheck the server scope before a new choice becomes immutable.
+            if (receipt.requires_owner && chosenOwnerId === null) {
+              toast.showToast('Välj en verifierad ny ägare för berörda stall och gårdar. Inget ägarval har sparats.', 'error');
+              return;
+            }
+            if (chosenOwnerId !== null && !receipt.replacement_owners.some(candidate => candidate.user_id === chosenOwnerId)) {
+              toast.showToast('Den valda personen är inte längre en aktiv ägare i alla berörda stall. Välj en verifierad ägare; inget ägarval har sparats.', 'error');
+              return;
+            }
+            plan = await Promise.race([persistAccountDeletionPlan(account.userId, chosenOwnerId), deadline]);
+            if (securityAccountRef.current !== account) return;
+            deletionPlanRef.current = plan;
+          }
+          if (receipt.requires_owner && plan.ownerId === null) {
+            toast.showToast('Ett äldre avslut saknar vald ny ägare, men överlåtelse krävs nu. Avslutet är stoppat för granskning; ägarvalet kan inte återställas medan ett äldre anrop kan slutföras.', 'error');
+            return;
+          }
+          plan = await Promise.race([reserveAccountDeletionAttempt(plan), deadline]);
+          if (securityAccountRef.current !== account) return;
+          deletionPlanRef.current = plan;
+          setDeletionResume({ userId: account.userId, status: 'pending', plan, receipt });
+          const { data, error } = await Promise.race([
+            supabase.functions.invoke('delete-account', {
+              method: 'POST', signal: controller.signal, body: { expected_user_id: plan.userId, replacement_user_id: plan.ownerId },
+            }), deadline,
+          ]);
+          if (securityAccountRef.current !== account) return;
+          if (error) {
+            let reason = unconfirmedMessage;
+            const ctx = (error as { context?: { json?: () => Promise<{ error?: unknown }> } }).context;
+            if (typeof ctx?.json === 'function') {
+              const body = await Promise.race([ctx.json(), deadline]);
+              if (securityAccountRef.current !== account) return;
+              if (body?.error === 'sole_owner') {
+                reason = 'Du är ensam ägare av ett stall. Utse en ny ägare först.';
+              } else if (body?.error === 'owner_required') {
+                reason = 'Välj en ny ägare för dina stall och gårdar innan kontot raderas.';
+              } else if (body?.error === 'owner_invalid') {
+                reason = 'Den låsta nya ägaren måste åter ha ett aktivt konto och vara ägare i alla berörda stall. Ägarvalet kan inte ändras medan ett äldre anrop kan slutföras.';
+              } else if (body?.error === 'storage_blocked') {
+                reason = 'Raderingen är stoppad eftersom dina filer behöver en säker raderings- eller överlåtelseplan. Kontot har inte raderats.';
+              } else if (body?.error === 'deletion_in_progress') {
+                reason = 'Ett avslut är redan förberett med en annan vald ägare. Kontrollera avslutet innan du ändrar ägarval.';
+              } else if (body?.error === 'account_changed') {
+                reason = changedAccountMessage;
+              }
+            }
+            const refreshed = await Promise.race([refreshDeletionReceipt(account, controller.signal), deadline]);
+            if (securityAccountRef.current !== account) return;
+            if (refreshed?.status !== 'deleted') { toast.showToast(reason, 'error'); return; }
+          } else if (data?.deleted !== true || data?.user_id !== account.userId) {
+            toast.showToast(unconfirmedMessage, 'error');
+            return;
+          }
+          deletedAccountRef.current = account.userId;
         }
-        if (data?.deleted !== true || data?.user_id !== user.id) {
-          toast.showToast(unconfirmedMessage, 'error');
-          return;
-        }
-        deletedAccountRef.current = user.id;
       }
       if (timeout !== undefined) clearTimeout(timeout);
       timeout = undefined;
       const cleanupDeadline = new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => reject(new Error('Local account session cleanup timed out.')), 10_000);
       });
-      const cleared = await Promise.race([finishAccountDeletion(deletedAccountRef.current), cleanupDeadline]);
+      if (deletedAccountRef.current !== account.userId) throw new Error('Account deletion receipt UID is unverified.');
+      const cleared = await Promise.race([finishAccountDeletion(account.userId), cleanupDeadline]);
+      if (securityAccountRef.current !== account) return;
       if (cleared !== true) {
         deletedAccountRef.current = null;
         setNeedsSessionCleanup(false);
@@ -246,15 +394,19 @@ export default function AccountSettingsScreen() {
         stage: deletedAccountRef.current ? 'local session cleanup' : 'deletion verification',
         name: error instanceof Error ? error.name : 'unknown',
       });
+      if (securityAccountRef.current !== account) return;
       setNeedsSessionCleanup(Boolean(deletedAccountRef.current));
+      if (!deletedAccountRef.current) setDeletionResume(previous => ({ userId: account.userId, status: 'unknown', plan: deletionPlanRef.current, receipt: previous.userId === account.userId ? previous.receipt : null }));
       toast.showToast(deletedAccountRef.current ? cleanupMessage : unconfirmedMessage, 'error');
     } finally {
       if (timeout !== undefined) clearTimeout(timeout);
-      deletingRef.current = false;
-      setDeleting(false);
-      setConfirmingDelete(false);
+      if (securityAccountRef.current === account) {
+        deletingRef.current = false;
+        setDeleting(false);
+        setConfirmingDelete(false);
+      }
     }
-  }, [deleting, confirmingDelete, toast, finishAccountDeletion, user?.id, router]);
+  }, [deleting, confirmingDelete, toast, finishAccountDeletion, user?.id, router, requiresOwner, selectedOwner, deletionResume, refreshDeletionReceipt]);
 
   const handleSave = React.useCallback(async () => {
     if (!currentUser || savingProfileRef.current) {
@@ -460,20 +612,70 @@ export default function AccountSettingsScreen() {
               <Text style={styles.sectionTitle}>Radera konto</Text>
             </View>
             <Text style={styles.sectionHint}>
-              Ditt inloggningskonto och din profil raderas permanent. Inlägg, meddelanden och
-              stallhistorik kan finnas kvar. Raderingen går inte att ångra. Är du ensam ägare
-              av ett stall behöver du utse en ny ägare först.
+              Ditt inloggningskonto och din profil raderas permanent. Din egen text i flödesinlägg,
+              kommentarer och chattar tas bort. Tomma inläggstrådar, andras svar och stallhistorik
+              bevaras. Dina stall och gårdar överlåts till den nya ägare du väljer. Personen måste
+              redan vara ägare i alla berörda stall. Raderingen går inte att ångra.
             </Text>
+            <Text style={styles.sectionHint}>
+              Filer behöver först en säker raderings- eller överlåtelseplan. Kontoradering med
+              egna eller okänt tillskrivna filer är därför stoppad tills filhanteringen är klar.
+            </Text>
+            {!needsSessionCleanup ? (
+              <View>
+                <Text style={styles.sectionTitle}>Ny ägare för stall och gård</Text>
+                {replacementOwners.length === 0 ? (
+                  <Text accessibilityRole="alert" style={styles.sectionHint}>
+                    {deletionResume.userId !== user?.id || !deletionResume.receipt || deletionResume.status === 'loading' || deletionResume.status === 'unknown'
+                      ? deletionResume.status === 'unknown' ? 'Ägarscope är okänt. Kontrollera raderingsstatus.' : 'Ägarscope är ännu inte verifierat. Kontrollera raderingsstatus.'
+                      : requiresOwner && deletionResume.receipt.affected_stable_count === 0
+                      ? 'Gården saknar kopplat stall. En ny ägare kan inte verifieras i detta flöde. Kontoradering är stoppad tills överlåtelsen har granskats.'
+                      : requiresOwner ? 'Ingen aktiv ny ägare kan väljas. Ge först en annan medlem ägarrollen i alla berörda stall och kontrollera status igen.'
+                      : 'Ingen överlåtelse krävs enligt den senast verifierade statusen.'}
+                  </Text>
+                ) : replacementOwners.map(candidate => (
+                  <TouchableOpacity
+                    key={candidate.id}
+                    disabled={ownerChoiceLocked}
+                    onPress={() => { if (ownerChoiceLocked) return; setDeletionOwner({ userId: user?.id, ownerId: candidate.id }); setConfirmingDelete(false); }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: displayedOwnerId === candidate.id, disabled: ownerChoiceLocked }}
+                    aria-checked={displayedOwnerId === candidate.id}
+                    aria-disabled={ownerChoiceLocked}
+                    accessibilityLabel={`Välj ${candidate.name} som ny ägare`}
+                  >
+                    <Text style={styles.sectionHint}>{displayedOwnerId === candidate.id ? '✓ ' : '○ '}{candidate.name}</Text>
+                  </TouchableOpacity>
+                ))}
+                <Text style={styles.sectionHint}>
+                  {lockedPlan ? `Låst ny ägare: ${lockedPlan.ownerId ? replacementOwners.find(candidate => candidate.id === lockedPlan.ownerId)?.name ?? state.users[lockedPlan.ownerId]?.name ?? 'tidigare vald person' : 'ingen ny ägare vald'}. Valet ändras inte vid återförsök.` : selectedOwner ? `Vald ny ägare: ${selectedOwner.name}.` : requiresOwner ? 'Välj en verifierad aktiv ägare. Servern kontrollerar samma ägarval igen före radering.' : 'Servern kontrollerar ägarscope igen före första raderingsanropet.'}
+                </Text>
+              </View>
+            ) : null}
+            {!needsSessionCleanup ? (
+              <View>
+                <Text accessibilityRole="alert" style={styles.sectionHint}>
+                  {deletionResume.status === 'loading' ? 'Kontrollerar tidigare radering...' :
+                    deletionResume.status === 'unknown' ? 'Status är okänd. Ägarvalet är låst tills samma avslut kan verifieras. Ingen lokal session har rensats.' :
+                    lockedPlan && ownerSelectionBlocked ? 'Det låsta avslutet saknar en ny ägare för berörda stall eller gårdar. Ingen ny begäran skickas; samma avslut måste granskas.' :
+                    lockedPlan ? `Raderingsförsök: ${lockedPlan.attempts} av 3 på denna enhet. Andras innehåll bevaras. Ett tidigare anrop kan fortfarande slutföras.` :
+                    'Inget tidigare avslut har verifierats. Ägarvalet sparas före första raderingsanropet.'}
+                </Text>
+                <TouchableOpacity onPress={handleCheckDeletionStatus} disabled={deleting} accessibilityRole="button" accessibilityLabel="Kontrollera raderingsstatus">
+                  <Text style={styles.sectionHint}>Kontrollera raderingsstatus</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
             {needsSessionCleanup ? (
               <Text accessibilityRole="alert" style={styles.sectionHint}>
                 Kontot har raderats. Den lokala sessionen behöver rensas. Försök igen med knappen nedan.
               </Text>
             ) : null}
             <TouchableOpacity
-              style={[styles.dangerButton, deleting && styles.saveButtonDisabled]}
+              style={[styles.dangerButton, (deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || lockedPlan?.attempts === 3))) && styles.saveButtonDisabled]}
               onPress={handleDeleteAccount}
               activeOpacity={0.85}
-              disabled={deleting}
+              disabled={deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || lockedPlan?.attempts === 3))}
               accessibilityRole="button"
               accessibilityLabel={needsSessionCleanup ? 'Rensa session och logga ut' : confirmingDelete ? 'Bekräfta radering av konto' : 'Radera konto'}
             >
@@ -487,7 +689,7 @@ export default function AccountSettingsScreen() {
                       : 'Radera mitt konto'}
               </Text>
             </TouchableOpacity>
-            {confirmingDelete && !deleting ? (
+            {confirmingDelete && !deleting && !lockedPlan ? (
               <TouchableOpacity
                 onPress={() => setConfirmingDelete(false)}
                 activeOpacity={0.85}

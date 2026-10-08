@@ -71,8 +71,8 @@ select pg_temp.test_error('last owner delete denied despite nonowner memberships
 select pg_temp.test_error('last owner null access denied', $$update public.stable_members set access = null where stable_id = pg_temp.test_id('stable') and user_id = pg_temp.test_id('owner')$$, '23514', '[last owner]');
 select pg_temp.test_error('last owner demotion denied', $$update public.stable_members set role = 'staff' where stable_id = pg_temp.test_id('stable') and user_id = pg_temp.test_id('owner')$$, '23514', '[last owner]');
 reset role;
-select pg_temp.test_error('last owner profile cascade denied', $$delete from public.profiles where id = pg_temp.test_id('owner')$$, '23514', '[last owner]');
-select pg_temp.test_error('last owner auth cascade denied', $$delete from auth.users where id = pg_temp.test_id('owner')$$, '23514', '[last owner]');
+select pg_temp.test_error('last owner profile cascade denied', $$delete from public.profiles where id = pg_temp.test_id('owner')$$, 'P0001', '[account delete] auth_cascade_required');
+select pg_temp.test_error('last owner auth cascade denied', $$delete from auth.users where id = pg_temp.test_id('owner')$$, 'P0001', '[account delete] preparation_required');
 select pg_temp.test_assert('failed cascades preserve profile', exists(select 1 from public.profiles where id = pg_temp.test_id('owner')));
 
 set local role authenticated;

@@ -55,6 +55,8 @@ import { NewAssignmentModal } from '@/components/NewAssignmentModal';
 import { isValidTime } from '@/lib/dateValidation';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { DateTimeField } from '@/components/DateTimeField';
+import { useAuth } from '@/context/AuthContext';
 
 const palette = theme.colors;
 const statusColors = theme.status;
@@ -265,6 +267,8 @@ function calculateDurationMinutes(startTime: string, endTime: string) {
 
 export default function CalendarScreen() {
   const { state, actions, derived, hydrating } = useAppData();
+  const { user: authUser } = useAuth();
+  const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId]);
   const router = useRouter();
   const {
     assignments,
@@ -2213,7 +2217,11 @@ export default function CalendarScreen() {
               {arenaSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{arenaSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridhusbokning: datum"
+                  scopeKey={dateTimeScope}
+                  active={arenaModalVisible}
                   editable={!arenaSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2227,7 +2235,11 @@ export default function CalendarScreen() {
               <View style={styles.modalRow}>
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Start</Text>
-                  <TextInput
+                  <DateTimeField
+                    mode="time"
+                    label="Ridhusbokning: starttid"
+                    scopeKey={dateTimeScope}
+                    active={arenaModalVisible}
                   editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="17:00"
@@ -2240,7 +2252,11 @@ export default function CalendarScreen() {
                 </View>
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Slut</Text>
-                  <TextInput
+                  <DateTimeField
+                    mode="time"
+                    label="Ridhusbokning: sluttid"
+                    scopeKey={dateTimeScope}
+                    active={arenaModalVisible}
                   editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="18:00"
@@ -2309,7 +2325,11 @@ export default function CalendarScreen() {
               {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Dagshändelse: datum"
+                  scopeKey={dateTimeScope}
+                  active={dayEventModalVisible}
                   editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2393,7 +2413,11 @@ export default function CalendarScreen() {
               {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridhusstatus: datum"
+                  scopeKey={dateTimeScope}
+                  active={arenaStatusModalVisible}
                   editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2450,7 +2474,11 @@ export default function CalendarScreen() {
               {rideLogSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{rideLogSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridlogg: datum"
+                  scopeKey={JSON.stringify([dateTimeScope, rideLogForm.horseId])}
+                  active={rideLogModalVisible}
                   editable={!rideLogSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2575,7 +2603,11 @@ export default function CalendarScreen() {
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Startdatum</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="date"
+                      label="Återkommande pass: startdatum"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="ÅÅÅÅ-MM-DD"
                       placeholderTextColor={palette.secondaryText}
@@ -2589,7 +2621,11 @@ export default function CalendarScreen() {
                   </View>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Slutdatum</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="date"
+                      label="Återkommande pass: slutdatum"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="ÅÅÅÅ-MM-DD"
                       placeholderTextColor={palette.secondaryText}
@@ -2629,7 +2665,11 @@ export default function CalendarScreen() {
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Start</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="time"
+                      label="Återkommande pass: starttid"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="07:00"
                       placeholderTextColor={palette.secondaryText}
@@ -2643,7 +2683,12 @@ export default function CalendarScreen() {
                   </View>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Slut</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="time"
+                      label="Återkommande pass: sluttid"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
+                      allowClear
                       style={styles.modalInput}
                       placeholder="08:00"
                       placeholderTextColor={palette.secondaryText}
@@ -2720,6 +2765,7 @@ export default function CalendarScreen() {
       ) : null}
 
       <NewAssignmentModal
+        scopeKey={JSON.stringify([dateTimeScope, assignmentModal.mode, assignmentModal.assignmentId])}
         visible={assignmentModal.visible}
         mode={assignmentModal.mode}
         onClose={() => setAssignmentModal({ visible: false, mode: 'create' })}

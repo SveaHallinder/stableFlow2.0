@@ -3092,3 +3092,573 @@ $$;
 revoke all on function private.retire_push_registration(uuid,uuid,uuid,timestamptz) from public,anon,authenticated,service_role;
 
 commit;
+
+-- Own exact-message read receipts; mirrors migration 20261007230000.
+-- PROPOSED ONLY. Requires separate approval before any Hosted migration apply.
+-- Exact observed message IDs; no timestamp prefix, history backfill or publication.
+begin;
+
+create table if not exists public.chat_message_reads (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  message_id uuid not null references public.messages(id) on delete cascade,
+  read_at timestamptz not null default now(),
+  primary key (user_id, message_id)
+);
+
+-- Replay must not silently adopt a different pre-existing table/policy contract.
+do $$
+begin
+  if (select count(*) from pg_catalog.pg_attribute
+      where attrelid = 'public.chat_message_reads'::regclass and attnum > 0 and not attisdropped) <> 3
+    or not exists (select 1 from pg_catalog.pg_attribute where attrelid = 'public.chat_message_reads'::regclass and attname = 'user_id' and atttypid = 'uuid'::regtype and attnotnull)
+    or not exists (select 1 from pg_catalog.pg_attribute where attrelid = 'public.chat_message_reads'::regclass and attname = 'message_id' and atttypid = 'uuid'::regtype and attnotnull)
+    or not exists (select 1 from pg_catalog.pg_attribute where attrelid = 'public.chat_message_reads'::regclass and attname = 'read_at' and atttypid = 'timestamptz'::regtype and attnotnull)
+    or (select count(*) from pg_catalog.pg_constraint where conrelid = 'public.chat_message_reads'::regclass and contype = 'p' and pg_get_constraintdef(oid) = 'PRIMARY KEY (user_id, message_id)') <> 1
+    or (select count(*) from pg_catalog.pg_constraint where conrelid = 'public.chat_message_reads'::regclass and contype = 'f' and confdeltype = 'c'
+        and ((confrelid = 'public.profiles'::regclass and pg_get_constraintdef(oid) = 'FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE')
+          or (confrelid = 'public.messages'::regclass and pg_get_constraintdef(oid) = 'FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE'))) <> 2
+    or exists (select 1 from pg_catalog.pg_policy where polrelid = 'public.chat_message_reads'::regclass)
+  then
+    raise exception using errcode = '55000', message = '[chat read] Befintlig tabell matchar inte föreslagen läskvittens.';
+  end if;
+end;
+$$;
+
+alter table public.chat_message_reads enable row level security;
+revoke all on table public.chat_message_reads from public, anon, authenticated, service_role;
+
+create or replace function public.own_chat_read_state(
+  expected_user_id uuid,
+  target_conversation_id uuid,
+  message_ids uuid[]
+) returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog
+set row_security = off
+as $$
+declare
+  caller uuid := auth.uid();
+  chat public.conversations%rowtype;
+  requested uuid[];
+  confirmed jsonb;
+  known_read jsonb;
+  unread jsonb;
+begin
+  -- PostgREST verifies the token. expected_user_id is only a client session fence.
+  if caller is null or auth.role() is distinct from 'authenticated' or caller is distinct from expected_user_id then
+    raise exception using errcode = '42501', message = '[chat read] Verifierat eget konto krävs.';
+  end if;
+  perform p.id from public.profiles p where p.id = caller for key share;
+  if not found or not exists (
+    select 1 from auth.users u where u.id = caller and u.deleted_at is null
+      and (u.banned_until is null or u.banned_until <= now())
+  ) then
+    raise exception using errcode = '42501', message = '[chat read] Aktivt eget konto krävs.';
+  end if;
+  select c.* into chat from public.conversations c where c.id = target_conversation_id for share;
+  if not found then
+    raise exception using errcode = '42501', message = '[chat read] Aktuell chattåtkomst krävs.';
+  end if;
+  if chat.is_group then
+    perform sm.id from public.stable_members sm
+      where sm.stable_id = chat.stable_id and sm.user_id = caller for key share;
+  else
+    perform cm.id from public.conversation_members cm
+      where cm.conversation_id = chat.id and cm.user_id = caller for key share;
+  end if;
+  if not found then
+    raise exception using errcode = '42501', message = '[chat read] Aktuell chattåtkomst krävs.';
+  end if;
+  if message_ids is null or array_position(message_ids, null) is not null then
+    raise exception using errcode = '22023', message = '[chat read] Exakta meddelande-ID:n krävs.';
+  end if;
+  select coalesce(array_agg(id order by id), '{}'::uuid[]) into requested
+    from (select distinct unnest(message_ids) as id) ids;
+  perform m.id from public.messages m
+    where m.id = any(requested) and m.conversation_id = chat.id
+      and m.author_id is distinct from caller
+      and not exists (select 1 from public.blocked_users b where b.blocker_user_id = caller and b.blocked_user_id = m.author_id)
+    order by m.id for share;
+  if exists (
+    select 1 from unnest(requested) ids(id)
+    where not exists (
+      select 1 from public.messages m where m.id = ids.id and m.conversation_id = chat.id
+        and m.author_id is distinct from caller
+        and not exists (select 1 from public.blocked_users b where b.blocker_user_id = caller and b.blocked_user_id = m.author_id)
+    )
+  ) then
+    raise exception using errcode = '42501', message = '[chat read] Meddelandena kunde inte verifieras i den här chatten.';
+  end if;
+  -- One statement/snapshot and one JSON value: no partial sets or REST row cap.
+  -- Complete own read IDs classify delayed INSERTs outside loaded history too.
+  select
+    coalesce(jsonb_agg(m.id order by m.id) filter (where r.message_id is not null and m.id = any(requested)), '[]'::jsonb),
+    coalesce(jsonb_agg(m.id order by m.id) filter (where r.message_id is not null), '[]'::jsonb),
+    coalesce(jsonb_agg(m.id order by m.id) filter (where r.message_id is null), '[]'::jsonb)
+    into confirmed, known_read, unread
+    from public.messages m
+    left join public.chat_message_reads r on r.user_id = caller and r.message_id = m.id
+    where m.conversation_id = chat.id and m.author_id is distinct from caller
+      and not exists (select 1 from public.blocked_users b where b.blocker_user_id = caller and b.blocked_user_id = m.author_id);
+  return jsonb_build_object(
+    'user_id', caller, 'conversation_id', chat.id, 'complete', true,
+    'requested_message_ids', to_jsonb(requested), 'read_message_ids', confirmed,
+    'known_read_message_ids', known_read, 'unread_message_ids', unread
+  );
+end;
+$$;
+
+create or replace function public.mark_chat_messages_read(
+  expected_user_id uuid,
+  target_conversation_id uuid,
+  message_ids uuid[]
+) returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog
+set row_security = off
+as $$
+declare
+  caller uuid := auth.uid();
+begin
+  -- Validate current identity, access and every requested peer ID before mutation.
+  perform public.own_chat_read_state(expected_user_id, target_conversation_id, message_ids);
+  insert into public.chat_message_reads(user_id, message_id)
+    select caller, id from (select distinct unnest(message_ids) as id) ids
+    on conflict (user_id, message_id) do nothing;
+  -- Includes already-existing receipts on retry; never just INSERT RETURNING.
+  return public.own_chat_read_state(expected_user_id, target_conversation_id, message_ids);
+end;
+$$;
+
+revoke all on function public.own_chat_read_state(uuid, uuid, uuid[]) from public, anon, authenticated, service_role;
+revoke all on function public.mark_chat_messages_read(uuid, uuid, uuid[]) from public, anon, authenticated, service_role;
+grant execute on function public.own_chat_read_state(uuid, uuid, uuid[]) to authenticated;
+grant execute on function public.mark_chat_messages_read(uuid, uuid, uuid[]) to authenticated;
+
+commit;
+
+-- Social write quota; mirrors migration 20261008230000.
+-- PROPOSAL ONLY. Values below require explicit approval before installation.
+-- Separate first-write-anchored fixed 60-second windows per caller and feature.
+-- This is not a sliding 'maximum N in any 60 seconds' contract.
+-- Operational feeding, care, assignment and removal writes are unchanged.
+create schema if not exists private;
+
+create table private.social_write_limits (
+  feature text primary key check (feature in ('posts', 'comments', 'likes', 'messages', 'alerts')),
+  max_writes integer not null check (max_writes between 1 and 10000),
+  window_seconds integer not null check (window_seconds between 1 and 3600)
+);
+insert into private.social_write_limits(feature, max_writes, window_seconds) values
+  ('posts', 10, 60), ('comments', 30, 60), ('likes', 120, 60),
+  ('messages', 60, 60), ('alerts', 20, 60);
+
+create table private.social_write_counters (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  feature text not null references private.social_write_limits(feature),
+  window_started_at timestamptz not null,
+  write_count integer not null check (write_count >= 0),
+  primary key(user_id, feature)
+);
+alter table private.social_write_limits enable row level security;
+alter table private.social_write_counters enable row level security;
+revoke all on private.social_write_limits, private.social_write_counters from public, anon, authenticated, service_role;
+
+create function private.check_social_write_limit()
+returns trigger language plpgsql security definer set search_path = pg_catalog
+as $$
+declare
+  caller uuid := auth.uid();
+  feature_name text;
+  row_author uuid;
+  duplicate_row boolean := false;
+  quota integer;
+  period_seconds integer;
+  started timestamptz;
+  used integer;
+  observed_now timestamptz;
+  retry_seconds integer;
+begin
+  -- Trusted maintenance/notification functions remain outside client throttling.
+  if auth.role() = 'service_role' or session_user = 'postgres' and auth.role() is null then
+    return new;
+  end if;
+  if auth.role() is distinct from 'authenticated' or caller is null then
+    raise sqlstate '42501' using message = 'social_write_auth_required';
+  end if;
+  if TG_TABLE_SCHEMA <> 'public' or TG_OP <> 'INSERT' then
+    raise exception '[social rate limit] Unsupported write';
+  end if;
+  case TG_TABLE_NAME
+    when 'posts' then
+      feature_name := 'posts'; row_author := NEW.user_id;
+    when 'comments' then
+      feature_name := 'comments'; row_author := NEW.user_id;
+    when 'likes' then
+      feature_name := 'likes'; row_author := NEW.user_id;
+    when 'messages' then
+      feature_name := 'messages'; row_author := NEW.author_id;
+    when 'stable_alerts' then
+      feature_name := 'alerts'; row_author := NEW.created_by_user_id;
+    when 'alerts' then
+      -- The legacy events table has no author column. Server caller is authoritative;
+      -- its existing stable-scoped INSERT RLS still decides whether the write is allowed.
+      feature_name := 'alerts'; row_author := caller;
+    else raise exception '[social rate limit] Unsupported feature';
+  end case;
+  if row_author is distinct from caller then
+    raise sqlstate '42501' using message = 'social_write_auth_required';
+  end if;
+  -- Hold the existing own profile through commit, including legacy events without
+  -- an author FK. Profile/Auth cascade cannot delete the counter between checks.
+  perform 1 from public.profiles p where p.id = caller for key share;
+  if not found or not exists (
+    select 1 from auth.users u
+    where u.id = caller and u.deleted_at is null
+      and (u.banned_until is null or u.banned_until <= clock_timestamp())
+  ) then
+    raise sqlstate '42501' using message = 'social_write_auth_required';
+  end if;
+  select l.max_writes, l.window_seconds into quota, period_seconds
+    from private.social_write_limits l where l.feature = feature_name;
+  if not found then raise exception '[social rate limit] Missing configuration'; end if;
+  insert into private.social_write_counters(user_id, feature, window_started_at, write_count)
+    values(caller, feature_name, '-infinity', 0) on conflict do nothing;
+  select c.window_started_at, c.write_count into started, used
+    from private.social_write_counters c
+    where c.user_id = caller and c.feature = feature_name for update;
+  if not found then raise exception '[social rate limit] Missing counter'; end if;
+  -- Hold the matching duplicate through unique-check; DELETE cannot turn retry into new write.
+  -- Recheck only after the quota lock. A concurrent same-ID writer may have
+  -- committed while this request waited. Keep the real 23505 receipt-recovery path.
+  case TG_TABLE_NAME
+    when 'posts' then
+      perform 1 from public.posts p where p.id = NEW.id and p.user_id = caller for key share;
+      duplicate_row := FOUND;
+    when 'comments' then
+      perform 1 from public.comments c where c.id = NEW.id and c.user_id = caller for key share;
+      duplicate_row := FOUND;
+    when 'likes' then
+      perform 1 from public.likes l where l.post_id = NEW.post_id and l.user_id = caller for key share;
+      duplicate_row := FOUND;
+    when 'messages' then
+      perform 1 from public.messages m where m.id = NEW.id and m.author_id = caller for key share;
+      duplicate_row := FOUND;
+    when 'stable_alerts' then
+      perform 1 from public.stable_alerts a where a.id = NEW.id and a.created_by_user_id = caller for key share;
+      duplicate_row := FOUND;
+    when 'alerts' then
+      perform 1 from public.alerts a where a.id = NEW.id and a.stable_id = NEW.stable_id
+        and public.can_manage_day_events(a.stable_id) for key share;
+      duplicate_row := FOUND;
+  end case;
+  if duplicate_row then return new; end if;
+  -- Observe server time after the row lock: waiting requests cannot rewind a window.
+  observed_now := clock_timestamp();
+  if observed_now >= started + make_interval(secs => period_seconds) then
+    started := observed_now; used := 0;
+  end if;
+  if used >= quota then
+    retry_seconds := greatest(1, ceil(extract(epoch from started + make_interval(secs => period_seconds) - observed_now))::integer);
+    raise log '[social rate limit] Rejected % write', feature_name;
+    raise sqlstate 'PT429' using message = 'social_rate_limited',
+      detail = json_build_object('feature', feature_name, 'retry_seconds', retry_seconds)::text;
+  end if;
+  update private.social_write_counters set window_started_at = started, write_count = used + 1
+    where user_id = caller and feature = feature_name;
+  return new;
+end;
+$$;
+revoke all on function private.check_social_write_limit() from public, anon, authenticated, service_role;
+
+create trigger social_write_limit_posts before insert on public.posts for each row execute function private.check_social_write_limit();
+create trigger social_write_limit_comments before insert on public.comments for each row execute function private.check_social_write_limit();
+create trigger social_write_limit_likes before insert on public.likes for each row execute function private.check_social_write_limit();
+create trigger social_write_limit_messages before insert on public.messages for each row execute function private.check_social_write_limit();
+create trigger social_write_limit_alerts before insert on public.stable_alerts for each row execute function private.check_social_write_limit();
+create trigger social_write_limit_legacy_alerts before insert on public.alerts for each row execute function private.check_social_write_limit();
+
+-- Proposed account deletion contract; exact migration mirror.
+-- PROPOSED ONLY. Requires explicit approval for this exact schema/RLS scope.
+-- Keeps auth.admin.deleteUser; no direct Auth writes and no Storage blob deletion.
+begin;
+
+-- Read managed Auth status fields only after their reviewed shape is present.
+-- No Auth column/schema is created or changed by this proposal.
+do $auth_shape$
+begin
+  if (select count(*) from pg_catalog.pg_attribute
+      where attrelid='auth.users'::regclass and attname in ('deleted_at','banned_until')
+        and not attisdropped and atttypid='timestamptz'::regtype) <> 2 then
+    raise exception using errcode='55000', message='[account delete] Auth status columns saknas eller avviker; avbryt.';
+  end if;
+end
+$auth_shape$;
+
+-- Validate the missing live creator FK instead of accepting dangling farms.
+do $farm_fk$
+begin
+  if not exists (select 1 from pg_catalog.pg_constraint where conrelid='public.farms'::regclass and conname='farms_account_owner_fkey') then
+    alter table public.farms add constraint farms_account_owner_fkey
+      foreign key (created_by) references public.profiles(id) on delete restrict not valid;
+  elsif not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid='public.farms'::regclass and conname='farms_account_owner_fkey'
+      and contype='f' and confrelid='public.profiles'::regclass and confdeltype='r'
+      and conkey=array[(select attnum from pg_catalog.pg_attribute where attrelid='public.farms'::regclass and attname='created_by')]::smallint[]
+      and confkey=array[(select attnum from pg_catalog.pg_attribute where attrelid='public.profiles'::regclass and attname='id')]::smallint[]
+  ) then
+    raise exception using errcode='55000', message='[account delete] farms_account_owner_fkey avviker; avbryt.';
+  end if;
+end
+$farm_fk$;
+alter table public.farms validate constraint farms_account_owner_fkey;
+
+-- One immutable selected owner per pending deletion. A delayed Auth request
+-- must never consume a different owner's replacement plan. No automatic expiry.
+create table if not exists public.account_deletion_intents (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  replacement_user_id uuid,
+  created_at timestamptz not null default now()
+);
+alter table public.account_deletion_intents enable row level security;
+revoke all on public.account_deletion_intents from public, anon, authenticated, service_role;
+
+-- This is a targeted stale-UID gate, not JWT revocation. Existing permissive
+-- Storage/invite policies remain in place. Public buckets remain public.
+create or replace function public.account_is_active()
+returns boolean language sql stable security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+  select exists(select 1 from public.profiles where id=auth.uid())
+    and not exists(select 1 from public.account_deletion_intents where user_id=auth.uid());
+$function$;
+alter function public.account_is_active() owner to postgres;
+revoke all on function public.account_is_active() from public, anon, authenticated, service_role;
+grant execute on function public.account_is_active() to authenticated;
+
+-- Serialize Storage INSERT with preparation's profile FOR UPDATE lock. A write
+-- already in flight completes first and is then seen by the ownership check;
+-- a subsequent write sees the committed deletion intent and is denied.
+create or replace function public.account_can_upload()
+returns boolean language plpgsql volatile security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+begin
+  perform 1 from public.profiles where id=auth.uid() for key share;
+  if not found then return false; end if;
+  return not exists(select 1 from public.account_deletion_intents where user_id=auth.uid());
+end
+$function$;
+alter function public.account_can_upload() owner to postgres;
+revoke all on function public.account_can_upload() from public, anon, authenticated, service_role;
+grant execute on function public.account_can_upload() to authenticated;
+
+drop policy if exists account_active_gate on storage.objects;
+create policy account_active_gate on storage.objects as restrictive for all to authenticated
+  using (public.account_is_active()) with check (public.account_is_active());
+drop policy if exists account_upload_gate on storage.objects;
+create policy account_upload_gate on storage.objects as restrictive for insert to authenticated
+  with check (public.account_can_upload());
+drop policy if exists account_active_gate on public.stable_invites;
+create policy account_active_gate on public.stable_invites as restrictive for all to authenticated
+  using (public.account_is_active()) with check (public.account_is_active());
+
+create or replace function public.assert_account_deletion(p_user_id uuid, p_replacement_user_id uuid)
+returns void language plpgsql volatile security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+declare affected record;
+begin
+  -- Never delete Storage metadata or pretend its bytes were deleted. Unknown
+  -- legacy media attribution also fails closed pending a reviewed file plan.
+  if exists(select 1 from storage.objects where owner=p_user_id or owner_id=p_user_id::text)
+    or exists(select 1 from public.profiles where id=p_user_id and nullif(avatar_url,'') is not null)
+    or exists(select 1 from public.posts where user_id=p_user_id and nullif(image_url,'') is not null) then
+    raise exception using errcode='P0001', message='[account delete] storage_blocked';
+  end if;
+  if p_replacement_user_id=p_user_id then
+    raise exception using errcode='P0001', message='[account delete] owner_invalid';
+  end if;
+  if p_replacement_user_id is not null then
+    perform 1 from auth.users where id=p_replacement_user_id
+      and deleted_at is null and coalesce(banned_until,'-infinity'::timestamptz) <= now() for share;
+    if not found then raise exception using errcode='P0001', message='[account delete] owner_invalid'; end if;
+    perform 1 from public.profiles where id=p_replacement_user_id for key share;
+    if not found or exists(select 1 from public.account_deletion_intents where user_id=p_replacement_user_id) then
+      raise exception using errcode='P0001', message='[account delete] owner_invalid';
+    end if;
+  end if;
+
+  -- Lock farms first: no concurrent FK link can add another stable to their
+  -- management scope while the selected owner's permissions are being checked.
+  perform 1 from public.farms where created_by=p_user_id order by id for update;
+  if found and p_replacement_user_id is null then
+    raise exception using errcode='P0001', message='[account delete] owner_required';
+  end if;
+  for affected in
+    select s.id from public.stables s
+    where s.created_by=p_user_id
+      or exists(select 1 from public.stable_members m where m.stable_id=s.id and m.user_id=p_user_id and m.role='admin' and m.access='owner')
+      or exists(select 1 from public.farms f where f.id=s.farm_id and f.created_by=p_user_id)
+    order by s.id
+  loop
+    if p_replacement_user_id is null then
+      raise exception using errcode='P0001', message='[account delete] owner_required';
+    end if;
+    -- Same serialization write as the existing last-owner guard; a stale
+    -- Repeatable Read snapshot fails instead of accepting old owner metadata.
+    update public.stables set created_at=created_at where id=affected.id;
+    perform 1 from public.stable_members
+      where stable_id=affected.id and user_id=p_replacement_user_id and role='admin' and access='owner'
+      for update;
+    if not found then
+      raise exception using errcode='P0001', message='[account delete] owner_invalid';
+    end if;
+  end loop;
+end
+$function$;
+alter function public.assert_account_deletion(uuid,uuid) owner to postgres;
+revoke all on function public.assert_account_deletion(uuid,uuid) from public, anon, authenticated, service_role;
+
+create or replace function public.prepare_account_deletion(p_user_id uuid, p_replacement_user_id uuid)
+returns jsonb language plpgsql volatile security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+declare existing_owner uuid;
+begin
+  -- Service-role endpoint supplies a getUser-verified UID, never raw client UID.
+  perform 1 from auth.users where id=p_user_id for key share;
+  if not found then raise exception using errcode='P0001', message='[account delete] account_changed'; end if;
+  perform 1 from public.profiles where id=p_user_id for update;
+  if not found then raise exception using errcode='P0001', message='[account delete] account_changed'; end if;
+  select replacement_user_id into existing_owner from public.account_deletion_intents where user_id=p_user_id;
+  if found and existing_owner is distinct from p_replacement_user_id then
+    raise exception using errcode='P0001', message='[account delete] deletion_in_progress';
+  end if;
+  perform public.assert_account_deletion(p_user_id,p_replacement_user_id);
+  insert into public.account_deletion_intents(user_id,replacement_user_id)
+    values(p_user_id,p_replacement_user_id) on conflict(user_id) do nothing;
+  return jsonb_build_object('prepared',true,'user_id',p_user_id,'replacement_user_id',p_replacement_user_id);
+end
+$function$;
+alter function public.prepare_account_deletion(uuid,uuid) owner to postgres;
+revoke all on function public.prepare_account_deletion(uuid,uuid) from public, anon, authenticated, service_role;
+grant execute on function public.prepare_account_deletion(uuid,uuid) to service_role;
+
+create or replace function public.apply_account_deletion()
+returns trigger language plpgsql volatile security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+declare replacement_id uuid;
+begin
+  -- Direct profile-only deletion cannot masquerade as an Auth account deletion.
+  if exists(select 1 from auth.users where id=old.id) then
+    raise exception using errcode='P0001', message='[account delete] auth_cascade_required';
+  end if;
+  select replacement_user_id into replacement_id from public.account_deletion_intents where user_id=old.id;
+  if not found then raise exception using errcode='P0001', message='[account delete] preparation_required'; end if;
+  perform public.assert_account_deletion(old.id,replacement_id);
+  update public.stables set created_by=replacement_id where created_by=old.id;
+  update public.farms set created_by=replacement_id where created_by=old.id;
+
+  -- Leave the thread ID and everyone else's replies/likes intact. Remove the
+  -- author's text/media references BEFORE deployed user_id CASCADE executes.
+  update public.posts set user_id=null,caption=null,content=null,image_url=null where user_id=old.id;
+  delete from public.comments where user_id=old.id;
+  delete from public.messages where author_id=old.id;
+  return old;
+end
+$function$;
+alter function public.apply_account_deletion() owner to postgres;
+revoke all on function public.apply_account_deletion() from public, anon, authenticated, service_role;
+drop trigger if exists apply_account_deletion on public.profiles;
+create trigger apply_account_deletion before delete on public.profiles
+  for each row execute function public.apply_account_deletion();
+commit;
+
+-- Proposed own deletion receipt; exact migration mirror.
+-- PROPOSED ONLY: separate exact schema approval required after the first proposal.
+-- One own-account receipt function. No intent reset, new table, policy or Auth write.
+begin;
+do $dependencies$
+begin
+  if to_regclass('public.account_deletion_intents') is null
+    or to_regprocedure('public.prepare_account_deletion(uuid,uuid)') is null then
+    raise exception using errcode='55000', message='[account delete status] Granskad kontoraderingsförberedelse saknas; avbryt.';
+  end if;
+end
+$dependencies$;
+
+create or replace function public.own_account_deletion_status()
+returns jsonb language plpgsql stable security definer
+set search_path=pg_catalog set row_security=off
+as $function$
+declare caller uuid := auth.uid();
+begin
+  if caller is null or coalesce(auth.role(),'') <> 'authenticated' then
+    raise exception using errcode='42501', message='[account delete status] Verifierad egen JWT-identitet krävs.';
+  end if;
+  -- One statement snapshot, no row locks or mutations. A still-valid JWT may
+  -- read its own removal receipt even after its Auth user/profile was removed.
+  -- It does not grant access to app content or inspect any other user's receipt.
+  return (
+    with affected_stables as materialized (
+      -- Exactly assert_account_deletion's creator/farm/owner-membership scope.
+      select s.id from public.stables s
+      where s.created_by=caller
+        or exists(select 1 from public.stable_members m where m.stable_id=s.id and m.user_id=caller and m.role='admin' and m.access='owner')
+        or exists(select 1 from public.farms f where f.id=s.farm_id and f.created_by=caller)
+    ), own_scope as (
+      select exists(select 1 from public.farms where created_by=caller)
+          or exists(select 1 from affected_stables) as requires_owner,
+        (select count(*) from affected_stables) as affected_stable_count
+    ), candidate_ids as (
+      select distinct m.user_id from public.stable_members m
+      join affected_stables s on s.id=m.stable_id
+      where m.role='admin' and m.access='owner' and m.user_id<>caller
+    ), eligible_owners as (
+      -- No global directory when affected_stables is empty. Only active owners
+      -- already in every affected stable; expose just UID and display name.
+      select p.id, coalesce(nullif(btrim(p.full_name),''),nullif(btrim(p.username),''),'Ägare utan visningsnamn') as display_name
+      from candidate_ids c join public.profiles p on p.id=c.user_id
+      join auth.users u on u.id=p.id
+      where u.deleted_at is null and coalesce(u.banned_until,'-infinity'::timestamptz)<=now()
+        and not exists(select 1 from public.account_deletion_intents where user_id=p.id)
+        and not exists(select 1 from affected_stables s where not exists(
+          select 1 from public.stable_members m
+          where m.stable_id=s.id and m.user_id=p.id and m.role='admin' and m.access='owner'))
+    ), receipt as (
+      select exists(select 1 from auth.users where id=caller) as auth_present,
+        exists(select 1 from public.profiles where id=caller) as profile_present,
+        i.user_id is not null as pending,
+        i.replacement_user_id, i.created_at
+      from (values(1)) as one(n)
+      left join public.account_deletion_intents i on i.user_id=caller
+    )
+    select jsonb_build_object(
+      'user_id',caller,
+      'status',case
+        when not auth_present and not profile_present and not pending then 'deleted'
+        when auth_present and profile_present and pending then 'pending'
+        when auth_present and profile_present and not pending then 'not_started'
+        else 'unconfirmed' end,
+      'auth_present',auth_present,'profile_present',profile_present,
+      'requires_owner',auth_present and profile_present and own_scope.requires_owner,
+      'affected_stable_count',case when auth_present and profile_present then own_scope.affected_stable_count else 0 end,
+      'replacement_owners',case when auth_present and profile_present then coalesce(
+        (select jsonb_agg(jsonb_build_object('user_id',id,'display_name',display_name) order by display_name,id) from eligible_owners),
+        '[]'::jsonb) else '[]'::jsonb end,
+      'replacement_user_id',case when pending then replacement_user_id else null end,
+      'prepared_at',case when pending then created_at else null end
+    ) from receipt cross join own_scope
+  );
+end
+$function$;
+alter function public.own_account_deletion_status() owner to postgres;
+revoke all on function public.own_account_deletion_status() from public, anon, authenticated, service_role;
+grant execute on function public.own_account_deletion_status() to authenticated;
+notify pgrst, 'reload schema';
+commit;

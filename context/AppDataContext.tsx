@@ -4,6 +4,8 @@ import type { ImageSourcePropType } from 'react-native';
 import { AppState, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
+import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/chatReadReceipts';
+import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
 import { supabase } from '@/lib/supabase';
@@ -430,6 +432,8 @@ export type MessagePreview = {
   description: string;
   timeAgo: string;
   unreadCount?: number;
+  readMessageIds?: string[];
+  unreadMessageIds?: string[];
   group?: boolean;
   avatar?: ImageSourcePropType;
   stableId?: string;
@@ -899,7 +903,7 @@ type StableAlertUpsertAction = {
 
 type MarkMessageReadAction = {
   type: 'MESSAGE_MARK_READ';
-  payload: { id: string };
+  payload: ChatReadReceipt;
 };
 
 type AppendConversationMessageAction = {
@@ -1279,7 +1283,7 @@ type AppDataContextValue = {
     createGroup: (input: CreateGroupInput) => Promise<ActionResult<Group>>;
     renameGroup: (input: RenameGroupInput) => Promise<ActionResult<Group>>;
     deleteGroup: (groupId: string) => Promise<ActionResult>;
-    markConversationRead: (conversationId: string) => void;
+    markConversationRead: (conversationId: string, messageIds: readonly string[]) => Promise<ActionResult<ChatReadReceipt>>;
     sendConversationMessage: (conversationId: string, text: string, requestId?: string) => Promise<ActionResult<ConversationMessage>>;
     createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
     setCurrentStable: (stableId: string) => void;
@@ -2138,13 +2142,21 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         posts: nextPosts,
       };
     }
-    case 'MESSAGE_MARK_READ':
+    case 'MESSAGE_MARK_READ': {
+      const receipt = action.payload;
+      if (state.sessionUserId !== receipt.userId || state.currentUserId !== receipt.userId) return state;
       return {
         ...state,
-        messages: state.messages.map((message) =>
-          message.id === action.payload.id ? { ...message, unreadCount: 0 } : message,
-        ),
+        messages: state.messages.map(preview => {
+          if (preview.id !== receipt.conversationId) return preview;
+          const next = { ...preview,
+            readMessageIds: [...new Set([...(preview.readMessageIds ?? []), ...receipt.readMessageIds])],
+            unreadMessageIds: receipt.unreadMessageIds,
+          };
+          return { ...next, unreadCount: chatUnreadIds(next, state.conversations[preview.id] ?? [], receipt.userId, state.blockedUserIds).length };
+        }),
       };
+    }
     case 'CONVERSATION_APPEND': {
       const { conversationId, message, preview } = action.payload;
       const existingMessages = state.conversations[conversationId] ?? [];
@@ -2154,16 +2166,20 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         : existingMessages;
       const preservePreview = duplicate || (message && nextMessages.at(-1)?.id !== message.id);
       const hasPreview = state.messages.some((msg) => msg.id === conversationId);
+      const updatePreview = (existing?: MessagePreview) => {
+        const next = preservePreview && existing ? existing : { ...preview };
+        if (!existing?.readMessageIds || !existing.unreadMessageIds) return next;
+        // A send acknowledgement can be older than an incoming/read acknowledgement.
+        // Always preserve the latest read state, independently of preview ordering.
+        const readPreview = { ...next, readMessageIds: existing.readMessageIds, unreadMessageIds: existing.unreadMessageIds };
+        return { ...readPreview, unreadCount: chatUnreadIds(readPreview, nextMessages, state.currentUserId, state.blockedUserIds).length };
+      };
       const updatedPreview = hasPreview
-        ? state.messages.map((msg) => (msg.id === conversationId && !preservePreview ? preview : msg))
-        : [preview, ...state.messages];
-
+        ? state.messages.map(msg => msg.id === conversationId ? updatePreview(msg) : msg)
+        : [updatePreview(), ...state.messages];
       return {
         ...state,
-        conversations: {
-          ...state.conversations,
-          [conversationId]: nextMessages,
-        },
+        conversations: { ...state.conversations, [conversationId]: nextMessages },
         messages: updatedPreview,
       };
     }
@@ -2330,6 +2346,12 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
       const sessionUserId =
         rawSessionUserId && users[rawSessionUserId] ? rawSessionUserId : null;
       const groups = ensureSystemGroups(action.payload.groups, farms, stables, horses);
+      const blockedUserIds = action.payload.blockedUserIds ?? state.blockedUserIds;
+      const conversations = action.payload.conversations ?? state.conversations;
+      const messages = (action.payload.messages ?? state.messages).map((preview) =>
+        preview.readMessageIds && preview.unreadMessageIds ? { ...preview,
+          unreadCount: chatUnreadIds(preview, conversations[preview.id] ?? [], currentUserId, blockedUserIds).length,
+        } : preview);
       return {
         ...state,
         ...action.payload,
@@ -2340,6 +2362,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         currentUserId,
         sessionUserId,
         groups,
+        messages,
         horseDayStatuses: action.payload.horseDayStatuses ?? state.horseDayStatuses,
         horseResponsibilities: action.payload.horseResponsibilities ?? state.horseResponsibilities,
         stableAlerts: action.payload.stableAlerts ?? state.stableAlerts,
@@ -2348,7 +2371,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         plannedRides: action.payload.plannedRides ?? state.plannedRides,
         externalContacts: action.payload.externalContacts ?? state.externalContacts,
         careEvents: action.payload.careEvents ?? state.careEvents,
-        blockedUserIds: action.payload.blockedUserIds ?? state.blockedUserIds,
+        blockedUserIds,
       };
     }
     case 'STATE_RESET':
@@ -3004,7 +3027,7 @@ async function uploadPostImage(params: {
 
   const { error } = await supabase.storage.from(POSTS_BUCKET).upload(filePath, blob, {
     contentType,
-    upsert: true,
+    upsert: false,
   });
 
   if (error) {
@@ -3042,6 +3065,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
   const { user } = useAuth();
+  const chatReadScope = React.useRef({ userId: user?.id ?? null, epoch: 0 });
+  if (chatReadScope.current.userId !== (user?.id ?? null)) {
+    chatReadScope.current = { userId: user?.id ?? null, epoch: chatReadScope.current.epoch + 1 };
+  }
   const { showToast } = useToast();
   const [hydrating, setHydrating] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -4170,8 +4197,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...alert, createdAt: data.created_at ?? alert.createdAt } };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[stable event save] Kunde inte spara händelse', error instanceof Error ? error.name : 'Unknown');
-        return { success: false, reason: 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
+        return { success: false, reason: rateLimited
+          ? 'Du har sparat många stallnotiser på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4211,10 +4242,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           assignmentId: data.assignment_id ?? undefined,
         } };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: resolveOnly
           ? 'Notisen kunde inte markeras som löst. Försök igen.'
-          : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
+          : rateLimited
+            ? 'Du har sparat många stallnotiser på kort tid. Vänta en stund. Din text finns kvar.'
+            : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4398,8 +4433,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         });
         return { success: true, data: await Promise.race([persist(), deadline]) };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[post publish] Kunde inte publicera inlägg', error instanceof Error ? error.name : 'Unknown');
-        return { success: false, reason: 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
+        return { success: false, reason: rateLimited
+          ? 'Du har publicerat många inlägg på kort tid. Vänta en stund. Text och bild finns kvar.'
+          : 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout!); }
     },
     [user],
@@ -4434,8 +4473,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[post like] Kunde inte spara gillning', error instanceof Error ? error.name : 'Unknown');
-        return { success: false, reason: 'Gillningen kunde inte sparas. Försök igen.' };
+        return { success: false, reason: rateLimited
+          ? 'Du har gillat många inlägg på kort tid. Vänta en stund och försök igen.'
+          : 'Gillningen kunde inte sparas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4466,8 +4509,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...comment, text: data.content, createdAt: data.created_at } };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[post comment] Kunde inte spara kommentar', error instanceof Error ? error.name : 'Unknown');
-        return { success: false, reason: 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
+        return { success: false, reason: rateLimited
+          ? 'Du har skrivit många kommentarer på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4889,8 +4936,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...message, timestamp: data.created_at ?? message.timestamp } };
       } catch (error) {
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
         console.warn('[chat send] Kunde inte skicka meddelande', error instanceof Error ? error.name : 'Unknown');
-        return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
+        return { success: false, reason: rateLimited
+          ? 'Du har skickat många meddelanden på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Meddelandet kunde inte skickas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -5430,7 +5481,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             return {
               id: post.id,
               authorId: post.user_id,
-              author: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+              author: post.user_id == null && !post.content && !post.caption && !post.image_url
+                ? 'Innehåll borttaget'
+                : authorProfile?.full_name || authorProfile?.username || 'Okänd',
               avatar: authorProfile?.avatar_url
                 ? { uri: authorProfile.avatar_url }
                 : require('@/assets/images/dummy-avatar.png'),
@@ -5470,7 +5523,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           list.push({
             id: row.id,
             conversationId: row.conversation_id,
-            authorId: row.author_id,
+            authorId: row.author_id ?? '',
             text: row.text,
             timestamp: row.created_at,
             status: row.status ?? undefined,
@@ -5479,6 +5532,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return acc;
         }, {});
 
+        const readReceipts = await Promise.all(conversationRows.map(async row => {
+          const result = await requestChatReadReceipt(supabase, 'load', authUser.id, row.id,
+            peerMessageIds(conversations[row.id] ?? [], authUser.id, blockedUserIds));
+          if (!result.success) throw new Error(result.reason);
+          return result.data;
+        }));
+        const readByConversation = new Map(readReceipts.map(receipt => [receipt.conversationId, receipt]));
         const messagePreviews = conversationRows
           .map((row) => {
             const stable = row.stable_id ? stableById[row.stable_id] : undefined;
@@ -5512,9 +5572,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               id: row.id,
               title,
               subtitle,
-              description: lastMessage?.text ?? 'Inga meddelanden ännu',
+              description: lastMessage?.text ?? 'Ingen meddelandehistorik har laddats',
               timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
-              unreadCount: 0,
+              unreadCount: readByConversation.get(row.id)?.unreadMessageIds.length ?? 0,
+              readMessageIds: readByConversation.get(row.id)?.readMessageIds ?? [],
+              unreadMessageIds: readByConversation.get(row.id)?.unreadMessageIds ?? [],
               group: row.is_group ?? false,
               stableId: row.stable_id ?? undefined,
               avatar,
@@ -5911,7 +5973,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       .on<{
         id: string;
         conversation_id: string;
-        author_id: string;
+        author_id: string | null;
         text: string;
         created_at: string;
         status: string | null;
@@ -5926,7 +5988,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const message: ConversationMessage = {
             id: row.id,
             conversationId: row.conversation_id,
-            authorId: row.author_id,
+            authorId: row.author_id ?? '',
             text: row.text,
             timestamp: row.created_at,
             status: (row.status as ConversationMessage['status']) ?? undefined,
@@ -6866,9 +6928,42 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [persistDefaultPassToggle],
   );
 
-  const markConversationRead = React.useCallback((conversationId: string) => {
-    dispatch({ type: 'MESSAGE_MARK_READ', payload: { id: conversationId } });
-  }, []);
+  const markConversationRead = React.useCallback(
+    async (conversationId: string, messageIds: readonly string[]): Promise<ActionResult<ChatReadReceipt>> => {
+      const current = stateRef.current;
+      const userId = user?.id;
+      const epoch = chatReadScope.current.epoch;
+      if (!userId || current.sessionUserId !== userId || current.currentUserId !== userId
+        || chatReadScope.current.userId !== userId) return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
+      const preview = current.messages.find(message => message.id === conversationId);
+      const eligible = new Set(peerMessageIds(current.conversations[conversationId] ?? [], userId, current.blockedUserIds));
+      if (!preview || !messageIds.length || messageIds.some(id => !eligible.has(id))) {
+        return { success: false, reason: 'Meddelandena kunde inte verifieras i den här chatten.' };
+      }
+      const key = `chat-read:${userId}:${epoch}:${conversationId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Läskvittensen sparas redan.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = isQaDemoMode
+          ? { success: true as const, data: { userId, conversationId, readMessageIds: [...messageIds],
+            unreadMessageIds: chatUnreadIds(preview, current.conversations[conversationId] ?? [], userId, current.blockedUserIds).filter(id => !messageIds.includes(id)) } }
+          : await requestChatReadReceipt(supabase, 'mark', userId, conversationId, messageIds);
+        if (chatReadScope.current.epoch !== epoch || chatReadScope.current.userId !== userId
+          || stateRef.current.sessionUserId !== userId || stateRef.current.currentUserId !== userId) {
+          return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
+        }
+        if (result.success) {
+          dataWriteVersion.current += 1;
+          dispatch({ type: 'MESSAGE_MARK_READ', payload: result.data });
+        }
+        return result;
+      } finally {
+        pendingDataWrites.current.delete(key);
+      }
+    },
+    [user],
+  );
 
   const sendConversationMessage = React.useCallback(
     async (conversationId: string, text: string, requestId?: string): Promise<ActionResult<ConversationMessage>> => {
@@ -6891,7 +6986,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (!result.data) return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
         const preview: MessagePreview = {
           ...existingPreview, description: result.data.text,
-          timeAgo: formatTimeAgo(result.data.timestamp), unreadCount: 0,
+          timeAgo: formatTimeAgo(result.data.timestamp),
         };
         dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, message: result.data, preview } });
         return result;
@@ -7000,9 +7095,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           id: conversationId,
           title: otherUser?.name ?? 'Okänd',
           subtitle: 'Privat chatt',
-          description: 'Inga meddelanden ännu',
+          description: 'Historiken behöver uppdateras',
           timeAgo: '',
-          unreadCount: 0,
+          unreadCount: undefined,
           group: false,
           avatar: otherUser?.avatar,
           participantUserIds: [current.currentUserId, otherUserId],
@@ -8571,7 +8666,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return {
             id: post.id,
             authorId: post.user_id,
-            author: authorProfile?.name ?? 'Okänd',
+            author: post.user_id == null && !post.content && !post.caption && !post.image_url
+              ? 'Innehåll borttaget'
+              : authorProfile?.name ?? 'Okänd',
             avatar: authorProfile?.avatar ?? require('@/assets/images/dummy-avatar.png'),
             timeAgo: 'Nu',
             createdAt: post.created_at,

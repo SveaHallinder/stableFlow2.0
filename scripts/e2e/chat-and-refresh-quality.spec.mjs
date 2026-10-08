@@ -10,7 +10,7 @@ const groupId = '00000000-0000-4000-8000-000000000094';
 const privateId = '00000000-0000-4000-8000-000000000095';
 const visibleText = (page, text) => page.getByText(text, { exact: true }).filter({ visible: true });
 
-async function boot(page, { existingChat = false, ownMessage = false, orphanChat = false, failMembers = false } = {}) {
+async function boot(page, { existingChat = false, ownMessage = false, peerMessage = false, orphanChat = false, failMembers = false } = {}) {
   const user = { id: senderId, aud: 'authenticated', role: 'authenticated', email: 'offline-chat@example.test',
     app_metadata: {}, user_metadata: { full_name: 'Offline Sender' }, created_at: '2026-01-01T00:00:00Z' };
   const profiles = [{ id: senderId, full_name: 'Offline Sender', onboarding_dismissed: true },
@@ -27,10 +27,13 @@ async function boot(page, { existingChat = false, ownMessage = false, orphanChat
       ...(existingChat || orphanChat ? [privateConversation] : [])],
     conversation_members: existingChat ? [{ conversation_id: privateId, user_id: senderId },
       { conversation_id: privateId, user_id: peerId }] : [],
-    messages: ownMessage ? [{ id: '00000000-0000-4000-8000-000000000096', conversation_id: privateId,
-      author_id: senderId, text: 'Offline eget meddelande', created_at: '2026-10-07T07:10:00Z' }] : [],
+    messages: [...(ownMessage ? [{ id: '00000000-0000-4000-8000-000000000096', conversation_id: privateId,
+      author_id: senderId, text: 'Offline eget meddelande', created_at: '2026-10-07T07:10:00Z' }] : []),
+      ...(peerMessage ? [{ id: '00000000-0000-4000-8000-000000000097', conversation_id: privateId,
+        author_id: peerId, text: 'Offline mottaget meddelande', created_at: '2026-10-07T07:11:00Z' }] : [])],
   };
-  const controls = { conversationWrites: [], createdIds: [], memberWrites: [], unexpected: [], pageErrors: [], warnings: [], failMembers };
+  const chatReadIds = new Map();
+  const controls = { chatReads: [], conversationWrites: [], createdIds: [], memberWrites: [], unexpected: [], pageErrors: [], warnings: [], failMembers };
   page.on('pageerror', error => controls.pageErrors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'warning' && /\[(chat create|stable refresh)\]/.test(message.text())) controls.warnings.push(message.text());
@@ -67,6 +70,29 @@ async function boot(page, { existingChat = false, ownMessage = false, orphanChat
     const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/([^/]+)$/)?.[1];
     if (request.method() === 'POST' && rpc === 'accept_pending_invites') return respond([]);
     if (request.method() === 'POST' && rpc === 'get_member_directory') return respond(profiles);
+    if (request.method() === 'POST' && ['own_chat_read_state', 'mark_chat_messages_read'].includes(rpc)) {
+      const body = request.postDataJSON();
+      const conversation = tables.conversations.find(row => row.id === body.target_conversation_id);
+      const allowed = conversation?.is_group
+        ? tables.stable_members.some(row => row.stable_id === conversation.stable_id && row.user_id === senderId)
+        : tables.conversation_members.some(row => row.conversation_id === conversation?.id && row.user_id === senderId);
+      const blocked = (tables.blocked_users ?? []).filter(row => row.blocker_user_id === senderId).map(row => row.blocked_user_id);
+      const peers = tables.messages.filter(row => row.conversation_id === conversation?.id
+        && row.author_id !== senderId && !blocked.includes(row.author_id)).map(row => row.id).sort();
+      if (body.expected_user_id !== senderId || !conversation || !allowed || !Array.isArray(body.message_ids)
+        || body.message_ids.some(id => !peers.includes(id))) {
+        return respond({ code: '42501', message: 'Offline own-chat receipt denied' }, 403);
+      }
+      const requested = [...new Set(body.message_ids)].sort();
+      const read = chatReadIds.get(conversation.id) ?? new Set();
+      if (rpc === 'mark_chat_messages_read') requested.forEach(id => read.add(id));
+      chatReadIds.set(conversation.id, read);
+      const receipt = { user_id: senderId, conversation_id: conversation.id, complete: true,
+        requested_message_ids: requested, read_message_ids: requested.filter(id => read.has(id)),
+        known_read_message_ids: peers.filter(id => read.has(id)), unread_message_ids: peers.filter(id => !read.has(id)) };
+      controls.chatReads.push({ rpc, ...receipt });
+      return respond(receipt);
+    }
     const table = url.pathname.match(/^\/rest\/v1\/([^/]+)$/)?.[1];
     if (request.method() === 'GET' && table) {
       let rows = tables[table] ?? [];
@@ -205,3 +231,24 @@ for (const width of [390, 1280]) {
     expectIsolated(controls);
   });
 }
+
+
+test('private chat acknowledges only observed peer IDs and retains the synthetic receipt on reload', async ({ page }) => {
+  const controls = await boot(page, { existingChat: true, ownMessage: true, peerMessage: true });
+  const receivedId = '00000000-0000-4000-8000-000000000097';
+  await page.goto(`/members/${peerId}`);
+  await visibleText(page, 'Chatta').click();
+  await expect(visibleText(page, 'Offline mottaget meddelande')).toBeVisible();
+  await expect.poll(() => controls.chatReads.some(receipt => receipt.rpc === 'mark_chat_messages_read'
+    && receipt.read_message_ids.includes(receivedId))).toBe(true);
+  const marks = controls.chatReads.filter(receipt => receipt.rpc === 'mark_chat_messages_read');
+  expect(marks.every(receipt => receipt.user_id === senderId && receipt.conversation_id === privateId
+    && JSON.stringify(receipt.requested_message_ids) === JSON.stringify([receivedId]))).toBe(true);
+  const loaded = controls.chatReads.length;
+  await page.reload();
+  await expect(visibleText(page, 'Offline mottaget meddelande')).toBeVisible();
+  await expect.poll(() => controls.chatReads.slice(loaded).some(receipt => receipt.rpc === 'own_chat_read_state'
+    && receipt.conversation_id === privateId && receipt.known_read_message_ids.includes(receivedId)
+    && receipt.unread_message_ids.length === 0)).toBe(true);
+  expectIsolated(controls);
+});

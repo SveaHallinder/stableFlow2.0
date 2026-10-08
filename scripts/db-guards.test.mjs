@@ -40,10 +40,13 @@ test('database guards enforce arena and owner invariants in the schema and appro
     // Compile the whole checked-in schema with local equivalents of Supabase auth.
     sql('guards_schema', `
       create schema auth;
-      create table auth.users(id uuid primary key, raw_user_meta_data jsonb default '{}'::jsonb);
+      create table auth.users(id uuid primary key, raw_user_meta_data jsonb default '{}'::jsonb, deleted_at timestamptz, banned_until timestamptz);
       create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid$$;
       create function auth.jwt() returns jsonb language sql stable as $$select '{}'::jsonb$$;
-      create function auth.role() returns text language sql stable as $$select current_setting('request.jwt.claim.role', true)$$;
+      create function auth.role() returns text language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''), nullif(current_setting('role', true), 'none'))$$;
+      create schema storage;
+      create table storage.objects(id uuid primary key, owner uuid, owner_id text);
+      alter table storage.objects enable row level security;
     `);
     sql('guards_schema', await readFile(join(root, 'supabase/schema.sql'), 'utf8'));
     sql('guards_schema', 'grant usage on schema public, auth to authenticated, anon; grant select, insert, update, delete on all tables in schema public to authenticated;');

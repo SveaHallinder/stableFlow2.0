@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { URL } from 'node:url';
 import { expect, test } from '@playwright/test';
 
 test.use({ trace: 'off' });
@@ -31,6 +32,15 @@ async function signInSynthetic(page) {
     const table = url.pathname.split('/').at(-1);
     if (table === 'get_member_directory') return route.fulfill({ json: profiles });
     if (table === 'accept_pending_invites') return route.fulfill({ json: [] });
+    if (request.method() === 'POST' && ['own_chat_read_state', 'mark_chat_messages_read'].includes(table)) {
+      const body = request.postDataJSON();
+      expect(body.expected_user_id).toBe(ownerId);
+      expect(body.target_conversation_id === '00000000-0000-4000-8000-000000000095').toBe(true);
+      expect(body.message_ids).toEqual([]);
+      const receipt = { user_id: ownerId, conversation_id: body.target_conversation_id, complete: true,
+        requested_message_ids: [], read_message_ids: [], known_read_message_ids: [], unread_message_ids: [] };
+      return route.fulfill({ json: receipt });
+    }
     if (request.method() !== 'GET') return route.abort('blockedbyclient');
     const fixtures = {
       stable_members: url.searchParams.get('user_id') === `eq.${ownerId}` ? [members[0]] : members,

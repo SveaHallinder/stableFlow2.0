@@ -61,6 +61,16 @@ async function installRecipientBackend(page, options = {}) {
       return route.fulfill({ json: stable.id });
     }
     if (name === 'get_member_directory') return route.fulfill({ json: [profile] });
+    if (request.method() === 'POST' && ['own_chat_read_state', 'mark_chat_messages_read'].includes(name)) {
+      const body = request.postDataJSON();
+      expect(body.expected_user_id).toBe(user.id);
+      expect(member?.user_id).toBe(user.id);
+      expect(body.target_conversation_id === '00000000-0000-4000-8000-000000000073').toBe(true);
+      expect(body.message_ids).toEqual([]);
+      const receipt = { user_id: user.id, conversation_id: body.target_conversation_id, complete: true,
+        requested_message_ids: [], read_message_ids: [], known_read_message_ids: [], unread_message_ids: [] };
+      return route.fulfill({ json: receipt });
+    }
     if (request.method() !== 'GET') {
       calls.writes.push({ name, method: request.method() });
       if (name === 'profiles' && request.method() === 'PATCH') return route.fulfill({ status: 204 });

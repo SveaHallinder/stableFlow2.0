@@ -68,6 +68,20 @@ async function boot(page, { rejectUpdate = false } = {}) {
     const rpc = url.pathname.match(/^\/rest\/v1\/rpc\/([^/]+)$/)?.[1];
     if (request.method() === 'POST' && rpc === 'accept_pending_invites') return respond([]);
     if (request.method() === 'POST' && rpc === 'get_member_directory') return respond([profile]);
+    if (request.method() === 'POST' && rpc === 'own_account_deletion_status') {
+      expect(request.postDataJSON()).toEqual({});
+      return respond({ user_id: userId, status: 'not_started', auth_present: true, profile_present: true,
+        requires_owner: true, affected_stable_count: 1, replacement_owners: [], replacement_user_id: null, prepared_at: null });
+    }
+    if (request.method() === 'POST' && ['own_chat_read_state', 'mark_chat_messages_read'].includes(rpc)) {
+      const body = request.postDataJSON();
+      expect(body.expected_user_id).toBe(userId);
+      expect(tables.conversations.some(row => row.id === body.target_conversation_id)).toBe(true);
+      expect(body.message_ids).toEqual([]);
+      const receipt = { user_id: userId, conversation_id: body.target_conversation_id, complete: true,
+        requested_message_ids: [], read_message_ids: [], known_read_message_ids: [], unread_message_ids: [] };
+      return respond(receipt);
+    }
     const table = url.pathname.match(/^\/rest\/v1\/([^/]+)$/)?.[1];
     if (request.method() === 'GET' && table) {
       const rows = tables[table] ?? [];

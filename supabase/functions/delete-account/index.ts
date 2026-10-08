@@ -2,16 +2,10 @@
 // eslint-disable-next-line import/no-unresolved
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Account deletion. User-invoked (Authorization = the caller's session JWT, NOT
-// the service-role key like the trigger-invoked functions). Verifies the caller,
-// blocks deletion if they are the sole owner of any stable
-// (would lock that stable out of administration), then deletes the auth user.
-//
-// Auth deletion follows the deployed foreign-key rules. Retained content and
-// deletion scope require separate acceptance against the deployed schema.
-//
-// Preflight reads are not transactional with deletion. The approved database
-// last-owner guard protects FK cascades if memberships change concurrently.
+// Account deletion proposal. Retains the supported Auth admin.deleteUser API.
+// The service-only prepare RPC binds the selected owner; a reviewed profile
+// cascade trigger atomically transfers creators and removes only authored UGC.
+// Owned/unknown media fails closed. An issued JWT is not revoked by local cleanup.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -68,7 +62,7 @@ Deno.serve(async (req) => {
       return json({ error: "unauthorized" }, 401);
     }
     const uid = userData.user.id;
-    let body: { expected_user_id?: unknown };
+    let body: { expected_user_id?: unknown; replacement_user_id?: unknown };
     try {
       body = await req.json();
     } catch {
@@ -82,43 +76,47 @@ Deno.serve(async (req) => {
       return json({ error: "account_changed" }, 409);
     }
 
+    const replacementId = body.replacement_user_id ?? null;
+    if (replacementId !== null && (typeof replacementId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(replacementId))) {
+      return json({ error: "invalid_request" }, 400);
+    }
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-
-    // Match the database guard: every existing stable must retain an owner.
-    const { data: ownerRows, error: ownerErr } = await admin
-      .from("stable_members")
-      .select("stable_id")
-      .eq("user_id", uid)
-      .eq("role", "admin")
-      .eq("access", "owner");
-    if (ownerErr || !Array.isArray(ownerRows) || ownerRows.some(row => typeof row?.stable_id !== "string" || !row.stable_id)) {
-      logFailure("owner lookup failed or unverified", ownerErr);
+    const { data: prepared, error: prepareErr } = await admin.rpc("prepare_account_deletion", {
+      p_user_id: uid, p_replacement_user_id: replacementId,
+    });
+    if (prepareErr) {
+      logFailure("deletion preparation failed", prepareErr);
+      const message = typeof prepareErr.message === "string" ? prepareErr.message : "";
+      const reason = ["owner_required", "owner_invalid", "storage_blocked", "deletion_in_progress", "account_changed"]
+        .find(code => message === `[account delete] ${code}`);
+      return json({ error: reason ?? "lookup_failed" }, reason ? 409 : 500);
+    }
+    if (prepared?.prepared !== true || prepared?.user_id !== uid || prepared?.replacement_user_id !== replacementId) {
+      logFailure("deletion preparation acknowledgement unverified");
       return json({ error: "lookup_failed" }, 500);
     }
-    for (const row of ownerRows) {
-      const { count: ownerCount, error: ownerCountErr } = await admin
-        .from("stable_members")
-        .select("*", { count: "exact", head: true })
-        .eq("stable_id", row.stable_id)
-        .eq("role", "admin")
-        .eq("access", "owner");
-      // Fail closed: a missing or invalid exact count does not verify ownership.
-      if (ownerCountErr || typeof ownerCount !== "number" || !Number.isInteger(ownerCount) || ownerCount < 0) {
-        logFailure("owner count failed or unverified", ownerCountErr);
-        return json({ error: "lookup_failed" }, 500);
-      }
-      if (ownerCount <= 1) {
-        return json({ error: "sole_owner", stable_id: row.stable_id }, 409);
-      }
-    }
 
-    const { data: deleteData, error: delErr } = await admin.auth.admin.deleteUser(uid);
-    if (delErr) {
-      logFailure("Auth deletion failed", delErr);
-      return json({ error: "delete_failed" }, 500);
+    let mismatchedDeletion = false;
+    try {
+      const { data: deleteData, error: delErr } = await admin.auth.admin.deleteUser(uid);
+      if (delErr) logFailure("Auth deletion acknowledgement failed", delErr);
+      if (deleteData?.user?.id && deleteData.user.id !== uid) {
+        mismatchedDeletion = true;
+        logFailure("Auth deletion acknowledgement UID mismatched");
+      }
+    } catch (error) {
+      // A transport/SDK failure can arrive after Auth committed. Read fresh
+      // receipts for the previously getUser-verified UID before claiming success.
+      logFailure("Auth deletion acknowledgement unavailable", error);
     }
-    if (deleteData?.user?.id !== uid) {
-      logFailure("Auth deletion acknowledgement unverified");
+    const [authReceipt, profileReceipt] = await Promise.all([
+      admin.auth.admin.getUserById(uid),
+      admin.from("profiles").select("id").eq("id", uid).maybeSingle(),
+    ]);
+    const authGone = authReceipt.data?.user === null &&
+      authReceipt.error?.status === 404 && authReceipt.error?.code === "user_not_found";
+    if (mismatchedDeletion || !authGone || profileReceipt.error || profileReceipt.data !== null) {
+      logFailure("fresh deletion receipt unconfirmed", authReceipt.error ?? profileReceipt.error);
       return json({ error: "delete_unconfirmed" }, 500);
     }
 
