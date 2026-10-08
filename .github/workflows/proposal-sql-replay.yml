@@ -20,8 +20,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      STABLEFLOW_REPLAY_REPORT_DIR: ${{ runner.temp }}/stableflow-proposal-sql
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -41,7 +39,9 @@ jobs:
           pg_config --version
           python3 --version
           node --version
-          mkdir -p "$STABLEFLOW_REPLAY_REPORT_DIR"
+          task_replay_report_dir="$RUNNER_TEMP/stableflow-proposal-sql"
+          mkdir -p "$task_replay_report_dir"
+          printf 'STABLEFLOW_REPLAY_REPORT_DIR=%s\n' "$task_replay_report_dir" >> "$GITHUB_ENV"
       - name: Replay exact unread receipt SQL and its negative controls
         run: |
           set -euo pipefail
