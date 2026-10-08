@@ -22,11 +22,17 @@ GitHub-körningarna på exakt publicerad commit är slutgrind för hela Node-svi
 ## QA, sex steg
 
 1. Starta lokalt med `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 node node_modules/expo/bin/cli start --web --localhost --port 8081` om servern inte redan kör.
-2. Öppna `http://localhost:8081/` och kontrollera att inloggningssidan eller ditt befintliga stall visas.
+2. Öppna `http://localhost:8081/` och kontrollera att inloggningssidan eller ditt befintliga stall visas. I Idag-vyn ska hagkortet visa `1 hage · 1 häst` när stallet har dessa antal, och passkortet ska visa `1 ledigt pass` när ett pass är ledigt; andra antal använder plural.
 3. Kör `node --test scripts/social-error-logging.test.mjs`; alla sex prov ska passera utan externa anrop.
 4. Kör `npm run test:e2e -- chat-and-refresh-quality.spec.mjs core-stable-workflow.spec.mjs`; alla elva UI-prov ska passera med bevarade fel-/återförsöksflöden.
 5. Kör `npm run lint`, `node node_modules/typescript/bin/tsc --noEmit` och `npm run build:web`; alla ska avslutas med kod 0.
 6. Kontrollera båda GitHub-körningarna på den nya commitens SHA. Kräv 545 Node-prov och 106 UI-prov, samtliga gröna; lokala PostgreSQL-startfel ovan ersätter inte detta krav.
+
+## Språk i Idag-vyn
+
+`app/(tabs)/index.tsx` rättar även kortens singular: `1 hagar · 1 hästar` blir `1 hage · 1 häst`, och `1 lediga pass` blir `1 ledigt pass`. Endast orden ändras; räknare, behörigheter, tomt läge och varningen för obekräftade hästkopplingar är oförändrade.
+
+Loggfixens commit `562d5f8286b6e69cb057ba145231fa30207141ee` har passerat båda GitHub-körningarna: 545 Node-prov, inga fel/skippade, och 106 offline UI-prov vardera. Språkändringen har en egen ny commit och måste få samma kvittens på sin SHA.
 
 ## Återstående slutprov och beslut
 

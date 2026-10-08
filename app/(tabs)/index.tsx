@@ -308,7 +308,7 @@ export default function OverviewScreen() {
         id: 'open-passes',
         label: 'Lediga pass',
         caption: openUpcomingCount
-          ? `${openUpcomingCount} lediga pass`
+          ? `${openUpcomingCount} ${openUpcomingCount === 1 ? 'ledigt' : 'lediga'} pass`
           : 'Alla pass är bemannade\nÖppna schema',
         icon: 'users',
         tint: 'accent',
@@ -332,7 +332,7 @@ export default function OverviewScreen() {
         caption: paddockSummary.linksUnconfirmed
           ? 'Hästkopplingar ej bekräftade\nÖppna hagar'
           : paddockSummary.paddockCount
-            ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
+            ? `${paddockSummary.paddockCount} ${paddockSummary.paddockCount === 1 ? 'hage' : 'hagar'} · ${paddockSummary.horseCount} ${paddockSummary.horseCount === 1 ? 'häst' : 'hästar'}`
             : 'Lägg in hagar\nSkriv ut haglista',
         icon: 'map',
         tint: 'primary',
