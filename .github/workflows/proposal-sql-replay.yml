@@ -55,6 +55,10 @@ jobs:
         run: |
           set -euo pipefail
           python3 proposal-replay/rate-duplicate-target.py --run-local-replay --receipt "$STABLEFLOW_REPLAY_REPORT_DIR/rate-duplicate-target-result.json" | tee "$STABLEFLOW_REPLAY_REPORT_DIR/rate-duplicate-target.log"
+      - name: Replay isolated push receipt ledger and token cleanup races
+        run: |
+          set -euo pipefail
+          python3 -B proposal-replay/push-receipts/push-receipts-replay.py --schema proposal-replay/fixtures/full-schema.sql --runtime --receipt "$STABLEFLOW_REPLAY_REPORT_DIR/push-receipts-result.json" | tee "$STABLEFLOW_REPLAY_REPORT_DIR/push-receipts.log"
       - name: Keep proposal-only replay receipts
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
