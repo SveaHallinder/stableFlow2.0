@@ -11,9 +11,10 @@ begin
     'registration_generation',receipt->>'registration_generation')) from push_fixture.race_state where label='initial'));
  exception when others then get stacked diagnostics code=returned_sqlstate,message=message_text;
  end;
- if not (code='23514' and message='[push receipts] Registration is not the active device owner.'
-   or code='40001' and message='[push receipts] Account scope changed; reservation unconfirmed.') then
-  raise exception 'FAIL receipt prepare reserved stale inactive owner after binding transfer';
+ raise notice '%',jsonb_build_object('push_fixture_outcome','prepare','code',code,'message',message);
+ if (code='23514' and message='[push receipts] Registration is not the active device owner.'
+   or code='40001' and message='[push receipts] Account scope changed; reservation unconfirmed.') is distinct from true then
+  raise exception 'FAIL receipt prepare reserved stale inactive owner after binding transfer (code=%, message=%)',coalesce(code,'none'),coalesce(message,'none');
  end if;
 end$$;
 commit;

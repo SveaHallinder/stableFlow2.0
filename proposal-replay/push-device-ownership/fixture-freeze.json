@@ -1,0 +1,16 @@
+{
+  "revision": "FIXTURE_REV3",
+  "state": "SOURCE_FROZEN; STATIC_ONLY; SQL_RUNTIME_NOT_RUN",
+  "product_sql_unchanged_sha256": "d2a69374bbcdb5a73583c93148bcf169a41e26bf62b96411914a66a62317d81b",
+  "files": {
+    "sql/ownership-replay.py": "40a790e6d31179e5551e6c94ac74db0e1ef7e81ee06ead96566defd350cce8cd",
+    "sql/race-claim-a.sql": "b4d2dc5f5df0b807def974c7e9411ec403be9b492b27f4de0f8d71ad1c6d4bd5",
+    "sql/race-prepare-a.sql": "a72aaca2e4c0089356135a192452630010846467a293de5df649995ceefb8bf4",
+    "sql/race-epoch-setup.sql": "abd614dfa3790e85ea40b62a0f872712cdbf389f0c44ed8bd49c8d6b6a6b9ff7",
+    "sql/race-epoch-b.sql": "f172f244a856335a4870f86f398caa92b9b19e8d15fab8897412b770aea7037b"
+  },
+  "expected_control_groups": 10,
+  "rollback_assertions": 42,
+  "provider_requests": 0,
+  "epoch_scenario": "A observes valid B1 epoch before B2; B2 commits rotated epoch under same known-B Auth scope"
+}

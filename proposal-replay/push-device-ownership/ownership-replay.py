@@ -72,24 +72,49 @@ def runtime(schema,base,receipt,binding):
    if child.process.poll() is not None: raise AssertionError(('Worker exited before barrier',child.finish()))
    time.sleep(.01) # Observer backoff only; backend ordering is an observed lock.
   raise AssertionError('Backend barrier not observed')
- def race(db,kind,negative=False):
+ def race(db,kind,negative=False,epoch=False):
   sql(db,(ROOT/'race-setup.sql').read_text())
+  if epoch:
+   sql(db,'grant insert on push_fixture.race_state to authenticated;')
+   sql(db,(ROOT/'race-epoch-setup.sql').read_text(),'authenticated')
+   assert sql(db,"select current_user_id=push_fixture.pid('B') and binding_generation=(select (receipt->>'binding_generation')::uuid from push_fixture.race_state where label='initial-B') from private.push_device_bindings where token_hash=sha256(convert_to('fiction-race-shared','UTF8'));")=='t'
   if negative: sql(db,(ROOT/'negative-epoch.sql').read_text())
   control=previous.Session(connection(db),env);children.append(control)
   control.query(MARK);pid=int(control.query('select pg_backend_pid();'))
   assert control.query('select pg_advisory_lock(8072001);')==''
-  b=previous.Worker(connection(db,'authenticated'),env,(ROOT/'race-b.sql').read_text());children.append(b)
+  b=previous.Worker(connection(db,'authenticated'),env,(ROOT/('race-epoch-b.sql' if epoch else 'race-b.sql')).read_text());children.append(b)
   bp=poll(control,f"select pid from pg_stat_activity where application_name='sf_device_b' and {pid}=any(pg_blocking_pids(pid)) and exists(select 1 from pg_locks l where l.pid=pg_stat_activity.pid and l.locktype='advisory' and not l.granted);",b)
   a=previous.Worker(connection(db,'authenticated' if kind=='claim' else 'service_role'),env,(ROOT/f'race-{kind}-a.sql').read_text());children.append(a)
   ap=poll(control,f"select pid from pg_stat_activity where application_name='sf_device_a' and {bp}=any(pg_blocking_pids(pid));",a)
   assert control.query('select pg_advisory_unlock(8072001);')=='t'
   ac,_,ae=a.finish();bc,_,be=b.finish();assert bc==0,be
+  observed=[]
+  for line in ae.splitlines():
+   # JSONB canonical key order is not fixed; find the NOTICE JSON object.
+   marker=line.find('{') if '"push_fixture_outcome"' in line else -1
+   if marker>=0: observed.append(json.loads(line[marker:]))
+  assert len(observed)==1 and observed[0]['push_fixture_outcome']==kind,ae
+  if not negative:
+   if kind=='claim':
+    assert observed[0]['code']=='40001' and observed[0]['message'] in (
+     '[push device] Device ownership changed; read fresh state.',
+     '[push device] Account scope changed; read fresh state.'),observed
+   else:
+    assert (observed[0]['code'],observed[0]['message']) in (
+     ('23514','[push receipts] Registration is not the active device owner.'),
+     ('40001','[push receipts] Account scope changed; reservation unconfirmed.')),observed
   if negative: assert ac!=0 and 'FAIL dispatched old A claim replaced committed B ownership' in ae,ae
   else:
    assert ac==0,ae
    assert sql(db,"select current_user_id=push_fixture.pid('B') from private.push_device_bindings where token_hash=sha256(convert_to('fiction-race-shared','UTF8'));")=='t'
    if kind=='prepare': assert sql(db,"select not exists(select 1 from private.push_delivery_attempts where attempt_id=push_fixture.pid('stale-attempt'));")=='t'
-  check('negative epoch race' if negative else f'{kind} waits on B then rejects stale snapshot',a_pid=ap,b_pid=bp,controller_pid=pid,expected_negative=negative)
+  if epoch:
+   if negative:
+    assert observed[0]['code'] is None and observed[0]['receipt']['user_id']==sql(db,"select push_fixture.pid('A');"),observed
+    assert sql(db,"select current_user_id=push_fixture.pid('B') from private.push_device_bindings where token_hash=sha256(convert_to('fiction-race-shared','UTF8'));")=='t'
+   else: assert observed[0]['message']=='[push device] Device ownership changed; read fresh state.',observed
+  name='negative known-B epoch race' if negative else 'positive known-B epoch race' if epoch else f'{kind} waits on B then rejects stale snapshot'
+  check(name,a_pid=ap,b_pid=bp,controller_pid=pid,expected_negative=negative,observed_outcome=observed[0])
   control.close()
  def auth_race(db,negative=False):
   sql(db,(ROOT/'race-setup.sql').read_text())
@@ -143,7 +168,7 @@ def runtime(schema,base,receipt,binding):
    db=clone(f'device_negative_{i}');sql(db,(ROOT/file).read_text());result=execute(db,(ROOT/'ownership-regression.sql').read_text())
    assert result.returncode!=0 and 'FAIL '+expected in result.stderr,result.stderr
    check('negative '+file,observed_expected_FAIL=expected)
-  race(clone('device_claim'),'claim');race(clone('device_claim_negative'),'claim',True);race(clone('device_prepare'),'prepare')
+  race(clone('device_claim'),'claim');race(clone('device_epoch_positive'),'claim',epoch=True);race(clone('device_epoch_negative'),'claim',True,True);race(clone('device_prepare'),'prepare')
   auth_race(clone('device_auth_delete'));auth_race(clone('device_auth_delete_negative'),True)
   report['state']='PASS_SYNTHETIC_SQL_ONLY; HOSTED_PROVIDER_PHONE_NOT_TESTED'
  except Exception as caught:
