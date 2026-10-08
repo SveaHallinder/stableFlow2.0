@@ -4170,7 +4170,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...alert, createdAt: data.created_at ?? alert.createdAt } };
       } catch (error) {
-        console.warn('[stable event save] Kunde inte spara händelse', error);
+        console.warn('[stable event save] Kunde inte spara händelse', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4211,7 +4211,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           assignmentId: data.assignment_id ?? undefined,
         } };
       } catch (error) {
-        console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error);
+        console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: resolveOnly
           ? 'Notisen kunde inte markeras som löst. Försök igen.'
           : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
@@ -4398,7 +4398,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         });
         return { success: true, data: await Promise.race([persist(), deadline]) };
       } catch (error) {
-        console.warn('[post publish] Kunde inte publicera inlägg', error);
+        console.warn('[post publish] Kunde inte publicera inlägg', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout!); }
     },
@@ -4434,7 +4434,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true };
       } catch (error) {
-        console.warn('[post like] Kunde inte spara gillning', error);
+        console.warn('[post like] Kunde inte spara gillning', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Gillningen kunde inte sparas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4466,7 +4466,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...comment, text: data.content, createdAt: data.created_at } };
       } catch (error) {
-        console.warn('[post comment] Kunde inte spara kommentar', error);
+        console.warn('[post comment] Kunde inte spara kommentar', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4889,7 +4889,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...message, timestamp: data.created_at ?? message.timestamp } };
       } catch (error) {
-        console.warn('[chat send] Kunde inte skicka meddelande', error);
+        console.warn('[chat send] Kunde inte skicka meddelande', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
