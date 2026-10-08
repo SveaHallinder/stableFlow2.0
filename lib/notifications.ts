@@ -45,12 +45,13 @@ export async function getPermissionStatus(): Promise<string> {
 export async function getExpoPushToken(): Promise<string | null> {
   if (Platform.OS === 'web' || !Device.isDevice) return null;
   try {
-    const projectId =
-      Constants.expoConfig?.extra?.eas?.projectId ??
-      Constants.easConfig?.projectId;
-    const tokenData = await Notifications.getExpoPushTokenAsync(
-      projectId ? { projectId } : undefined,
-    );
+    const projectId = [
+      Constants.expoConfig?.extra?.eas?.projectId,
+      Constants.easConfig?.projectId,
+    ].find(value => typeof value === 'string'
+      && value.trim().length > 0 && value.trim() !== 'YOUR_EAS_PROJECT_ID');
+    if (!projectId) throw new Error('Push project is not configured');
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     return tokenData.data;
   } catch (error) {
     console.warn('[push notification] Kunde inte hämta push-token', error instanceof Error ? 'Error' : 'Unknown');

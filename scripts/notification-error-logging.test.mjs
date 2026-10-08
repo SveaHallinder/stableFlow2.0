@@ -17,7 +17,8 @@ const { CodedError } = await compile(await readFile(new URL('../node_modules/exp
 const token = 'synthetic-private-ExpoPushToken';
 const userId = '00000000-0000-4000-8000-000000000001';
 
-async function load({ tokenError, registrationError, networkError } = {}) {
+async function load({ tokenError, registrationError, networkError,
+  projectId = 'synthetic-project', fallbackProjectId } = {}) {
   const requests = [], logs = [], tokenRequests = [];
   const supabase = createClient('https://stableflow-notification-fixture.invalid', 'synthetic-public-key', {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -48,7 +49,8 @@ async function load({ tokenError, registrationError, networkError } = {}) {
   assert.equal(session.error, null);
   const dependencies = {
     Platform: { OS: 'ios' }, Device: { isDevice: true },
-    Constants: { expoConfig: { extra: { eas: { projectId: 'synthetic-project' } } } },
+    Constants: { expoConfig: { extra: { eas: { projectId } } },
+      easConfig: { projectId: fallbackProjectId } },
     Notifications: { setNotificationHandler() {}, getExpoPushTokenAsync: async options => {
       tokenRequests.push(options);
       if (tokenError) throw tokenError;
@@ -115,4 +117,31 @@ test('successful token lookup and ownership claim preserve token, current UID an
   assert.equal(claim.body.p_expected_user_id, userId);
   assert.equal(claim.body.p_platform, 'ios');
   assert.equal(claim.body.p_expected_binding_generation, '00000000-0000-4000-8000-000000000002');
+});
+
+test('push project config: placeholder uses the runtime fallback before the ownership claim', async () => {
+  const fixture = await load({ projectId: 'YOUR_EAS_PROJECT_ID', fallbackProjectId: 'synthetic-fallback-project' });
+  assert.equal(await fixture.registerPushToken(userId), true);
+  assert.deepEqual(fixture.tokenRequests, [{ projectId: 'synthetic-fallback-project' }]);
+  assert.deepEqual(fixture.logs, []);
+  assert.equal(fixture.requests.length, 2);
+  assert.equal(fixture.requests[0].body.p_expected_user_id, userId);
+  assert.equal(fixture.requests[1].body.p_expected_user_id, userId);
+});
+
+test('push project config: placeholder without a usable fallback fails before Expo or ownership RPCs', async () => {
+  const fixture = await load({ projectId: 'YOUR_EAS_PROJECT_ID' });
+  assert.equal(await fixture.registerPushToken(userId), false);
+  assert.deepEqual(fixture.tokenRequests, []);
+  assert.deepEqual(fixture.requests, []);
+  assert.deepEqual(fixture.logs, [['[push notification] Kunde inte hämta push-token', 'Error']]);
+  assert.doesNotMatch(JSON.stringify(fixture.logs), /YOUR_EAS_PROJECT_ID|synthetic-private/);
+});
+
+test('push project config: a configured value still takes precedence over the runtime fallback', async () => {
+  const fixture = await load({ fallbackProjectId: 'synthetic-fallback-project' });
+  assert.equal(await fixture.getExpoPushToken(), token);
+  assert.deepEqual(fixture.tokenRequests, [{ projectId: 'synthetic-project' }]);
+  assert.deepEqual(fixture.requests, []);
+  assert.deepEqual(fixture.logs, []);
 });
