@@ -13,6 +13,22 @@ async function compileFactory(source, dependencies) {
   return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(dependencies);
 }
 
+async function loadPrimaryMutationFixtureBindings() {
+  const source = await readFile(new URL('../lib/supabase.ts', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('supabase.ts', source, ts.ScriptTarget.Latest, true);
+  const definitions = ast.statements.filter(node =>
+    ts.isClassDeclaration(node) && node.name?.text === 'PrimarySessionMutationUnsupportedError'
+    || ts.isVariableStatement(node) && node.declarationList.declarations.some(declaration =>
+      declaration.name.getText(ast) === 'PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE'));
+  // These legacy invite-flow fixtures check acceptance/error copy, not the
+  // primary lock. The 33 ownership regressions exercise the real SDK gate.
+  const dependencies = { withPrimarySessionMutation: operation => operation() };
+  if (definitions.length === 0) return dependencies; // Pre-gate EF callbacks.
+  assert.equal(definitions.length, 2, 'Primary mutation error/copy definitions must be complete');
+  const body = definitions.map(node => node.getText(ast).replace(/^export /, '')).join('\n');
+  return compileFactory(`${body}\nreturn { withPrimarySessionMutation, PrimarySessionMutationUnsupportedError, PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE };`, dependencies);
+}
+
 async function loadCallback(file, name, dependencies) {
   const source = await readFile(new URL(file, import.meta.url), 'utf8');
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -24,7 +40,9 @@ async function loadCallback(file, name, dependencies) {
   visit(ast);
   const helpers = ast.statements.filter(node => ts.isFunctionDeclaration(node) && !node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword))
     .map(node => node.getText(ast)).join('\n');
-  return compileFactory(`${helpers}\nreturn (${callback.getText(ast)});`, dependencies);
+  const primaryBindings = file === '../app/(auth)/index.tsx' || file === '../app/(auth)/confirm.tsx'
+    ? await loadPrimaryMutationFixtureBindings() : {};
+  return compileFactory(`${helpers}\nreturn (${callback.getText(ast)});`, { ...primaryBindings, ...dependencies });
 }
 
 async function loadPendingAuth(storage) {

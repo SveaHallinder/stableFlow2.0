@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { clearDeletedAccountSession, markDeletedAccountSession, supabase } from '@/lib/supabase';
+import { assertPrimarySessionMutationSupported, clearDeletedAccountSession, markDeletedAccountSession, supabase, withPrimarySessionMutation } from '@/lib/supabase';
 import { deregisterPushToken } from '@/lib/notifications';
 import { createQaDemoSession, isQaDemoMode } from '@/lib/qaDemo';
 
@@ -26,6 +26,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const deletedAccountIdsRef = React.useRef(new Set<string>());
   const pendingDeletedAccountRef = React.useRef<string | null>(null);
   const activeUserIdRef = React.useRef<string | null>(null);
+  const sessionEpochRef = React.useRef<{ userId: string | null }>({ userId: null });
+
+  const applySession = React.useCallback((nextSession: Session | null) => {
+    const userId = nextSession?.user?.id ?? null;
+    if (sessionEpochRef.current.userId !== userId) sessionEpochRef.current = { userId };
+    activeUserIdRef.current = userId;
+    setSession(nextSession);
+  }, []);
 
   const retryInitialization = React.useCallback(() => {
     setInitializationAttempt((attempt) => attempt + 1);
@@ -34,8 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (isQaDemoMode) {
       const demoSession = createQaDemoSession();
-      activeUserIdRef.current = demoSession.user.id;
-      setSession(demoSession);
+      applySession(demoSession);
       setLoading(false);
       return;
     }
@@ -71,8 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const nextSession = data?.session ?? null;
         const retired = nextSession?.user?.id && deletedAccountIdsRef.current.has(nextSession.user.id);
         if (!retired && !pendingDeletedAccountRef.current) {
-          activeUserIdRef.current = nextSession?.user?.id ?? null;
-          setSession(nextSession);
+          applySession(nextSession);
         }
         setInitializationError(null);
         setLoading(false);
@@ -96,18 +102,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       settled = true;
       clearTimeout(timeout);
-      activeUserIdRef.current = nextSession?.user?.id ?? null;
-      setSession(nextSession);
+      applySession(nextSession);
       setInitializationError(null);
       setLoading(false);
     });
 
     return () => {
       mounted = false;
+      sessionEpochRef.current = { userId: activeUserIdRef.current };
       clearTimeout(timeout);
       data.subscription.unsubscribe();
     };
-  }, [initializationAttempt]);
+  }, [initializationAttempt, applySession]);
 
   const signOut = React.useCallback(async () => {
     if (isQaDemoMode) {
@@ -116,19 +122,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     const userId = session?.user?.id;
+    const epoch = sessionEpochRef.current;
+    const isCurrent = () => sessionEpochRef.current === epoch && activeUserIdRef.current === (userId ?? null);
+    if (!isCurrent()) return;
+    assertPrimarySessionMutationSupported();
     if (userId) {
       try {
-        await deregisterPushToken(userId);
+        await deregisterPushToken(userId, isCurrent);
       } catch {
         // Push token cleanup is best-effort
       }
     }
-    const { error } = await supabase.auth.signOut();
-    if (error) {
-      // Force clear local session even if server signout fails
-      setSession(null);
-      throw error;
-    }
+    if (!isCurrent()) return;
+    await withPrimarySessionMutation(async () => {
+      if (!isCurrent()) return;
+      const { data: currentSession, error: sessionError } = await supabase.auth.getSession();
+      if (!isCurrent() || sessionError || currentSession.session?.user?.id !== userId) return;
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        // Force clear local session even if server signout fails
+        setSession(previous => isCurrent() && previous?.user?.id === userId ? null : previous);
+        throw error;
+      }
+    });
   }, [session?.user?.id]);
 
   const finishAccountDeletion = React.useCallback(async (userId: string) => {
@@ -144,6 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     if (!cleared || (activeUserIdRef.current && activeUserIdRef.current !== userId)) return false;
     activeUserIdRef.current = null;
+    sessionEpochRef.current = { userId: null };
     setSession(previous => previous?.user?.id === userId ? null : previous);
     return true;
   }, []);

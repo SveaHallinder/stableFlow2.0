@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
-import { supabase } from '@/lib/supabase';
+import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUnsupportedError, supabase, withPrimarySessionMutation } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 
 const palette = theme.colors;
@@ -58,10 +58,10 @@ export default function ConfirmEmailScreen() {
       const refresh = params.get('refresh_token');
       if (access && refresh) {
         try {
-          const { error: sessionError } = await supabase.auth.setSession({
+          const { error: sessionError } = await withPrimarySessionMutation(() => supabase.auth.setSession({
             access_token: access,
             refresh_token: refresh,
-          });
+          }));
           if (sessionError) {
             console.warn('[auth confirm] Kunde inte verifiera sessionen', { code: sessionError.code, status: sessionError.status });
             setError(sessionError.status === 0 || (sessionError.status ?? 0) >= 500
@@ -70,9 +70,11 @@ export default function ConfirmEmailScreen() {
             return;
           }
           router.replace('/');
-        } catch {
+        } catch (error) {
           console.warn('[auth confirm] Sessionskontrollen misslyckades.');
-          setError('Kunde inte bekräfta din e-post. Kontrollera anslutningen och öppna länken igen.');
+          setError(error instanceof PrimarySessionMutationUnsupportedError
+            ? PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE
+            : 'Kunde inte bekräfta din e-post. Kontrollera anslutningen och öppna länken igen.');
         } finally {
           setVerifying(false);
         }

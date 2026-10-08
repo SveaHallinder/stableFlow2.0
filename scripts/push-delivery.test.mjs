@@ -5,33 +5,57 @@ import test from 'node:test';
 import { URL } from 'node:url';
 import ts from 'typescript';
 
+const uuid = value => `00000000-0000-4000-8000-${String(value).padStart(12, '0')}`;
+const sharedSource = await readFile(new URL('../supabase/functions/_shared/push-receipts.ts', import.meta.url), 'utf8');
+const shared = await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(sharedSource, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+}).outputText).toString('base64')}`);
+let requestSequence = 100000;
+
 // All environment values, database reads and provider calls are synthetic.
 // Executing these tests never sends push notifications or connects to Supabase.
 async function loadHandler(overrides = {}) {
   const source = await readFile(new URL('../supabase/functions/send-push-notification/index.ts', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('send-push-notification.ts', source, ts.ScriptTarget.Latest, true);
   const body = ast.statements.filter(node => !ts.isImportDeclaration(node)).map(node => node.getText(ast)).join('\n');
-  const tokens = overrides.tokens ?? [{ user_id: 'synthetic-recipient', token: 'synthetic-push-token' }];
+  const tokens = (overrides.tokens ?? [{ user_id: '00000000-0000-4000-8000-000000000101', token: 'synthetic-push-token' }]).map((row, index) => ({ id: uuid(1000 + index), registration_generation: uuid(9000), ...row }));
   const calls = [];
   const logs = [];
   const reads = [];
   const queries = [];
+  const rpcCalls = [];
+  const attempts = new Set();
   const capture = {};
   const dependencies = {
     Deno: {
       env: { get: name => ({ SUPABASE_URL: 'https://synthetic.example.test', SUPABASE_SERVICE_ROLE_KEY: 'synthetic-service-key' })[name] },
       serve: handler => { capture.handler = handler; },
     },
-    createClient: () => ({ from: table => {
+    createClient: () => ({ rpc: (name, params) => {
+      rpcCalls.push({ name, params });
+      let data;
+      if (name === 'push_device_active_registrations') data = { registrations: params.p_registrations };
+      else if (name === 'push_receipts_prepare') {
+        const started = !attempts.has(params.p_attempt_id); attempts.add(params.p_attempt_id);
+        data = { attempt_id: params.p_attempt_id, started };
+      } else {
+        assert.equal(name, 'push_receipts_record_tickets');
+        data = { attempt_id: params.p_attempt_id, recorded_count: params.p_results.length };
+      }
+      return { abortSignal: signal => {
+        assert.ok(signal instanceof globalThis.AbortSignal);
+        return Promise.resolve({ data, error: null });
+      } };
+    }, from: table => {
       reads.push(table);
       const filters = [];
       queries.push({ table, filters });
       const rows = {
         push_tokens: tokens, notification_preferences: overrides.preferences ?? [],
-        conversation_members: overrides.members ?? [{ conversation_id: 'synthetic-conversation', user_id: 'synthetic-recipient' }],
-        conversations: [overrides.conversation ?? { id: 'synthetic-conversation', stable_id: null, is_group: false }],
-        stable_members: overrides.stableMembers ?? [{ stable_id: 'synthetic-stable', user_id: 'synthetic-recipient' }],
-        blocked_users: overrides.blockedUsers ?? [], profiles: [{ id: 'synthetic-author', full_name: 'Syntetisk avsändare' }],
+        conversation_members: overrides.members ?? [{ conversation_id: '00000000-0000-4000-8000-000000000103', user_id: '00000000-0000-4000-8000-000000000101' }],
+        conversations: [overrides.conversation ?? { id: '00000000-0000-4000-8000-000000000103', stable_id: null, is_group: false }],
+        stable_members: overrides.stableMembers ?? [{ stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000101' }],
+        blocked_users: overrides.blockedUsers ?? [], profiles: [{ id: '00000000-0000-4000-8000-000000000102', full_name: 'Syntetisk avsändare' }],
       }[table];
       assert.ok(rows, 'An unexpected database read must fail the fixture');
       const response = single => ({
@@ -57,25 +81,30 @@ async function loadHandler(overrides = {}) {
       calls.push(args);
       if (overrides.provider) return overrides.provider(...args);
       const messages = JSON.parse(args[1].body);
-      return new globalThis.Response(JSON.stringify({ data: messages.map((_, index) => ({ status: 'ok', id: `synthetic-receipt-${index}` })) }), {
+      return new globalThis.Response(JSON.stringify({ data: messages.map((_, index) => ({ status: 'ok', id: `synthetic-receipt-${calls.length}-${index}` })) }), {
         status: 200, headers: { 'content-type': 'application/json' },
       });
     },
     console: { error: (...args) => logs.push(args), warn: (...args) => logs.push(args) },
   };
-  const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(dependencies).join(', ')} }) => { ${body} };`, {
+  const supplied = {
+    ...dependencies, isUuid: shared.isUuid, registration: shared.registration,
+    activePushRegistrations: shared.activePushRegistrations,
+    sendPushTargets: (client, attempt, targets) => shared.sendPushTargets(client, attempt, targets, dependencies.fetch),
+  };
+  const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(supplied).join(', ')} }) => { ${body} };`, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });
-  (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(dependencies);
-  return { handler: capture.handler, calls, logs, reads, queries };
+  (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(supplied);
+  return { handler: capture.handler, calls, logs, reads, queries, rpcCalls };
 }
 
 function request(authorization = 'Bearer synthetic-service-key', payload) {
   return new globalThis.Request('https://synthetic.example.test/functions/v1/send-push-notification', {
     method: 'POST', headers: { authorization, 'content-type': 'application/json' },
-    body: JSON.stringify(payload ?? { type: 'assignment', record: {
-      assignee_id: 'synthetic-recipient', label: 'Syntetiskt pass', date: '2099-01-01', time: '07:00',
-    }, old_record: { assignee_id: null } }),
+    body: JSON.stringify({ request_id: uuid(++requestSequence), ...(payload ?? { type: 'assignment', record: {
+      assignee_id: '00000000-0000-4000-8000-000000000101', label: 'Syntetiskt pass', date: '2099-01-01', time: '07:00',
+    }, old_record: { assignee_id: null } }) }),
   });
 }
 
@@ -108,7 +137,7 @@ test('a failed push-token lookup is reported instead of acknowledged as an empty
 });
 
 test('a confirmed preference opt-out still sends no notification', async () => {
-  const fixture = await loadHandler({ preferences: [{ user_id: 'synthetic-recipient', assignments: false }] });
+  const fixture = await loadHandler({ preferences: [{ user_id: '00000000-0000-4000-8000-000000000101', assignments: false }] });
   const response = await fixture.handler(request());
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { sent: 0 });
@@ -155,7 +184,7 @@ test('a malformed Expo response cannot return a successful sent count', async ()
 });
 
 test('101 verified Expo tickets retain the existing 100-message chunk boundary', async () => {
-  const tokens = Array.from({ length: 101 }, (_, index) => ({ user_id: 'synthetic-recipient', token: `synthetic-push-${index}` }));
+  const tokens = Array.from({ length: 101 }, (_, index) => ({ user_id: '00000000-0000-4000-8000-000000000101', token: `synthetic-push-${index}` }));
   const fixture = await loadHandler({ tokens });
   const response = await fixture.handler(request());
   assert.equal(response.status, 200);
@@ -164,7 +193,7 @@ test('101 verified Expo tickets retain the existing 100-message chunk boundary',
 });
 
 test('an error in a later chunk cannot falsely acknowledge every recipient', async () => {
-  const tokens = Array.from({ length: 101 }, (_, index) => ({ user_id: 'synthetic-recipient', token: `synthetic-push-${index}` }));
+  const tokens = Array.from({ length: 101 }, (_, index) => ({ user_id: '00000000-0000-4000-8000-000000000101', token: `synthetic-push-${index}` }));
   let chunk = 0;
   const fixture = await loadHandler({ tokens, provider: async (_url, options) => {
     chunk += 1;
@@ -176,28 +205,28 @@ test('an error in a later chunk cannot falsely acknowledge every recipient', asy
 });
 
 const messagePayload = { type: 'message', record: {
-  conversation_id: 'synthetic-conversation', author_id: 'synthetic-author', text: 'Syntetiskt privat meddelande',
+  conversation_id: '00000000-0000-4000-8000-000000000103', author_id: '00000000-0000-4000-8000-000000000102', text: 'Syntetiskt privat meddelande',
 } };
 const alertPayload = { type: 'alert', record: {
-  stable_id: 'synthetic-stable', created_by_user_id: 'synthetic-author', severity: 'urgent', title: 'Syntetisk stallnotis',
+  stable_id: '00000000-0000-4000-8000-000000000104', created_by_user_id: '00000000-0000-4000-8000-000000000102', severity: 'urgent', title: 'Syntetisk stallnotis',
 } };
 
 test('a recipient who blocked the message author receives no private-chat push preview', async () => {
-  const fixture = await loadHandler({ blockedUsers: [{ blocker_user_id: 'synthetic-recipient', blocked_user_id: 'synthetic-author' }] });
+  const fixture = await loadHandler({ blockedUsers: [{ blocker_user_id: '00000000-0000-4000-8000-000000000101', blocked_user_id: '00000000-0000-4000-8000-000000000102' }] });
   const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
   assert.deepEqual(await response.json(), { sent: 0 });
   assert.equal(fixture.calls.length, 0);
   assert.deepEqual(fixture.queries.find(query => query.table === 'blocked_users').filters, [
-    ['eq', 'blocked_user_id', 'synthetic-author'], ['in', 'blocker_user_id', ['synthetic-recipient']],
+    ['eq', 'blocked_user_id', '00000000-0000-4000-8000-000000000102'], ['in', 'blocker_user_id', ['00000000-0000-4000-8000-000000000101']],
   ]);
 });
 
 test('stable group messages omit blocked recipients while retaining the other members', async () => {
   const fixture = await loadHandler({
-    conversation: { id: 'synthetic-conversation', is_group: true, stable_id: 'synthetic-stable' },
-    stableMembers: [{ stable_id: 'synthetic-stable', user_id: 'synthetic-recipient' }, { stable_id: 'synthetic-stable', user_id: 'synthetic-other' }],
-    tokens: [{ user_id: 'synthetic-recipient', token: 'synthetic-push-token' }, { user_id: 'synthetic-other', token: 'synthetic-other-token' }],
-    blockedUsers: [{ blocker_user_id: 'synthetic-recipient', blocked_user_id: 'synthetic-author' }],
+    conversation: { id: '00000000-0000-4000-8000-000000000103', is_group: true, stable_id: '00000000-0000-4000-8000-000000000104' },
+    stableMembers: [{ stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000101' }, { stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000105' }],
+    tokens: [{ user_id: '00000000-0000-4000-8000-000000000101', token: 'synthetic-push-token' }, { user_id: '00000000-0000-4000-8000-000000000105', token: 'synthetic-other-token' }],
+    blockedUsers: [{ blocker_user_id: '00000000-0000-4000-8000-000000000101', blocked_user_id: '00000000-0000-4000-8000-000000000102' }],
   });
   const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
   assert.deepEqual(await response.json(), { sent: 1 });
@@ -205,7 +234,7 @@ test('stable group messages omit blocked recipients while retaining the other me
 });
 
 test('an author blocking a recipient does not change the existing recipient-side block contract', async () => {
-  const fixture = await loadHandler({ blockedUsers: [{ blocker_user_id: 'synthetic-author', blocked_user_id: 'synthetic-recipient' }] });
+  const fixture = await loadHandler({ blockedUsers: [{ blocker_user_id: '00000000-0000-4000-8000-000000000102', blocked_user_id: '00000000-0000-4000-8000-000000000101' }] });
   const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
   assert.deepEqual(await response.json(), { sent: 1 });
 });
@@ -213,7 +242,7 @@ test('an author blocking a recipient does not change the existing recipient-side
 for (const [table, group] of [['conversation_members', false], ['conversations', false], ['stable_members', true], ['blocked_users', false]]) {
   test(`a failed message ${table} read cannot send a partial or unverified preview`, async () => {
     const fixture = await loadHandler({
-      conversation: { id: 'synthetic-conversation', is_group: group, stable_id: group ? 'synthetic-stable' : null },
+      conversation: { id: '00000000-0000-4000-8000-000000000103', is_group: group, stable_id: group ? '00000000-0000-4000-8000-000000000104' : null },
       lookupErrors: { [table]: { code: '503', message: 'private-user-and-token lookup failure' } },
     });
     await assertFailed(fixture, messagePayload);
@@ -229,7 +258,7 @@ test('a failed alert member lookup cannot acknowledge an empty or partial send',
 
 test('recipient-side chat blocking does not change assignment or alert recipients', async () => {
   const fixture = await loadHandler({
-    blockedUsers: [{ blocker_user_id: 'synthetic-recipient', blocked_user_id: 'synthetic-author' }],
+    blockedUsers: [{ blocker_user_id: '00000000-0000-4000-8000-000000000101', blocked_user_id: '00000000-0000-4000-8000-000000000102' }],
     lookupErrors: { blocked_users: { code: '503' } },
   });
   assert.deepEqual(await (await fixture.handler(request())).json(), { sent: 1 });

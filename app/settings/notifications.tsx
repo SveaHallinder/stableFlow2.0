@@ -171,7 +171,7 @@ export default function NotificationSettingsScreen() {
       setPermissionStatus(granted ? 'granted' : 'denied');
       setPermissionError(null);
       if (granted) {
-        const registered = await registerPushToken(preferenceScope.userId);
+        const registered = await registerPushToken(preferenceScope.userId, isCurrent);
         if (!isCurrent()) return;
         if (!registered) setPermissionError({ scope: preferenceScope,
           message: 'Notisbehörigheten är aktiverad, men enheten kunde inte registreras. Försök igen.' });

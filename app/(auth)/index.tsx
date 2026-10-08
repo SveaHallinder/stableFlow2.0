@@ -15,7 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Logo from '@/assets/images/logo-blue.svg';
 import { theme } from '@/components/theme';
 import { Card } from '@/components/Primitives';
-import { supabase, supabaseConfig } from '@/lib/supabase';
+import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUnsupportedError, supabase, supabaseConfig, withPrimarySessionMutation } from '@/lib/supabase';
 import {
   savePendingJoinCode,
   savePendingOwnerStable,
@@ -104,10 +104,10 @@ export default function AuthScreen() {
       const trimmedInviteCode = inviteCode.trim().toUpperCase();
       const trimmedStableName = stableName.trim();
       if (mode === 'login') {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { error } = await withPrimarySessionMutation(() => supabase.auth.signInWithPassword({
           email: trimmedEmail,
           password,
-        });
+        }));
         if (error) {
           if (error.code === 'email_not_confirmed') {
             setPendingConfirmEmail(trimmedEmail);
@@ -145,7 +145,7 @@ export default function AuthScreen() {
           return;
         }
 
-        const { data, error } = await supabase.auth.signUp({
+        const { data, error } = await withPrimarySessionMutation(() => supabase.auth.signUp({
           email: trimmedEmail,
           password,
           options: {
@@ -155,7 +155,7 @@ export default function AuthScreen() {
               full_name: trimmedName,
             },
           },
-        });
+        }));
 
         if (error) {
           await clearPendingOwnerStable();
@@ -213,7 +213,7 @@ export default function AuthScreen() {
         return;
       }
 
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await withPrimarySessionMutation(() => supabase.auth.signUp({
         email: trimmedEmail,
         password,
         options: {
@@ -223,7 +223,7 @@ export default function AuthScreen() {
             full_name: trimmedName,
           },
         },
-      });
+      }));
 
       if (error) {
         const message =
@@ -259,7 +259,9 @@ export default function AuthScreen() {
       console.warn('[auth submit] Kunde inte avsluta inloggning eller kontoskapande', {
         mode, name: error instanceof Error ? error.name : 'unknown',
       });
-      toast.showToast('Kunde inte slutföra inloggning eller kontoskapande. Dina uppgifter finns kvar. Försök igen.', 'error');
+      toast.showToast(error instanceof PrimarySessionMutationUnsupportedError
+        ? PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE
+        : 'Kunde inte slutföra inloggning eller kontoskapande. Dina uppgifter finns kvar. Försök igen.', 'error');
     } finally {
       setSubmitting(false);
     }

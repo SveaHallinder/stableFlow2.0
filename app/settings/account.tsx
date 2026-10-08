@@ -17,7 +17,7 @@ import { Card, HeaderIconButton } from '@/components/Primitives';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ToastProvider';
 import { useAppData } from '@/context/AppDataContext';
-import { supabase, updateAccountSecurity } from '@/lib/supabase';
+import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUnsupportedError, supabase, updateAccountSecurity } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { authRedirectUrl } from '@/lib/authRedirect';
@@ -68,8 +68,9 @@ export default function AccountSettingsScreen() {
         toast.showToast('Du är utloggad.', 'success');
         router.replace('/(auth)');
       })
-      .catch(() => {
-        toast.showToast('Kunde inte logga ut.', 'error');
+      .catch((error) => {
+        toast.showToast(error instanceof PrimarySessionMutationUnsupportedError
+          ? PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE : 'Kunde inte logga ut.', 'error');
       });
   }, [router, signOut, toast]);
 

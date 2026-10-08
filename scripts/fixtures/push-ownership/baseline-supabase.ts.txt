@@ -69,25 +69,6 @@ async function withSessionLock<T>(name: string, operation: () => Promise<T>, acq
   if (!result.ok) throw result.error;
   return result.value;
 }
-// All primary login/confirmation/logout writes share this application lock.
-// Its name is separate from the SDK's auth lock to avoid recursive acquisition.
-export const PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE =
-  'Din webbläsare kan inte hantera kontobyten säkert. Uppdatera webbläsaren eller använd StableFlow-appen.';
-export class PrimarySessionMutationUnsupportedError extends Error {
-  constructor() {
-    super(PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE);
-    this.name = 'PrimarySessionMutationUnsupportedError';
-  }
-}
-export function assertPrimarySessionMutationSupported(): void {
-  if (Platform.OS === 'web' && !globalThis.navigator?.locks) {
-    throw new PrimarySessionMutationUnsupportedError();
-  }
-}
-export function withPrimarySessionMutation<T>(operation: () => Promise<T>): Promise<T> {
-  assertPrimarySessionMutationSupported();
-  return withSessionLock(`auth-mutation:${authStorageKey}`, operation);
-}
 function storageOperation<T>(operation: () => T | Promise<T>): Promise<T> {
   const pending = Promise.resolve().then(operation);
   pendingStorageOperations.add(pending);

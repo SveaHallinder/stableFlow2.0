@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
+import { activePushRegistrations, isUuid, registration, sendPushTargets } from "../_shared/push-receipts.ts";
+import type { PushRegistration, PushTarget } from "../_shared/push-receipts.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -10,35 +11,27 @@ const supabase = createClient(
 type NotificationType = "message" | "assignment" | "post" | "alert";
 
 interface WebhookPayload {
+  request_id: string;
   type: NotificationType;
   record: Record<string, unknown>;
   old_record?: Record<string, unknown>;
-}
-
-interface ExpoPushMessage {
-  to: string;
-  title: string;
-  body: string;
-  data?: Record<string, string>;
-  sound?: "default";
-  channelId?: string;
 }
 
 // Fetch push tokens for a list of user IDs, filtered by their notification preferences
 async function getEligibleTokens(
   userIds: string[],
   prefKey: keyof { messages: boolean; assignments: boolean; feed: boolean; reminders: boolean },
-): Promise<string[]> {
+): Promise<{ registration: PushRegistration; token: string }[]> {
   if (!userIds.length) return [];
 
   // Get tokens
   const { data: tokens, error: tokenError } = await supabase
     .from("push_tokens")
-    .select("user_id, token")
+    .select("id, user_id, token, registration_generation")
     .in("user_id", userIds);
 
   if (tokenError) {
-    console.error("[push notification] Token lookup failed", { code: tokenError.code });
+    console.error("[push notification] Token lookup failed", { category: "token_lookup_failed" });
     throw new Error("Push token lookup failed");
   }
   if (!tokens?.length) return [];
@@ -46,11 +39,11 @@ async function getEligibleTokens(
   // Check preferences — users without a row default to all enabled
   const { data: prefs, error: preferenceError } = await supabase
     .from("notification_preferences")
-    .select("user_id, " + prefKey)
+    .select(`user_id, ${prefKey}` as const)
     .in("user_id", userIds);
 
   if (preferenceError) {
-    console.error("[push notification] Preference lookup failed", { code: preferenceError.code });
+    console.error("[push notification] Preference lookup failed", { category: "preference_lookup_failed" });
     throw new Error("Notification preference lookup failed");
   }
 
@@ -60,26 +53,18 @@ async function getEligibleTokens(
       .map((p: Record<string, unknown>) => p.user_id as string),
   );
 
-  return tokens
-    .filter((t) => !disabledUsers.has(t.user_id))
-    .map((t) => t.token);
-}
-
-// Get display name for a user
-async function getUserName(userId: string): Promise<string> {
-  const { data } = await supabase
-    .from("profiles")
-    .select("full_name, username")
-    .eq("id", userId)
-    .single();
-  return data?.full_name || data?.username || "Någon";
+  const eligible = tokens.filter((t) => !disabledUsers.has(t.user_id)).map((t) => registration(t));
+  if (!eligible.length) return [];
+  const active = await activePushRegistrations(supabase, eligible.map(target => target.registration));
+  const key = (target: PushRegistration) => `${target.token_id}:${target.user_id}:${target.registration_generation}`;
+  const selected = new Set(active.map(key));
+  return eligible.filter(target => selected.has(key(target.registration)));
 }
 
 // Handle new chat message
-async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushMessage[]> {
+async function handleMessage(record: Record<string, unknown>): Promise<PushTarget[]> {
   const conversationId = record.conversation_id as string;
   const authorId = record.author_id as string;
-  const text = record.text as string;
 
   // Get all members of this conversation except the author
   const { data: members, error: memberError } = await supabase
@@ -88,7 +73,7 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
     .eq("conversation_id", conversationId)
     .neq("user_id", authorId);
   if (memberError) {
-    console.error("[push notification] Conversation member lookup failed", { code: memberError.code });
+    console.error("[push notification] Conversation member lookup failed", { category: "member_lookup_failed" });
     throw new Error("Conversation member lookup failed");
   }
 
@@ -99,7 +84,7 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
     .eq("id", conversationId)
     .single();
   if (conversationError) {
-    console.error("[push notification] Conversation lookup failed", { code: conversationError.code });
+    console.error("[push notification] Conversation lookup failed", { category: "conversation_lookup_failed" });
     throw new Error("Conversation lookup failed");
   }
 
@@ -113,7 +98,7 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
       .eq("stable_id", convo.stable_id)
       .neq("user_id", authorId);
     if (stableMemberError) {
-      console.error("[push notification] Stable member lookup failed", { code: stableMemberError.code });
+      console.error("[push notification] Stable member lookup failed", { category: "stable_member_lookup_failed" });
       throw new Error("Stable member lookup failed");
     }
     const smIds = (stableMembers ?? []).map((m) => m.user_id);
@@ -127,7 +112,7 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
       .eq("blocked_user_id", authorId)
       .in("blocker_user_id", recipientIds);
     if (blockError) {
-      console.error("[push notification] Block preference lookup failed", { code: blockError.code });
+      console.error("[push notification] Block preference lookup failed", { category: "block_lookup_failed" });
       throw new Error("Block preference lookup failed");
     }
     const blockers = new Set((blocks ?? []).map((row) => row.blocker_user_id));
@@ -137,16 +122,16 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
   const tokens = await getEligibleTokens(recipientIds, "messages");
   if (!tokens.length) return [];
 
-  const authorName = await getUserName(authorId);
-  const preview = text.length > 80 ? text.slice(0, 77) + "..." : text;
-
-  return tokens.map((to) => ({
-    to,
-    title: authorName,
-    body: preview,
-    data: { screen: "chat", chatId: conversationId },
-    sound: "default" as const,
-    channelId: "default",
+  return tokens.map(({ token, registration: targetRegistration }) => ({
+    registration: targetRegistration,
+    message: {
+      to: token,
+      title: "Nytt meddelande",
+      body: "Öppna StableFlow för att läsa dina meddelanden.",
+      data: { screen: "messages", recipientUserId: targetRegistration.user_id },
+      sound: "default" as const,
+      channelId: "default",
+    },
   }));
 }
 
@@ -154,7 +139,7 @@ async function handleMessage(record: Record<string, unknown>): Promise<ExpoPushM
 async function handleAssignment(
   record: Record<string, unknown>,
   oldRecord?: Record<string, unknown>,
-): Promise<ExpoPushMessage[]> {
+): Promise<PushTarget[]> {
   const newAssignee = record.assignee_id as string | null;
   const oldAssignee = oldRecord?.assignee_id as string | null;
 
@@ -164,27 +149,26 @@ async function handleAssignment(
   const tokens = await getEligibleTokens([newAssignee], "assignments");
   if (!tokens.length) return [];
 
-  const label = record.label as string;
-  const date = record.date as string;
-  const time = record.time as string;
-
-  return tokens.map((to) => ({
-    to,
-    title: "Nytt pass tilldelat",
-    body: `${label} · ${date} kl ${time}`,
-    data: { screen: "calendar" },
-    sound: "default" as const,
-    channelId: "default",
+  return tokens.map(({ token, registration: targetRegistration }) => ({
+    registration: targetRegistration,
+    message: {
+      to: token,
+      title: "Nytt pass tilldelat",
+      body: "Öppna StableFlow för att se dina pass.",
+      data: { screen: "calendar", recipientUserId: targetRegistration.user_id },
+      sound: "default" as const,
+      channelId: "default",
+    },
   }));
 }
 
 // Handle new feed post
-async function handlePost(record: Record<string, unknown>): Promise<ExpoPushMessage[]> {
+async function handlePost(record: Record<string, unknown>): Promise<PushTarget[]> {
   // Phase 6: normal feed posts do not push. Feed stays social; alerts carry urgency.
   return [];
 }
 
-async function handleAlert(record: Record<string, unknown>): Promise<ExpoPushMessage[]> {
+async function handleAlert(record: Record<string, unknown>): Promise<PushTarget[]> {
   const stableId = record.stable_id as string | null;
   const authorId = record.created_by_user_id as string | null;
   const severity = record.severity as string | null;
@@ -201,7 +185,7 @@ async function handleAlert(record: Record<string, unknown>): Promise<ExpoPushMes
   }
   const { data: members, error: memberError } = await query;
   if (memberError) {
-    console.error("[push notification] Alert member lookup failed", { code: memberError.code });
+    console.error("[push notification] Alert member lookup failed", { category: "member_lookup_failed" });
     throw new Error("Alert member lookup failed");
   }
 
@@ -209,58 +193,50 @@ async function handleAlert(record: Record<string, unknown>): Promise<ExpoPushMes
   const tokens = await getEligibleTokens(recipientIds, "reminders");
   if (!tokens.length) return [];
 
-  const title = record.title as string | null;
-  const body = (record.body as string | null) || title || "Ny viktig notis";
   const notificationTitle = severity === "urgent" ? "Akut i stallet" : "Viktigt i stallet";
 
-  return tokens.map((to) => ({
-    to,
-    title: notificationTitle,
-    body,
-    data: { screen: "home" },
-    sound: "default" as const,
-    channelId: "default",
+  return tokens.map(({ token, registration: targetRegistration }) => ({
+    registration: targetRegistration,
+    message: {
+      to: token,
+      title: notificationTitle,
+      body: "Öppna StableFlow för att läsa dina stallnotiser.",
+      data: { screen: "home", recipientUserId: targetRegistration.user_id },
+      sound: "default" as const,
+      channelId: "default",
+    },
   }));
 }
 
-// Send messages to Expo Push API in chunks of 100
-async function sendToExpo(messages: ExpoPushMessage[]): Promise<void> {
-  const chunkSize = 100;
-  for (let i = 0; i < messages.length; i += chunkSize) {
-    const chunk = messages.slice(i, i + chunkSize);
-    const res = await fetch(EXPO_PUSH_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify(chunk),
-    });
-    if (!res.ok) {
-      console.error("[push notification] Provider rejected request", { status: res.status });
-      throw new Error("Expo rejected push request");
-    }
-    const acknowledgement = await res.json();
-    if (!Array.isArray(acknowledgement?.data) || acknowledgement.data.length !== chunk.length
-      || acknowledgement.data.some((ticket: { status?: unknown; id?: unknown } | null) =>
-        ticket?.status !== "ok" || typeof ticket.id !== "string" || !ticket.id)) {
-      console.error("[push notification] Provider acknowledgement unverified", { count: chunk.length });
-      throw new Error("Expo push acknowledgement unverified");
-    }
-  }
+// Reserve the entire webhook attempt before sending any 100-message chunk.
+async function sendToExpo(messages: PushTarget[], attemptId: string): Promise<number> {
+  return await sendPushTargets(supabase, attemptId, messages);
 }
 
 Deno.serve(async (req) => {
   // Verify the request is from our own Supabase instance
   const authHeader = req.headers.get("Authorization");
   const expectedKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (authHeader !== `Bearer ${expectedKey}`) {
+  if (!expectedKey || authHeader !== `Bearer ${expectedKey}`) {
     return new Response("Unauthorized", { status: 401 });
+  }
+
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
+      status: 405, headers: { "Content-Type": "application/json", Allow: "POST" },
+    });
   }
 
   try {
     const payload: WebhookPayload = await req.json();
-    let messages: ExpoPushMessage[] = [];
+    if (!payload || !isUuid(payload.request_id) || !["message", "assignment", "post", "alert"].includes(payload.type)
+      || typeof payload.record !== "object" || payload.record === null || Array.isArray(payload.record)) {
+      console.error("[push notification] Invalid webhook payload");
+      return new Response(JSON.stringify({ error: "invalid_push_request" }), {
+        status: 400, headers: { "Content-Type": "application/json" },
+      });
+    }
+    let messages: PushTarget[] = [];
 
     switch (payload.type) {
       case "message":
@@ -277,16 +253,14 @@ Deno.serve(async (req) => {
         break;
     }
 
-    if (messages.length) {
-      await sendToExpo(messages);
-    }
+    const sent = await sendToExpo(messages, payload.request_id);
 
-    return new Response(JSON.stringify({ sent: messages.length }), {
+    return new Response(JSON.stringify({ sent }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
-  } catch (err) {
-    console.error("[push notification] Delivery failed", { name: err instanceof Error ? err.name : "Unknown" });
+  } catch {
+    console.error("[push notification] Delivery failed", { category: "delivery_failed" });
     return new Response(JSON.stringify({ error: "push_failed" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },

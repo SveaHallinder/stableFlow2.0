@@ -1,0 +1,83 @@
+{
+  "authorSourceFreezeSHA256": "d824d40cced6bd6ce692b0bd328c38867edc056a0b7d6ca02582875d86243966",
+  "baselineMainHead": "ef793f472f6be14d7909219216a5f9bc3c7e4e00",
+  "fixtureHashes": {
+    "ownership-overlay.test.mjs.txt": "855bc1758f7dad28e41e70670358957d45a0b8b3be5cc6fbbe7f4ada1d5666ac",
+    "baseline-supabase.ts.txt": "eaf050a3f72a1505fbc7ad5f039a4b2f988a33833847d6273b5111fa036594af",
+    "primary-session-mutation.test.mjs.txt": "c0ef878ad16184adef0521d79bd54afb42509d62a9d2344ec0a27536d8bfcf30"
+  },
+  "sources": [
+    "app/(auth)/confirm.tsx",
+    "app/(auth)/index.tsx",
+    "app/settings/account.tsx",
+    "app/settings/notifications.tsx",
+    "context/AuthContext.tsx",
+    "hooks/usePushNotifications.ts",
+    "lib/notifications.ts",
+    "lib/supabase.ts",
+    "supabase/functions/_shared/push-receipts.ts",
+    "supabase/functions/send-push-notification/index.ts"
+  ],
+  "scenarios": [
+    {
+      "label": "ownership",
+      "harness": "ownership-overlay.test.mjs",
+      "report": "candidate-runtime.json",
+      "args": [],
+      "names": [
+        "P1 diagnostic old failed-cleanup token vs candidate active owner and generic payload",
+        "successful release clears only captured device and ordinary own-account routing remains available",
+        "reload cache-miss cleanup uses own row and unchanged read-state epoch, without touching other devices",
+        "B opt-out is respected after transfer while inactive A row remains in old per-user table",
+        "captured account mismatch after native token acquisition cannot dispatch any ownership RPC",
+        "hook A/B/A and unmount invalidate old token acquisition before DB work",
+        "server CAS rejects already dispatched old A claim after B bind even when SDK changes back A",
+        "registration deadline stops late claim acknowledgement and uses no stale client cache",
+        "invalid state/claim ACK and hostile RPC error fail closed without private logs",
+        "active binding RPC error/malformed/foreign/duplicate acknowledgement has no provider fallback",
+        "fullreceipt prepare model rejects active lookup snapshot if B binding changes before reservation",
+        "best-effort release deadline leaves logout usable and late release cannot remove B or another device",
+        "release malformed or false ACK is logged safely and does not throw/block logout",
+        "generic message/pass/important/urgent alerts omit all private fields and preserve recipient UID and request identity",
+        "recipient-side blocks and info/feed suppression are preserved",
+        "actual hook tap fences missing/foreign UID, A/B/A captured listener, unmount and SDK identity; own generic tap routes",
+        "actual settings activation callback passes captured scope through async native registration and rejects A/B/A",
+        "REV2 stale A logout waiting for release cannot sign out newly active B",
+        "REV2 direct cached A1 cleanup retains snapshot captured before awaited A/B/A session check",
+        "REV2 actual Auth listener invalidates A1 cache-miss cleanup across batched A/B/A without intermediate render",
+        "REV2 late SDK logout error cannot clear B local UI after actual A SDK call completed",
+        "REV2 current own account remains locally logoutable after SDK signout error",
+        "REV2 unmount during cleanup prevents stale global SDK signout",
+        "REV2 null token and uncertain release cleanup do not block current A logout or delete other devices",
+        "REV2 cache-miss read-state wait cannot release A2 after account epoch changes"
+      ]
+    },
+    {
+      "label": "primary",
+      "harness": "primary-session-mutation.test.mjs",
+      "report": "primary-mutation-source.json",
+      "args": [],
+      "names": [
+        "A mutation gate acquired first: actual confirmation waits, logout authenticates A, then B survives",
+        "B password login gate acquired first: captured A callback aborts after gate acquisition without logout",
+        "already acquired SDK lock queues actual signOut internally while B actual password mutation waits app gate",
+        "actual navigatorLock helper with shared LockManager adapter serializes two SDK clients and distinct app/auth names",
+        "all four primary UI mutations are wrapped; recovery-client setSession remains byte-identical"
+      ]
+    },
+    {
+      "label": "unsupported-web",
+      "harness": "primary-session-mutation.test.mjs",
+      "report": "no-weblocks-boundary-source.json",
+      "args": [
+        "--no-weblocks-boundary"
+      ],
+      "names": [
+        "unsupported no-WebLocks web refuses logout before cleanup and SDK, with actual visible account caller",
+        "legacy peer B shared-storage session survives unsupported current-web logout without false local SIGNED_OUT",
+        "unsupported actual login and confirmation helpers retain session and use fixed visible copy"
+      ]
+    }
+  ],
+  "expectedCases": 33
+}
