@@ -32,7 +32,11 @@ GitHub-körningarna på exakt publicerad commit är slutgrind för hela Node-svi
 
 `app/(tabs)/index.tsx` rättar även kortens singular: `1 hagar · 1 hästar` blir `1 hage · 1 häst`, och `1 lediga pass` blir `1 ledigt pass`. Endast orden ändras; räknare, behörigheter, tomt läge och varningen för obekräftade hästkopplingar är oförändrade.
 
-Loggfixens commit `562d5f8286b6e69cb057ba145231fa30207141ee` har passerat båda GitHub-körningarna: 545 Node-prov, inga fel/skippade, och 106 offline UI-prov vardera. Språkändringen har en egen ny commit och måste få samma kvittens på sin SHA.
+Loggfixens commit `562d5f8286b6e69cb057ba145231fa30207141ee` och språkändringens `37c187a6da633a153682a5a28fe741e8d8605a64` har passerat båda GitHub-körningarna: 545 Node-prov, inga fel/skippade, och 106 offline UI-prov vardera.
+
+## Riktad lint av regressionstestet
+
+En extra kontroll av den nya testfilen hittade `no-undef` för `URL` på rad 8. Testet importerar nu `URL` uttryckligen från befintliga Node `node:url`. Riktad lint och samma sex SDK-prov passerar. Ingen dependency, produktfunktion eller schemaändring ingår. Den nya commitens fulla CI ska kontrolleras på dess egen SHA.
 
 ## Återstående slutprov och beslut
 
