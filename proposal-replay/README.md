@@ -16,6 +16,8 @@ Fullschema-fixturen är byteidentisk med granskad schema-bas `11b8ff239ff1857a71
 
 Unread och nya rate target/delete-replayen behåller vanlig `postgres NOSUPERUSER BYPASSRLS`, separat Auth-tabellägare och uttrycklig SELECT-only-kontroll mot `auth.users`. Aktuella Hosted-katalogen tillåter även UPDATE/row-lock, men förslagen använder endast Auth-SELECT efter profile KEY SHARE. Den äldre quota/retry-drivern behåller sin superuser-fixture för setup/observer och kör skrivarna som `authenticated`; den är concurrency-bevis, inte Hosted-behörighetsacceptans. Auth-claims är syntetiska GUC-värden, inte signerade JWT.
 
+PostgreSQL 16 kräver att själva bootstraprollen förblir superuser. Därför startar de två behörighetsfixturerna med en separat fixture-admin, skapar `postgres` för schemauppsättningen och demoterar endast den senare rollen före kandidatproven. Varje klon har uttrycklig `OWNER postgres`, så även public-schemats CREATE-behörighet följer den avsedda ägarmodellen. SQL-fixturerna ändras inte.
+
 Rate-förslagens 10 posts, 30 comments, 120 likes, 60 messages och 20 alerts per första-skrivning-förankrat 60-sekundersfönster kräver separat godkännande. Target/delete-replayen använder kvot 2 för att prova gränsen. Inget kvotval blir produktregel genom denna testgren. Detta SQL-paket är oberoende av unread-UI:s senare retry-revisioner.
 
 ## Kör och granska
@@ -35,3 +37,5 @@ python3 -B proposal-replay/rate-duplicate-target.py --run-local-replay --receipt
 5. Kontrollera exit 0 och JSON-kvitton: unread `status=PASS`, quota/retry `result=PASS` för båda versionerna och target/delete `state=PASS_SYNTHETIC_LOCAL_REPLAY_ONLY`. Kontrollera förväntade antal 24, 6/6 och 22, aktuella SQL-SHA samt cleanup-fält. Bevara kvittona. Befintlig vanlig repo-CI kör också på grenen och är oförändrad.
 
 Ingen aktuell Linux-SQL-körning har ännu verifierats när detta paket förbereds. Macens tidigare `initdb`-startupfel ersätts inte av käll- eller syntaxkontroller. Publicering av testgrenen och dess faktiska CI-kvitton hanteras separat av releaseägaren.
+
+Körning `37738783685` på `df220776c8e82708973abda2456715f1d55377da` startade jobbet men stoppade i unread-fixturens setup med PostgreSQL `0A000: The bootstrap user must have the SUPERUSER attribute.` Den är inte ett godkänt SQL-prov. Bootstrap-/ägarmodellen ovan rättar just testuppsättningen; en ny grön körning med exakta SQL-hashar krävs fortfarande.

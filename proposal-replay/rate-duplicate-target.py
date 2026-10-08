@@ -343,16 +343,17 @@ def run_replay(receipt_path, binding):
             hold.close()
 
     try:
-        done = command("initdb", ["-D", str(data), "-U", "postgres", "--auth=trust", "--no-locale", "-E", "UTF8"])
+        done = command("initdb", ["-D", str(data), "-U", "sf_fixture_admin", "--auth=trust", "--no-locale", "-E", "UTF8"])
         assert done.returncode == 0, done.stderr
         initialized = True
         done = command("pg_ctl", ["-D", str(data), "-l", str(directory / "postgres.log"), "-o",
                                   f"-k {socket} -p {PORT} -c listen_addresses=''", "-w", "start"])
         assert done.returncode == 0, done.stderr
         started = True
+        sql("postgres", "create role postgres login superuser;", role="sf_fixture_admin")
         report["postgres_version"] = sql("postgres", "show server_version;")
         sql("postgres", "create role authenticated nologin; create role anon nologin; "
-            "create role service_role nologin bypassrls; create role sf_fixture_admin login superuser; "
+            "create role service_role nologin bypassrls; "
             "create database full_fixture;")
         sql("full_fixture", """
           create schema auth;
@@ -385,7 +386,7 @@ def run_replay(receipt_path, binding):
         """)
         sql("postgres", "alter role postgres nosuperuser bypassrls;", role="sf_fixture_admin")
         for database, path in (("baseline", "original.sql"), ("repaired", "social_rate_limits.sql")):
-            sql("postgres", f"create database {database} template full_fixture;", role="sf_fixture_admin")
+            sql("postgres", f"create database {database} owner postgres template full_fixture;", role="sf_fixture_admin")
             assert sql(database, "select not rolsuper and rolbypassrls from pg_roles where rolname=current_user;") == "t"
             assert sql(database, "select has_table_privilege(current_user,'auth.users','SELECT') and not has_table_privilege(current_user,'auth.users','UPDATE');") == "t"
             sql(database, "begin;\n" + SOURCES[path].read_text() + "\ncommit;")
