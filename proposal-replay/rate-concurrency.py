@@ -40,9 +40,10 @@ def tx(name,q):
         for line in p.stdout: stdout.put(line.strip())
     def readerr():
         for line in p.stderr:errors.append(line)
-    threading.Thread(target=readout,daemon=True).start();threading.Thread(target=readerr,daemon=True).start()
+    readers=[threading.Thread(target=readout,daemon=True),threading.Thread(target=readerr,daemon=True)]
+    for reader in readers:reader.start()
     p.stdin.write(f"set application_name='{name}';"+q+'\n');p.stdin.flush()
-    return p,stdout,errors
+    return p,stdout,errors,readers
 
 def wait_marker(worker,marker):
     end=time.monotonic()+5
@@ -65,6 +66,8 @@ def finish(worker,command='commit;'):
     try: worker[0].stdin.close()
     except BrokenPipeError: pass
     worker[0].wait(timeout=8)
+    for reader in worker[3]:reader.join(timeout=2)
+    assert all(not reader.is_alive() for reader in worker[3]),'[proposal rate] Transaction output did not finish after its process exited.'
     return worker[0].returncode,''.join(worker[2])
 
 def set_counter(feature,count):
@@ -131,6 +134,6 @@ finally:
             subprocess.run([str(pg/'pg_ctl'),'-D',str(data),'-m','fast','-w','stop'],check=True,capture_output=True,env=env,timeout=20)
     finally:
         shutil.rmtree(work)
-    receipt={'result':'FAIL' if sys.exc_info()[0] else 'PASS','status':'PROPOSAL FIXTURE REPLAY ONLY; no Hosted installation','stage':stage,'source_head':bindings['source_head'],'driver_source_sha256':bindings['rate']['source_concurrency_driver_sha256'],'schema_sha256':hashlib.sha256(schema.encode()).hexdigest(),'sql_sha256':hashlib.sha256(proposal.encode()).hexdigest(),'postgres_version':subprocess.check_output([str(pg/'postgres'),'--version'],text=True).strip(),'provider_requests':0,'tcp_enabled':False,'cluster_removed':True,'children_stopped':all(p.poll() is not None for p in children),'checks':results}
+    receipt={'result':'FAIL' if sys.exc_info()[0] else 'PASS','status':'PROPOSAL FIXTURE REPLAY ONLY; no Hosted installation','stage':stage,'source_head':bindings['source_head'],'driver_source_sha256':bindings['rate']['source_concurrency_driver_sha256'],'packaged_driver_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'schema_sha256':hashlib.sha256(schema.encode()).hexdigest(),'sql_sha256':hashlib.sha256(proposal.encode()).hexdigest(),'postgres_version':subprocess.check_output([str(pg/'postgres'),'--version'],text=True).strip(),'provider_requests':0,'tcp_enabled':False,'cluster_removed':True,'children_stopped':all(p.poll() is not None for p in children),'checks':results}
     (reports/f'rate-concurrency-{stage}-result.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(json.dumps({'checks':len(results),'findings':sum(r['result']=='CONFIRMED FINDING' for r in results),'sql_sha256':receipt['sql_sha256'],'schema_sha256':receipt['schema_sha256'],'all_processes_stopped':receipt['children_stopped']}))

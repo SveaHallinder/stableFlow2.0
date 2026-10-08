@@ -39,3 +39,5 @@ python3 -B proposal-replay/rate-duplicate-target.py --run-local-replay --receipt
 Ingen aktuell Linux-SQL-körning har ännu verifierats när detta paket förbereds. Macens tidigare `initdb`-startupfel ersätts inte av käll- eller syntaxkontroller. Publicering av testgrenen och dess faktiska CI-kvitton hanteras separat av releaseägaren.
 
 Körning `37738783685` på `df220776c8e82708973abda2456715f1d55377da` startade jobbet men stoppade i unread-fixturens setup med PostgreSQL `0A000: The bootstrap user must have the SUPERUSER attribute.` Den är inte ett godkänt SQL-prov. Bootstrap-/ägarmodellen ovan rättar just testuppsättningen; en ny grön körning med exakta SQL-hashar krävs fortfarande.
+
+Körning `37740334570` på `196987c662fd70e2b29b5d3ff79fc7daf0fb9d69` verifierade samtliga 24 unread-prov med vanlig NOSUPERUSER/BYPASSRLS-roll och den negativa quota-versionens sex fall. Den positiva quota/retry-drivern stoppade efter tre fall: dess subprocess hade avslutats med kod 3 innan stderr-lästråden var klar. Drivern väntar nu på båda utmatningstrådarna innan exakt SQLSTATE kontrolleras. Assertions och SQL-fixturer är oförändrade; inga saknade felkoder accepteras.
