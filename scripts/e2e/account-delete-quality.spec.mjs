@@ -139,6 +139,7 @@ async function productionAccount(page, { holdDeletion = false } = {}) {
   await page.goto('/settings');
   await page.getByText('Konto', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Radera konto', exact: true })).toBeVisible();
+  await expect(page.getByRole('radio', { name: 'Välj Offline Ny ägare som ny ägare', exact: true })).toBeVisible();
   return { deletes, blockedWrites, storageKey, releaseDeletion: () => releaseDelete?.() };
 }
 
