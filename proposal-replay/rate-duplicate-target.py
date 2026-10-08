@@ -161,6 +161,8 @@ class Worker:
 
 def claim(statement, name):
     return (f"set application_name='{name}'; set statement_timeout='12s'; "
+            "do $$begin if current_user <> 'authenticated' then raise exception using "
+            "errcode='42501', message='[social rate replay] Authenticated writer login required.'; end if; end$$; "
             "begin; set local role authenticated; "
             f"set local request.jwt.claim.sub='{A}'; "
             "set local request.jwt.claim.role='authenticated'; " + statement + "; commit;\n")
@@ -247,7 +249,7 @@ def run_replay(receipt_path, binding):
         return session
 
     def worker(database, statement):
-        process = Worker(connection(database), environment, statement)
+        process = Worker(connection(database, "authenticated"), environment, statement)
         children.append(process)
         return process
 
@@ -352,7 +354,7 @@ def run_replay(receipt_path, binding):
         started = True
         sql("postgres", "create role postgres login superuser;", role="sf_fixture_admin")
         report["postgres_version"] = sql("postgres", "show server_version;")
-        sql("postgres", "create role authenticated nologin; create role anon nologin; "
+        sql("postgres", "create role authenticated login; create role anon nologin; "
             "create role service_role nologin bypassrls; "
             "create database full_fixture;")
         sql("full_fixture", """
@@ -415,10 +417,10 @@ def run_replay(receipt_path, binding):
             row = uid(3000 + index)
             sql("repaired", insertion(table, row, seed=True) + ";")
             full_counter("repaired", table)
-            sql("repaired", claim(insertion(table, row), "sf-rate-ordinary-retry"), error="23505")
+            sql("repaired", claim(insertion(table, row), "sf-rate-ordinary-retry"), role="authenticated", error="23505")
             assert_count("repaired", table)
-            sql("repaired", claim(f"delete from public.{table} where id='{row}'", "sf-rate-completed-delete"))
-            sql("repaired", claim(insertion(table, row), "sf-rate-after-delete"), error="PT429")
+            sql("repaired", claim(f"delete from public.{table} where id='{row}'", "sf-rate-completed-delete"), role="authenticated")
+            sql("repaired", claim(insertion(table, row), "sf-rate-after-delete"), role="authenticated", error="PT429")
             assert_count("repaired", table)
             assert sql("repaired", f"select count(*) from public.{table} where id='{row}'") == "0"
             passed(f"REV2 {table}: ordinary duplicate still returns 23505; already-committed DELETE returns PT429 without new row or count change")
