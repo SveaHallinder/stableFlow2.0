@@ -73,7 +73,7 @@ export const ScreenHeader = ({
           )
           : showSearch
         ? (
-          <HeaderIconButton onPress={onPressSearch}>
+          <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch}>
             <SearchIcon width={20} height={20} />
           </HeaderIconButton>
         )
@@ -129,7 +129,7 @@ export default ScreenHeader;
 
 const styles = StyleSheet.create({
   titleStack: {
-    maxWidth: '80%',
+    maxWidth: '100%',
     alignItems: 'center',
     gap: 2,
   },
@@ -157,11 +157,11 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   titleDesktop: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '700',
     color: systemPalette.textPrimary,
     letterSpacing: -0.8,
-    lineHeight: 36,
+    lineHeight: 40,
   },
   subtitleDesktop: {
     fontSize: 15,
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   metaText: {
-    fontSize: 12,
+    fontSize: 13,
     color: systemPalette.textMuted,
     letterSpacing: -0.1,
   },

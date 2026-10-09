@@ -105,7 +105,7 @@ async function qaState(page, fixture = null) {
 
 async function boot(page) {
   await page.goto('/?qaDemo=1');
-  await expect(visibleText(page, 'Stallstatus först')).toBeVisible();
+  await expect(visibleText(page, 'Läget i stallet')).toBeVisible();
   await qaState(page);
   await page.evaluate(() => { globalThis.__coreDocumentMarker = 'qaDemo-core-single-document'; });
 }
@@ -134,6 +134,8 @@ function careRow(page, title) {
 
 test('Idag → claim and complete the same assignment → updated Today counts', async ({ page }, testInfo) => {
   await boot(page);
+  const completedSummary = visibleText(page, 'Klara idag').locator('..');
+  await expect(completedSummary.getByText('0 / 2', { exact: true })).toBeVisible();
   await button(page, 'Lediga pass').click();
   await button(page, 'Ta Lunchfodring').click();
   await visibleText(page, 'Mina').click();
@@ -141,7 +143,8 @@ test('Idag → claim and complete the same assignment → updated Today counts',
   await button(page, 'Markera Lunchfodring klart').click();
   await expect(button(page, 'Markera Lunchfodring klart')).toHaveCount(0);
   await navigateTab(page, 'Idag');
-  await expect(visibleText(page, '1/2').first()).toBeVisible();
+  await expect(completedSummary.getByText('1 / 2', { exact: true })).toBeVisible();
+  await expect(visibleText(page, 'Saknar ansvarig').locator('..').getByText('0', { exact: true })).toBeVisible();
   await expect(button(page, 'Lediga pass')).toContainText('Alla pass är bemannade');
   await screenshot(page, testInfo, 'assignment-completed-today');
   const state = await qaState(page);

@@ -73,6 +73,33 @@ async function screenshotModal(page, testInfo, anchor, filename) {
   await page.screenshot({ path: testInfo.outputPath(filename), fullPage: true });
 }
 
+test('mobile calendar keeps the colour explanation optional and week controls readable', async ({ page }, testInfo) => {
+  await page.goto('/calendar?qaDemo=1&view=all');
+  const explanation = page.getByRole('button', { name: 'Färgförklaring', exact: true });
+  await expect(explanation).toHaveAttribute('aria-expanded', 'false');
+  await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
+  await explanation.click();
+  await expect(explanation).toHaveAttribute('aria-expanded', 'true');
+  await expect(visibleText(page, 'Fodring saknas')).toBeVisible();
+  await explanation.click();
+  await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
+  for (const name of ['Föregående vecka', 'Nästa vecka']) {
+    const control = page.getByRole('button', { name, exact: true });
+    await expect(control).toBeVisible();
+    const bounds = await control.boundingBox();
+    expect(bounds.width).toBeGreaterThanOrEqual(44);
+    expect(bounds.height).toBeGreaterThanOrEqual(44);
+  }
+  await expect(page.getByLabel('Nytt pass', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ta Lunchfodring', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ta pass', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Stallschema', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Mina', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Mina', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Alla', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await page.screenshot({ path: testInfo.outputPath('calendar-compact-controls.png') });
+});
+
 test('Sunday afternoon opens the current week and shows today assignments', async ({ page }, testInfo) => {
   await page.clock.setFixedTime(new Date('2026-10-11T10:00:00Z'));
   await page.goto('/calendar?qaDemo=1&view=all');
@@ -84,6 +111,25 @@ test('Sunday afternoon opens the current week and shows today assignments', asyn
   await page.screenshot({ path: testInfo.outputPath('sunday-current-week.png'), fullPage: true });
   await visibleText(page, 'Morgonfodring').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('sunday-today-assignment.png'), fullPage: true });
+});
+
+test('narrow mobile mine view keeps the assignment name readable above both actions', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto('/calendar?qaDemo=1&view=mine');
+  const name = visibleText(page, 'Morgonfodring');
+  await expect(name).toBeVisible();
+  const title = await name.boundingBox();
+  expect(title.width).toBeGreaterThanOrEqual(140);
+  expect(title.height).toBeLessThanOrEqual(36);
+  for (const action of ['Släpp Morgonfodring', 'Markera Morgonfodring klart']) {
+    const button = page.getByRole('button', { name: action, exact: true });
+    await expect(button).toBeVisible();
+    const bounds = await button.boundingBox();
+    expect(bounds.height).toBeGreaterThanOrEqual(44);
+    expect(bounds.y).toBeGreaterThanOrEqual(title.y + title.height);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath('calendar-mine-320.png') });
 });
 
 test('Invalid recurring end retains the draft and correction saves the entered duration', async ({ page }, testInfo) => {

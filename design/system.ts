@@ -1,44 +1,44 @@
-import { radius, shadow, space } from './tokens';
+import { color, radius, shadow, space } from './tokens';
 
 export const systemPalette = {
-  background: '#F1F4F0',
+  background: color.bg,
   backgroundAlt: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#F4F5F3',
-  surfaceTint: '#F5F6F4',
-  surfaceGlass: 'rgba(255, 255, 255, 0.3)',
-  primary: '#3E9B5F',
-  accent: '#3E9B5F',
-  warning: '#E29833',
-  error: '#F95F5F',
-  success: '#2E9E5B',
-  info: '#5AA3FF',
-  badge: '#3E9B5F',
-  textPrimary: '#1B1E2F',
-  textSecondary: '#50526A',
-  textMuted: '#6E7490',
-  textDisabled: 'rgba(27, 30, 47, 0.32)',
+  surfaceAlt: '#F1F3EE',
+  surfaceTint: '#EDF3ED',
+  surfaceGlass: '#FAFAF7',
+  primary: color.tint,
+  accent: color.tint,
+  warning: '#9A631A',
+  error: '#BE4444',
+  success: '#28724B',
+  info: '#356EA0',
+  badge: color.tint,
+  textPrimary: color.text,
+  textSecondary: '#4D5D53',
+  textMuted: color.textMuted,
+  textDisabled: '#89948B',
   textInverse: '#FFFFFF',
-  icon: '#1B1E2F',
-  border: 'rgba(27, 30, 47, 0.08)',
-  borderMuted: 'rgba(27, 30, 47, 0.04)',
-  overlay: 'rgba(15, 22, 34, 0.08)',
+  icon: color.text,
+  border: color.divider,
+  borderMuted: '#ECEFE8',
+  overlay: 'rgba(32, 44, 39, 0.28)',
 };
 
 export const systemStatus = {
-  feeding: '#F95F5F',
-  cleaning: '#2D6CF6',
-  riderAway: '#E29833',
-  farrierAway: '#5AA3FF',
-  vetAway: '#2FA3A9',
-  evening: '#5E5CE6',
-  neutral: '#1BA97A',
+  feeding: '#A65E34',
+  cleaning: '#356EA0',
+  riderAway: '#9A631A',
+  farrierAway: '#356EA0',
+  vetAway: '#287C79',
+  evening: '#6C5A91',
+  neutral: '#28724B',
 };
 
 export const systemGradients = {
-  background: ['#EFF3ED', '#F5F7F2'] as const,
-  action: ['#4FBE7A', '#3E9B5F'] as const,
-  weather: ['#3A73FF', '#5F96FF'] as const,
+  background: [color.bg, color.bg] as const,
+  action: ['#326B52', color.tint] as const,
+  weather: ['#356EA0', '#477EAA'] as const,
 };
 
 export const systemTypography = {
@@ -67,9 +67,9 @@ export const systemTypography = {
     color: systemPalette.textPrimary,
   },
   body: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '400' as const,
-    lineHeight: 22,
+    lineHeight: 24,
     color: systemPalette.textSecondary,
   },
   caption: {
@@ -98,28 +98,28 @@ export const systemRadius = radius;
 
 export const quickActionVariants = {
   primary: {
-    gradient: ['#EAF6EE', '#F6FBF8'] as [string, string],
-    icon: '#3E9B5F',
-    accentBorder: 'rgba(62, 155, 95, 0.18)',
-    shadow: 'rgba(62, 155, 95, 0.12)',
+    gradient: ['#EDF3ED', '#EDF3ED'] as [string, string],
+    icon: color.tint,
+    accentBorder: '#DAE5D9',
+    shadow: 'rgba(36, 87, 67, 0.04)',
   },
   accent: {
-    gradient: ['#EAF6EE', '#F6FBF8'] as [string, string],
-    icon: '#3E9B5F',
-    accentBorder: 'rgba(62, 155, 95, 0.18)',
-    shadow: 'rgba(62, 155, 95, 0.12)',
+    gradient: ['#EDF3ED', '#EDF3ED'] as [string, string],
+    icon: color.tint,
+    accentBorder: '#DAE5D9',
+    shadow: 'rgba(36, 87, 67, 0.04)',
   },
   warning: {
-    gradient: ['#FFF6EB', '#FFF9F1'] as [string, string],
-    icon: '#E29833',
-    accentBorder: 'rgba(226, 152, 51, 0.18)',
-    shadow: 'rgba(226, 152, 51, 0.12)',
+    gradient: ['#FAF2E5', '#FAF2E5'] as [string, string],
+    icon: systemPalette.warning,
+    accentBorder: '#E9DABC',
+    shadow: 'rgba(154, 99, 26, 0.04)',
   },
 };
 
 export const surfacePresets = {
-  hero: '#F0F7F2',
-  section: '#F6F8F5',
+  hero: '#EDF3ED',
+  section: '#FAFAF7',
   card: systemPalette.surface,
   subtle: systemPalette.surfaceAlt,
 };

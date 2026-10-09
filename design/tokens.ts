@@ -16,13 +16,13 @@ export const space = {
 };
 
 export const color = {
-  bg: '#FFFFFF', // crisp canvas
+  bg: '#F6F5F1',
   card: '#FFFFFF',
-  cardGlass: 'rgba(255, 255, 255, 0.72)',
-  text: '#101622',
-  textMuted: 'rgba(16, 22, 34, 0.55)',
-  divider: 'rgba(16, 22, 34, 0.08)',
-  tint: '#3E9B5F',
+  cardGlass: '#FAFAF7',
+  text: '#202C27',
+  textMuted: '#66736B',
+  divider: '#E2E6DF',
+  tint: '#245743',
 };
 
 export const shadow = {
@@ -34,16 +34,16 @@ export const shadow = {
       shadowOffset: { width: 0, height: 0 },
     },
     micro: {
-      shadowColor: 'rgba(15, 22, 38, 0.05)',
-      shadowOpacity: 1,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 3 },
+      shadowColor: '#202C27',
+      shadowOpacity: 0.03,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
     },
     small: {
-      shadowColor: 'rgba(15, 22, 38, 0.08)',
-      shadowOpacity: 1,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
+      shadowColor: '#202C27',
+      shadowOpacity: 0.04,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
     },
     medium: {
       shadowColor: 'rgba(15, 22, 38, 0.12)',

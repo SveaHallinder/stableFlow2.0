@@ -2,24 +2,12 @@ import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAuth } from '@/context/AuthContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
-
-// SVG imports
-import DashOutlineIcon from '@/assets/images/tabbar-outl-dash.svg';
-import DashFillIcon from '@/assets/images/Tabbar-dash.svg';
-import CalendarOutlineIcon from '@/assets/images/tabbar-cal.svg';
-import CalendarFillIcon from '@/assets/images/tabbar-fill-cal.svg';
-import HomeOutlineIcon from '@/assets/images/tabbar-home.svg';
-import HomeFillIcon from '@/assets/images/tabbar-fill-home.svg';
-import MessageOutlineIcon from '@/assets/images/tabbar-msg.svg';
-import MessageFillIcon from '@/assets/images/tabbar-fill-msg.svg';
-import ProfileOutlineIcon from '@/assets/images/tabbar-prof.svg';
-import ProfileFillIcon from '@/assets/images/tabbar-fill-prof.svg';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -52,11 +40,12 @@ export default function TabLayout() {
           ? styles.tabBarHidden
           : isDesktopWeb
             ? [styles.tabBar, styles.tabBarHidden]
-            : [styles.tabBar, { bottom: Math.max(20, insets.bottom) }],
+            : [styles.tabBar, { bottom: Math.max(12, insets.bottom) }],
         tabBarBackground: isDesktopWeb
           ? undefined
           : () => <BlurView intensity={12.5} style={styles.blurBackground} />,
-        tabBarActiveTintColor: palette.icon,
+        tabBarActiveTintColor: palette.primary,
+        tabBarActiveBackgroundColor: palette.surfaceTint,
         tabBarInactiveTintColor: palette.secondaryText,
         tabBarItemStyle: styles.tabBarItem,
         tabBarShowLabel: true,
@@ -68,13 +57,7 @@ export default function TabLayout() {
         options={{
           title: 'Idag',
           tabBarAccessibilityLabel: 'Idag',
-          tabBarIcon: ({ color, focused }) => (
-            focused ? (
-              <DashFillIcon width={23} height={25} />
-            ) : (
-              <DashOutlineIcon width={23} height={25} />
-            )
-          ),
+          tabBarIcon: ({ color }) => <Feather name="grid" size={23} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -92,13 +75,7 @@ export default function TabLayout() {
         options={{
           title: 'Schema',
           tabBarAccessibilityLabel: 'Schema',
-          tabBarIcon: ({ color, focused }) => (
-            focused ? (
-              <CalendarFillIcon width={25} height={25} />
-            ) : (
-              <CalendarOutlineIcon width={25} height={25} />
-            )
-          ),
+          tabBarIcon: ({ color }) => <Feather name="calendar" size={23} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -106,13 +83,7 @@ export default function TabLayout() {
         options={{
           title: 'Feed',
           tabBarAccessibilityLabel: 'Feed',
-          tabBarIcon: ({ color, focused }) => (
-            focused ? (
-              <HomeFillIcon width={24} height={24} />
-            ) : (
-              <HomeOutlineIcon width={24} height={24} />
-            )
-          ),
+          tabBarIcon: ({ color }) => <Feather name="file-text" size={23} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -120,13 +91,7 @@ export default function TabLayout() {
         options={{
           title: 'Chat',
           tabBarAccessibilityLabel: 'Chat',
-          tabBarIcon: ({ color, focused }) => (
-            focused ? (
-              <MessageFillIcon width={25} height={25} />
-            ) : (
-              <MessageOutlineIcon width={25} height={25} />
-            )
-          ),
+          tabBarIcon: ({ color }) => <Feather name="message-circle" size={23} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -134,13 +99,7 @@ export default function TabLayout() {
         options={{
           href: null,
           tabBarAccessibilityLabel: 'Profil',
-          tabBarIcon: ({ color, focused }) => (
-            focused ? (
-              <ProfileFillIcon width={22} height={25} />
-            ) : (
-              <ProfileOutlineIcon width={22} height={25} />
-            )
-          ),
+          tabBarIcon: ({ color }) => <Feather name="user" size={23} color={color} />,
         }}
       />
     </Tabs>
@@ -163,18 +122,18 @@ export default function TabLayout() {
 const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
-    bottom: 20,
-    marginLeft: 20,
-    marginRight: 20,
-    paddingTop: 0,
-    paddingBottom: 0,
+    bottom: 12,
+    marginLeft: 12,
+    marginRight: 12,
+    paddingTop: 4,
+    paddingBottom: 4,
     alignItems: 'center',
     height: 72,
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderWidth: 1.5,
-    borderRadius: radii.full,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderRadius: radii.lg,
     borderColor: palette.border,
-    paddingHorizontal: 5,
+    paddingHorizontal: 4,
     flexDirection: 'row',
     justifyContent: 'space-between',
     overflow: 'hidden',
@@ -185,12 +144,14 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: radii.full,
+    borderRadius: radii.lg,
   },
   tabBarItem: {
-    paddingVertical: 6,
+    paddingVertical: 4,
     paddingHorizontal: 0,
     minHeight: 56,
+    borderRadius: radii.md,
+    marginHorizontal: 2,
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
@@ -209,22 +170,17 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background,
   },
   desktopSidebar: {
-    width: 272,
-    paddingHorizontal: 24,
+    width: 240,
+    paddingHorizontal: 20,
     paddingTop: 28,
     paddingBottom: 24,
     borderRightWidth: StyleSheet.hairlineWidth,
-    borderRightColor: 'rgba(27, 30, 47, 0.06)',
-    backgroundColor: '#FFFFFF',
-    shadowColor: 'rgba(15,22,34,0.04)',
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    shadowOffset: { width: 4, height: 0 },
-    elevation: 1,
+    borderRightColor: palette.border,
+    backgroundColor: palette.surface,
   },
   desktopMain: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: '#FBFCFB',
+    backgroundColor: palette.background,
   },
 });

@@ -5,7 +5,7 @@ const SCREEN_DIR = process.env.E2E_SCREENS ?? '/tmp/stableflow-e2e-screens';
 
 async function bootDemo(page) {
   await page.goto(`${BASE_URL}/?qaDemo=1`, { waitUntil: 'domcontentloaded' });
-  await expect(page.getByText('Stallstatus först')).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText('Läget i stallet')).toBeVisible({ timeout: 30000 });
 }
 
 test.describe('Phase 6 — Stable alerts separated from feed/chat', () => {

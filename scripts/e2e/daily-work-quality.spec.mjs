@@ -71,7 +71,7 @@ async function loadFixture(page, fixture) {
 
 test('Idag and Mina pass agree on the current stable', async ({ page }, testInfo) => {
   await page.goto('/?qaDemo=1');
-  await expect(page.getByText('Stallstatus först', { exact: true })).toBeVisible();
+  await expect(page.getByText('Läget i stallet', { exact: true })).toBeVisible();
   await loadFixture(page, 'other-stable');
   const next = page.getByText('Nästa: Lunch i valt stall · 12:00', { exact: true });
   await expect(next).toBeVisible();

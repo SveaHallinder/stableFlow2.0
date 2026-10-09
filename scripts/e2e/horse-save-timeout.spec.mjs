@@ -95,7 +95,7 @@ async function offlineSession(page, { horses, save, remove }) {
   await page.getByPlaceholder('namn@exempel.se').fill(user.email);
   await page.getByPlaceholder('Minst 8 tecken').fill('OfflineFixture1234!');
   await page.getByRole('button', { name: 'Logga in', exact: true }).last().click();
-  await expect(page.getByText('Stallstatus först', { exact: true })).toBeVisible();
+  await expect(page.getByText('Läget i stallet', { exact: true })).toBeVisible();
   await page.goto('/stables?section=horses');
   await expect(page.getByText(horseRow.name, { exact: true })).toBeVisible();
   await page.clock.install();

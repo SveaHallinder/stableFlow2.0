@@ -51,7 +51,7 @@ test.describe('Staging QA — Balanced MVP plan steg 1-9', () => {
     const context = await isolatedContext(browser);
     const page = await context.newPage();
     await loginAs(page, 'admin');
-    await expect(page.getByText('Stallstatus först').first()).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Läget i stallet').first()).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Saknar ansvarig').first()).toBeVisible();
     await page.screenshot({ path: `${SCREEN_DIR}/qa-step2-admin-idag.png`, fullPage: true });
     await context.close();

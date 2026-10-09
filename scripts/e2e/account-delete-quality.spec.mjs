@@ -135,7 +135,7 @@ async function productionAccount(page, { holdDeletion = false } = {}) {
   await page.getByPlaceholder('namn@exempel.se').fill(user.email);
   await page.getByPlaceholder('Minst 8 tecken').fill('OfflineFixture1234!');
   await page.getByRole('button', { name: 'Logga in', exact: true }).last().click();
-  await expect(page.getByText('Stallstatus först', { exact: true })).toBeVisible();
+  await expect(page.getByText('Läget i stallet', { exact: true })).toBeVisible();
   await page.goto('/settings');
   await page.getByText('Konto', { exact: true }).click();
   await expect(page.getByRole('button', { name: 'Radera konto', exact: true })).toBeVisible();
@@ -149,7 +149,7 @@ async function expectPersistentLogout(page, storageKey) {
     .toEqual([null, null, null]);
   await page.reload();
   await expect(page.getByPlaceholder('namn@exempel.se')).toBeVisible();
-  await expect(page.getByText('Stallstatus först', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Läget i stallet', { exact: true })).toHaveCount(0);
 }
 
 test('verified production-flow deletion clears persistent Auth and navigates without remote logout or push cleanup', async ({ page }) => {

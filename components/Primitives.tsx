@@ -36,7 +36,7 @@ export const Card = ({ style, children, elevated, tone = 'default', ...props }: 
       {
         backgroundColor: tone === 'muted' ? color.cardGlass : color.card,
         borderRadius: radius.lg,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderWidth: 1,
         borderColor: color.divider,
         ...getCardShadow(elevated),
       },
@@ -81,12 +81,11 @@ export const SearchBar = ({ style, ...props }: SearchBarProps) => (
     style={[
       {
         backgroundColor: color.card,
-        borderRadius: radius.xl,
+        borderRadius: radius.md,
         paddingVertical: space.md,
         paddingHorizontal: space.md,
-        borderWidth: StyleSheet.hairlineWidth,
+        borderWidth: 1,
         borderColor: color.divider,
-        ...(Platform.OS === 'ios' ? shadow.ios.micro : { elevation: shadow.android.small }),
       },
       style,
     ]}
@@ -107,7 +106,7 @@ export const SearchBar = ({ style, ...props }: SearchBarProps) => (
 
 const headerStyles = StyleSheet.create({
   container: {
-    height: 68, // Fixed height instead of minHeight for consistency
+    minHeight: 72,
     paddingHorizontal: space.sm,
     flexDirection: 'row',
     alignItems: 'center',
@@ -127,21 +126,21 @@ const headerStyles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '400',
+    fontSize: 24,
+    fontWeight: '700',
     color: color.text,
     textAlign: 'center',
-    letterSpacing: -0.3,
-    lineHeight: 26, // Consistent line height
+    letterSpacing: -0.6,
+    lineHeight: 30,
   },
   iconButton: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: systemPalette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: systemPalette.border,
   },
   titleStack: {
@@ -150,7 +149,7 @@ const headerStyles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 13,
-    fontWeight: '400',
+    fontWeight: '500',
     color: color.textMuted,
     letterSpacing: -0.2,
   },
@@ -162,14 +161,14 @@ const headerStyles = StyleSheet.create({
     paddingVertical: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: systemPalette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: systemPalette.border,
+    backgroundColor: systemPalette.primary,
+    borderWidth: 1,
+    borderColor: systemPalette.primary,
   },
   actionLabel: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '600',
-    color: color.text,
+    color: systemPalette.textInverse,
     letterSpacing: -0.2,
     textAlign: 'center',
   },
