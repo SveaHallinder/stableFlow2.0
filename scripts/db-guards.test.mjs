@@ -45,7 +45,7 @@ test('database guards enforce arena and owner invariants in the schema and appro
       create function auth.jwt() returns jsonb language sql stable as $$select '{}'::jsonb$$;
       create function auth.role() returns text language sql stable as $$select coalesce(nullif(current_setting('request.jwt.claim.role', true), ''), nullif(current_setting('role', true), 'none'))$$;
       create schema storage;
-      create table storage.objects(id uuid primary key, owner uuid, owner_id text);
+      create table storage.buckets(id text primary key, name text not null, public boolean default false); create table storage.objects(id uuid primary key, bucket_id text, name text, owner uuid, owner_id text, version text, metadata jsonb, updated_at timestamptz);
       alter table storage.objects enable row level security;
     `);
     sql('guards_schema', await readFile(join(root, 'supabase/schema.sql'), 'utf8'));

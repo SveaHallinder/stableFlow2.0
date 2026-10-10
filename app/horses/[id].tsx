@@ -31,6 +31,7 @@ import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { DateTimeField } from '@/components/DateTimeField';
+import { CareReminder } from '@/components/CareReminder';
 import { useAuth } from '@/context/AuthContext';
 
 const FEED_SLOTS: FeedSlot[] = ['morning', 'lunch', 'evening'];
@@ -323,6 +324,7 @@ export default function HorseProfileScreen() {
                 scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
+                horseName={horse.name}
                 events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
                 contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
                 canEdit={derived.permissions.canManageCareEvents}
@@ -1295,6 +1297,7 @@ type CareEventsEditorProps = {
   scopeKey: string;
   stableId: string;
   horseId: string;
+  horseName: string;
   events: CareEvent[];
   contacts: ExternalContact[];
   canEdit: boolean;
@@ -1308,6 +1311,7 @@ function CareEventsEditor({
   scopeKey,
   stableId,
   horseId,
+  horseName,
   events,
   contacts,
   canEdit,
@@ -1427,6 +1431,7 @@ function CareEventsEditor({
             </TouchableOpacity>
           </View>
         ) : null}
+        <CareReminder event={event} horseId={horseId} horseName={horseName} />
         {saving?.id === event.id ? (
           <Text>{saving.deleting ? 'Tar bort vårdhändelse…' : 'Sparar vårdhändelse…'}</Text>
         ) : null}

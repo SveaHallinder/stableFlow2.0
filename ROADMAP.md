@@ -1,9 +1,9 @@
 # StableFlow 2.0 — Roadmap till färdig produkt
 
-> Historiskt auditunderlag från 2026-06-13. Procentsiffrorna och äldre kvar-text nedan beskriver den tidpunkten.
-> Status 2026-10-07: **lokal pilotkandidat med verifierade webbflöden, sessionbunden chatt, vanligt Xcode-bygge och fem simulatorprov**. Beständig inbjudningslista finns; de godkända privata chattpolicyerna är applicerade i Supabase och ZZ:s hästprofil är skapad. Resultat, lokal Expo/Device Hub-gräns och QA finns i [senaste checkpoint](docs/checkpoints/2026-10-07-native-and-chat-session/README.md). Återställningsmejl är mottaget; lösenordsbyte och fysisk telefonacceptans återstår.
-> Fortfarande oavslutat: bestående oläststatus, seriehantering, automatiska vårdpåminnelser, server-rate-limit, push-receiptcleanup och native datumväljare. Mer hästidentitetsdata, chattbilagor och prenumeration kräver produktdefinitioner. Dessa funktioner räknas inte som klara.
-> Kvarvarande driftarbete: haginstallation/mappning, kontoraderingsfunktion enligt vald modell, inbjudningsleverans, realtime-publicering och EAS/native/push. Extern publicering väntar enligt användarens beslut. Slutprovet kräver dator plus den enda tillgängliga telefonen.
+> Status 2026-10-10: **pilotkandidat, ännu inte slutaccepterad**. Designleveransen `65692d43fc4b51b1effea2c8b0d08d6d7a6b895f` är pushad med grön GitHub-CI: 683 kodprov och 110 offline UI-prov samt lint, typkontroll och webbbygge. Idag, Hästar och Schema har tydligare innehåll och gemensam navigation på mobil och dator.
+> [Aktuell nulägesmatris och QA](docs/checkpoints/2026-10-10-release/README.md) skiljer verifierad kod, tidigare backendinstallation och återstående slutprov. Paketet för vårdpåminnelser, framtida passserier, privata bilder och säker kontoradering godkändes uttryckligen den 10 oktober och är integrerat med designen. Den samlade kandidaten klarar 786 kodprov och 112 offline UI-prov samt lint, typkontroll och webbbygge. Hosted-installationen följer efter grön CI på integrationscommitten.
+> Verklig inbjudnings-/återställningskedja, fysisk iPhone-inloggning och push återstår att slutprova. Extern publicering **väntar enligt användarens beslut**.
+> Resten av detta dokument är historiskt auditunderlag från 2026-06-13. Procentsiffror, checklistor och kvar-text nedan är inte aktuell releasestatus.
 
 ## Produktvision (målet)
 En multi-tenant SaaS (iOS/Android/Web) för stallhantering i Sverige/EU. En stallägare kan

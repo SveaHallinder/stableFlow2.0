@@ -21,7 +21,10 @@ import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUns
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { authRedirectUrl } from '@/lib/authRedirect';
-import { type AccountDeletionPlan, type AccountDeletionStatus, persistAccountDeletionPlan, readAccountDeletionPlan, readOwnAccountDeletionStatus, reserveAccountDeletionAttempt } from '@/lib/accountDeletionResume';
+import { type AccountDeletionPlan, type AccountDeletionStatus, persistAccountMediaJournal, persistAccountMediaReselect, reconcileAccountMediaJournal, persistAccountDeletionPlan, readAccountDeletionPlan, readOwnAccountDeletionStatus, reserveAccountDeletionAttempt } from '@/lib/accountDeletionResume';
+
+import { AccountMedia } from '@/components/AccountMedia';
+import { runAccountMediaRequest, type AccountMediaRequest, type AccountMediaResult } from '@/lib/accountMedia';
 
 const palette = theme.colors;
 
@@ -124,6 +127,8 @@ export default function AccountSettingsScreen() {
   const lockedPlan = deletionResume.userId === user?.id ? deletionResume.plan : null;
   const displayedOwnerId = lockedPlan ? lockedPlan.ownerId : selectedOwner?.id;
   const ownerChoiceLocked = deleting || Boolean(lockedPlan) || deletionResume.userId !== user?.id || deletionResume.status !== 'ready';
+  const mediaReceipt = deletionResume.userId === user?.id ? deletionResume.receipt?.media ?? null : null;
+  const mediaPending = Boolean(mediaReceipt && (mediaReceipt.blocked_count > 0 || ((mediaReceipt.own.delete_count + mediaReceipt.own.transfer_count) > 0 && mediaReceipt.own.state !== 'ready')));
   const ownerSelectionBlocked = requiresOwner && ((!lockedPlan && replacementOwners.length === 0) || lockedPlan?.ownerId === null);
 
   const refreshDeletionReceipt = React.useCallback(async (account: { userId: string | undefined }, signal?: AbortSignal) => {
@@ -134,7 +139,7 @@ export default function AccountSettingsScreen() {
     const receipt = await readOwnAccountDeletionStatus(account.userId, signal);
     if (signal?.aborted || securityAccountRef.current !== account) return null;
     if (receipt.status === 'pending') {
-      plan = await persistAccountDeletionPlan(account.userId, receipt.replacement_user_id);
+      plan = receipt.media?.own.plan_id ? await reconcileAccountMediaJournal(account.userId, receipt.media) : await persistAccountDeletionPlan(account.userId, receipt.replacement_user_id);
       if (signal?.aborted || securityAccountRef.current !== account) return null;
       deletionPlanRef.current = plan;
     }
@@ -267,7 +272,7 @@ export default function AccountSettingsScreen() {
   }, [savingEmail, security.newEmail, security.userId, user?.email, user?.id, toast]);
 
   const handleDeleteAccount = React.useCallback(async () => {
-    if (deletingRef.current || deleting) {
+    if (deletingRef.current || deleting || (!deletedAccountRef.current && mediaPending)) {
       return;
     }
     const account = securityAccountRef.current;
@@ -309,6 +314,10 @@ export default function AccountSettingsScreen() {
         const receipt = await Promise.race([refreshDeletionReceipt(account, controller.signal), deadline]);
         if (securityAccountRef.current !== account || !receipt) return;
         if (receipt.status !== 'deleted') {
+          if (!receipt.media || receipt.media.blocked_count > 0 || ((receipt.media.own.delete_count + receipt.media.own.transfer_count) > 0 && receipt.media.own.state !== 'ready')) {
+            toast.showToast('Kontrollera och slutför samma filplan först. Okända filer ändras inte och kontot har inte raderats.', 'error');
+            return;
+          }
           let plan = deletionPlanRef.current;
           if (plan && ((!previousPlan && receipt.status === 'pending') || (previousPlan && previousPlan.ownerId !== plan.ownerId))) {
             toast.showToast('Ett tidigare avslut har återlästs med sitt låsta ägarval. Kontrollera valet och bekräfta samma avslut igen.', 'error');
@@ -406,7 +415,42 @@ export default function AccountSettingsScreen() {
         setConfirmingDelete(false);
       }
     }
-  }, [deleting, confirmingDelete, toast, finishAccountDeletion, user?.id, router, requiresOwner, selectedOwner, deletionResume, refreshDeletionReceipt]);
+  }, [deleting, confirmingDelete, toast, finishAccountDeletion, user?.id, router, requiresOwner, selectedOwner, deletionResume, refreshDeletionReceipt, mediaPending]);
+
+  const mediaAccount = securityAccountRef.current;
+  const handleMediaAction = React.useCallback(async (request: AccountMediaRequest, stillCurrent: () => boolean): Promise<AccountMediaResult> => {
+    const account = mediaAccount;
+    const current = () => stillCurrent() && securityAccountRef.current === account && account.userId === request.expected_user_id;
+    if (!current() || !account.userId) return { success: false, outcome: 'rejected' };
+    try {
+      if (request.action === 'prepare_media') {
+        const fresh = await refreshDeletionReceipt(account);
+        if (!current() || !fresh?.media || fresh.media.blocked_count > 0 || fresh.media.own.plan_id !== null
+          || (fresh.requires_owner && request.replacement_user_id === null)
+          || (request.replacement_user_id !== null && !fresh.replacement_owners.some(person => person.user_id === request.replacement_user_id))) return { success: false, outcome: 'rejected' };
+        const plan = await persistAccountMediaJournal(account.userId, request.replacement_user_id, request.media_plan_generation);
+        if (!current()) return { success: false, outcome: 'uncertain' };
+        deletionPlanRef.current = plan;
+        setDeletionResume({ userId: account.userId, status: 'pending', plan, receipt: fresh });
+      }
+      if (request.action === 'reselect_media_owner') {
+        const fresh = await refreshDeletionReceipt(account);
+        if (!current() || !request.media_plan_id || !fresh?.media?.own.reselect_allowed || fresh.media.own.plan_id !== request.media_plan_id
+          || fresh.media.own.plan_generation !== request.media_plan_generation || fresh.media.own.replacement_user_id !== request.expected_replacement_user_id
+          || !request.replacement_user_id || !request.next_plan_generation
+          || !fresh.media.replacement_owners.some(person => person.user_id === request.replacement_user_id)) return { success: false, outcome: 'rejected' };
+        const plan = await persistAccountMediaReselect(account.userId, { planId: request.media_plan_id, expectedGeneration: request.media_plan_generation,
+          expectedOwner: request.expected_replacement_user_id, nextGeneration: request.next_plan_generation, nextOwner: request.replacement_user_id });
+        if (!current()) return { success: false, outcome: 'uncertain' };
+        deletionPlanRef.current = plan;
+        setDeletionResume({ userId: account.userId, status: 'pending', plan, receipt: fresh });
+      }
+      return await runAccountMediaRequest({ ...request }, current);
+    } catch (error) {
+      console.warn('[account media] Plan or receipt unavailable', error instanceof Error ? 'Error' : 'Unknown');
+      return { success: false, outcome: 'uncertain' };
+    }
+  }, [mediaAccount, refreshDeletionReceipt]);
 
   const handleSave = React.useCallback(async () => {
     if (!currentUser || savingProfileRef.current) {
@@ -617,10 +661,9 @@ export default function AccountSettingsScreen() {
               bevaras. Dina stall och gårdar överlåts till den nya ägare du väljer. Personen måste
               redan vara ägare i alla berörda stall. Raderingen går inte att ångra.
             </Text>
-            <Text style={styles.sectionHint}>
-              Filer behöver först en säker raderings- eller överlåtelseplan. Kontoradering med
-              egna eller okänt tillskrivna filer är därför stoppad tills filhanteringen är klar.
-            </Text>
+            {user?.id && !needsSessionCleanup ? <AccountMedia userId={user.id} sessionEpoch={securityAccountRef.current}
+              receipt={mediaReceipt} journalGeneration={lockedPlan?.mediaGeneration} ownerId={lockedPlan ? lockedPlan.ownerId : selectedOwner?.id ?? null}
+              onAction={handleMediaAction} onReload={handleCheckDeletionStatus} /> : null}
             {!needsSessionCleanup ? (
               <View>
                 <Text style={styles.sectionTitle}>Ny ägare för stall och gård</Text>
@@ -672,10 +715,10 @@ export default function AccountSettingsScreen() {
               </Text>
             ) : null}
             <TouchableOpacity
-              style={[styles.dangerButton, (deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || lockedPlan?.attempts === 3))) && styles.saveButtonDisabled]}
+              style={[styles.dangerButton, (deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || mediaPending || lockedPlan?.attempts === 3))) && styles.saveButtonDisabled]}
               onPress={handleDeleteAccount}
               activeOpacity={0.85}
-              disabled={deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || lockedPlan?.attempts === 3))}
+              disabled={deleting || (!needsSessionCleanup && (deletionResume.status === 'loading' || deletionResume.status === 'unknown' || ownerSelectionBlocked || mediaPending || lockedPlan?.attempts === 3))}
               accessibilityRole="button"
               accessibilityLabel={needsSessionCleanup ? 'Rensa session och logga ut' : confirmingDelete ? 'Bekräfta radering av konto' : 'Radera konto'}
             >

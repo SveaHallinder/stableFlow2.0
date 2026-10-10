@@ -73,6 +73,15 @@ async function boot(page, { rejectUpdate = false } = {}) {
       return respond({ user_id: userId, status: 'not_started', auth_present: true, profile_present: true,
         requires_owner: true, affected_stable_count: 1, replacement_owners: [], replacement_user_id: null, prepared_at: null });
     }
+    if (request.method() === 'POST' && rpc === 'own_account_media_status') {
+      expect(request.postDataJSON()).toEqual({ p_project_url: url.origin });
+      // Explicit complete-empty own-file fixture, retaining this test's owner scope.
+      return respond({ user_id: userId, complete: true, blocked_count: 0, requires_owner: true,
+        affected_stable_count: 1, replacement_owners: [],
+        own: { plan_id: null, plan_generation: null, reselect_allowed: false, reselect_blocked_reason: null,
+          replacement_user_id: null, state: 'not_started', delete_count: 0, transfer_count: 0,
+          copied_count: 0, removed_count: 0, next_copy_item_id: null, next_remove_item_id: null }, incoming: [] });
+    }
     if (request.method() === 'POST' && ['own_chat_read_state', 'mark_chat_messages_read'].includes(rpc)) {
       const body = request.postDataJSON();
       expect(body.expected_user_id).toBe(userId);

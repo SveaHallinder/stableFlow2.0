@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -19,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DataSyncStatus } from '@/components/DataSyncStatus';
+import { PrivateImage } from '@/components/PrivateImage';
 import { DesktopNav } from '@/components/DesktopNav';
 import { HeaderIconButton, Card } from '@/components/Primitives';
 import { StableSwitcher } from '@/components/StableSwitcher';
@@ -742,7 +742,8 @@ export default function PaddocksScreen() {
                         <Card tone="muted" style={[styles.paddockCard, isDesktopWeb && styles.paddockCardDesktop]}>
                           <View style={styles.paddockRow}>
                             {paddock.image?.uri ? (
-                              <Image
+                              <PrivateImage
+                                compact
                                 source={{ uri: paddock.image.uri }}
                                 style={styles.thumbnail}
                                 resizeMode="cover"
@@ -940,7 +941,7 @@ export default function PaddocksScreen() {
               <View style={styles.formSection}>
                 <Text style={styles.formLabel}>Bild</Text>
                 {draft.image?.uri ? (
-                  <Image source={{ uri: draft.image.uri }} style={styles.previewImage} />
+                  <PrivateImage source={{ uri: draft.image.uri }} style={styles.previewImage} />
                 ) : (
                   <View style={styles.previewPlaceholder}>
                     <Feather name="image" size={18} color={palette.mutedText} />

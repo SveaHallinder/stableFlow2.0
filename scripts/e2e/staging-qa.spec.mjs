@@ -1,13 +1,16 @@
 // Real-backend QA suite. Logs in as the 5 seed roles and verifies plan QA Script steps 1-9.
 // Prereq: supabase/seed_qa.sql has been run AND the 5 confirmed auth users exist.
 //
-// Override password via env: E2E_QA_PASSWORD="..."
+// Required password: inject E2E_QA_PASSWORD through local secret management.
 // Override base URL via env: E2E_URL=...
 
 import { test, expect } from '@playwright/test';
 
 const BASE_URL = process.env.E2E_URL ?? 'http://localhost:8081';
-const PASSWORD = process.env.E2E_QA_PASSWORD ?? 'QaTest1234!';
+const PASSWORD = process.env.E2E_QA_PASSWORD;
+if (!PASSWORD?.trim()) {
+  throw new Error('[staging e2e] E2E_QA_PASSWORD måste vara satt till ett icke-tomt testlösenord innan staging-proven startas.');
+}
 const SCREEN_DIR = process.env.E2E_SCREENS ?? '/tmp/stableflow-e2e-screens';
 
 const ROLES = {

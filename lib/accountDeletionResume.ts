@@ -2,14 +2,20 @@ import { Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { navigatorLock, processLock } from '@supabase/supabase-js';
 import { authStorageKey, supabase } from './supabase';
+import { readOwnAccountMediaStatus, type AccountMediaStatus } from './accountMedia';
 
 export type AccountDeletionPlan = {
   version: 1;
   userId: string;
   ownerId: string | null;
   attempts: number;
+  mediaGeneration?: string;
+  mediaPlanId?: string;
+  mediaReselect?: { planId: string; expectedGeneration: string; expectedOwner: string | null; nextGeneration: string; nextOwner: string };
+
 };
 export type AccountDeletionStatus = {
+  media?: AccountMediaStatus;
   user_id: string;
   status: 'not_started' | 'pending' | 'deleted' | 'unconfirmed';
   auth_present: boolean;
@@ -48,7 +54,11 @@ export async function readAccountDeletionPlan(userId: string): Promise<AccountDe
   const plan = JSON.parse(value) as AccountDeletionPlan;
   if (plan?.version !== 1 || plan.userId !== userId ||
     (plan.ownerId !== null && (typeof plan.ownerId !== 'string' || !uuid.test(plan.ownerId))) ||
-    !Number.isInteger(plan.attempts) || plan.attempts < 0 || plan.attempts > 3) {
+    !Number.isInteger(plan.attempts) || plan.attempts < 0 || plan.attempts > 3
+    || (plan.mediaGeneration !== undefined && !uuid.test(plan.mediaGeneration)) || (plan.mediaPlanId !== undefined && !uuid.test(plan.mediaPlanId))
+    || (plan.mediaReselect && (!uuid.test(plan.mediaReselect.planId) || !uuid.test(plan.mediaReselect.expectedGeneration)
+      || !uuid.test(plan.mediaReselect.nextGeneration) || !uuid.test(plan.mediaReselect.nextOwner)
+      || (plan.mediaReselect.expectedOwner !== null && !uuid.test(plan.mediaReselect.expectedOwner)))) ) {
     throw new Error('Account deletion plan could not be verified.');
   }
   return plan;
@@ -67,6 +77,57 @@ export async function persistAccountDeletionPlan(userId: string, ownerId: string
     const confirmed = await readAccountDeletionPlan(userId);
     if (confirmed?.ownerId !== ownerId || confirmed.attempts !== 0) throw new Error('Account deletion plan was not saved.');
     return confirmed;
+  });
+}
+
+// Exact durable nonce before first media dispatch; no memory fallback or owner reset.
+export async function persistAccountMediaJournal(userId: string, ownerId: string | null, generation: string): Promise<AccountDeletionPlan> {
+  if (!uuid.test(generation)) throw new Error('Account media generation is invalid.');
+  await persistAccountDeletionPlan(userId, ownerId);
+  return withPlanLock(userId, async () => {
+    const old = await readAccountDeletionPlan(userId);
+    if (!old || old.ownerId !== ownerId || old.mediaReselect || (old.mediaGeneration && old.mediaGeneration !== generation)) throw new Error('Account media journal changed.');
+    const next = { ...old, mediaGeneration: generation };
+    await storage.set(key(userId), JSON.stringify(next));
+    const saved = await readAccountDeletionPlan(userId);
+    if (!saved || JSON.stringify(saved) !== JSON.stringify(next)) throw new Error('Account media journal was not saved.');
+    return saved;
+  });
+}
+export async function persistAccountMediaReselect(userId: string, request: NonNullable<AccountDeletionPlan['mediaReselect']>): Promise<AccountDeletionPlan> {
+  return withPlanLock(userId, async () => {
+    const old = await readAccountDeletionPlan(userId);
+    if (!old || old.attempts !== 0 || old.mediaGeneration !== request.expectedGeneration || old.ownerId !== request.expectedOwner
+      || (old.mediaReselect && JSON.stringify(old.mediaReselect) !== JSON.stringify(request))) throw new Error('Account media owner change is not safe.');
+    const next = { ...old, mediaReselect: { ...request } };
+    await storage.set(key(userId), JSON.stringify(next));
+    const saved = await readAccountDeletionPlan(userId);
+    if (!saved || JSON.stringify(saved) !== JSON.stringify(next)) throw new Error('Account media owner change was not saved.');
+    return saved;
+  });
+}
+export async function reconcileAccountMediaJournal(userId: string, media: AccountMediaStatus): Promise<AccountDeletionPlan | null> {
+  if (media.user_id !== userId || media.complete !== true) throw new Error('Account media identity receipt is invalid.');
+  return withPlanLock(userId, async () => {
+    const old = await readAccountDeletionPlan(userId);
+    if (!media.own.plan_id || !media.own.plan_generation) return old;
+    if (old?.mediaReselect) {
+      const change = old.mediaReselect;
+      if (media.own.plan_id !== change.planId) throw new Error('Account media plan receipt changed.');
+      if (media.own.plan_generation === change.expectedGeneration && media.own.replacement_user_id === change.expectedOwner) return old;
+      if (media.own.plan_generation !== change.nextGeneration || media.own.replacement_user_id !== change.nextOwner || old.attempts !== 0) throw new Error('Account media owner receipt is unconfirmed.');
+      const next: AccountDeletionPlan = { version: 1, userId, ownerId: change.nextOwner, attempts: 0, mediaGeneration: change.nextGeneration, mediaPlanId: change.planId };
+      await storage.set(key(userId), JSON.stringify(next));
+      const saved = await readAccountDeletionPlan(userId);
+      if (!saved || JSON.stringify(saved) !== JSON.stringify(next)) throw new Error('Account media owner receipt was not saved.');
+      return saved;
+    }
+    if (old && (old.ownerId !== media.own.replacement_user_id || (old.mediaGeneration && old.mediaGeneration !== media.own.plan_generation))) throw new Error('Account media journal and server receipt differ.');
+    const next: AccountDeletionPlan = { ...(old ?? { version: 1, userId, attempts: 0 }), ownerId: media.own.replacement_user_id, mediaGeneration: media.own.plan_generation, mediaPlanId: media.own.plan_id };
+    await storage.set(key(userId), JSON.stringify(next));
+    const saved = await readAccountDeletionPlan(userId);
+    if (!saved || JSON.stringify(saved) !== JSON.stringify(next)) throw new Error('Account media plan receipt was not saved.');
+    return saved;
   });
 }
 
@@ -110,5 +171,13 @@ export async function readOwnAccountDeletionStatus(userId: string, signal?: Abor
     throw new Error('Account deletion initial receipt is invalid.');
   }
   if (status.status === 'unconfirmed') throw new Error('Account deletion rows are inconsistent.');
+  if (status.status !== 'deleted') {
+    const media = await readOwnAccountMediaStatus(userId, signal);
+    if (media.own.plan_id && (status.status !== 'pending' || status.replacement_user_id !== media.own.replacement_user_id)) throw new Error('Account media/core receipts are inconsistent.');
+    // Both server statements are complete and caller-bound; the mutation rechecks/freeze is atomic.
+    // A lost/unknown inventory never becomes a verified empty scope before the local journal.
+    return { ...status, media, requires_owner: media.requires_owner, affected_stable_count: media.affected_stable_count,
+      replacement_owners: media.replacement_owners };
+  }
   return status;
 }

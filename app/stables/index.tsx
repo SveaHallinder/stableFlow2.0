@@ -1,11 +1,11 @@
 import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { InviteReceipt } from '@/components/InviteReceipt';
+import { PrivateImage } from '@/components/PrivateImage';
 import type { ActionResult, InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
 import {
-  Image,
   Platform,
   ScrollView,
   Share,
@@ -1567,7 +1567,7 @@ export default function StablesScreen() {
                           disabled={!canEditPaddocks || !paddock.linksReady}
                         >
                           {paddock.image?.uri ? (
-                            <Image source={{ uri: paddock.image.uri }} style={styles.paddockThumb} />
+                            <PrivateImage compact source={{ uri: paddock.image.uri }} style={styles.paddockThumb} />
                           ) : (
                             <View style={styles.paddockThumbPlaceholder}>
                               <Feather name="image" size={14} color={palette.mutedText} />
@@ -1754,7 +1754,7 @@ export default function StablesScreen() {
                     <Text style={styles.formHint}>Valda hästar: {activeHorses.filter((horse) => paddockHorseSet.has(horse.id)).map((horse) => horse.name).join(', ') || 'Inga hästar valda'}</Text>
                     <Text style={styles.formLabel}>Bild/karta</Text>
                     {paddockDraft.image?.uri ? (
-                      <Image source={{ uri: paddockDraft.image.uri }} style={styles.paddockPreview} />
+                      <PrivateImage source={{ uri: paddockDraft.image.uri }} style={styles.paddockPreview} />
                     ) : (
                       <View style={styles.paddockPreviewPlaceholder}>
                         <Feather name="map" size={16} color={palette.mutedText} />
@@ -1836,7 +1836,7 @@ export default function StablesScreen() {
                               disabled={!canEditHorses}
                             >
                               {horse.image ? (
-                                <Image source={horse.image} style={styles.horseAvatar} />
+                                <PrivateImage compact source={horse.image} style={styles.horseAvatar} />
                               ) : (
                                 <View style={styles.horseAvatarPlaceholder}>
                                   <Feather name="image" size={14} color={palette.mutedText} />
@@ -1979,7 +1979,7 @@ export default function StablesScreen() {
                       />
                       <Text style={styles.formLabel}>Bild</Text>
                       {horseDraft.image ? (
-                        <Image source={horseDraft.image} style={styles.horsePreview} />
+                        <PrivateImage source={horseDraft.image} style={styles.horsePreview} />
                       ) : (
                         <View style={styles.horsePreviewPlaceholder}>
                           <Feather name="camera" size={16} color={palette.mutedText} />

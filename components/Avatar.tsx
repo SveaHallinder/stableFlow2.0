@@ -1,5 +1,6 @@
 import React from 'react';
-import { Image, ImageSourcePropType, ImageStyle, StyleProp } from 'react-native';
+import { ImageSourcePropType, ImageStyle, StyleProp } from 'react-native';
+import { PrivateImage } from '@/components/PrivateImage';
 
 const FALLBACK = require('@/assets/images/dummy-avatar.png');
 
@@ -14,15 +15,12 @@ export const Avatar = React.memo(function Avatar({
   style,
   accessibilityLabel,
 }: AvatarProps) {
-  const [failed, setFailed] = React.useState(false);
-
-  const resolvedSource = failed || !source ? FALLBACK : source;
-
   return (
-    <Image
-      source={resolvedSource}
+    <PrivateImage
+      source={source}
+      fallbackSource={FALLBACK}
+      compact
       style={style}
-      onError={() => setFailed(true)}
       accessibilityLabel={accessibilityLabel ?? 'Profilbild'}
     />
   );

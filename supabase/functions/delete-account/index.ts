@@ -7,6 +7,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // cascade trigger atomically transfers creators and removes only authored UGC.
 // Owned/unknown media fails closed. An issued JWT is not revoked by local cleanup.
 
+import { accountMediaAction } from "../_shared/account-media.ts";
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -62,7 +64,7 @@ Deno.serve(async (req) => {
       return json({ error: "unauthorized" }, 401);
     }
     const uid = userData.user.id;
-    let body: { expected_user_id?: unknown; replacement_user_id?: unknown };
+    let body: Record<string, unknown>;
     try {
       body = await req.json();
     } catch {
@@ -74,6 +76,14 @@ Deno.serve(async (req) => {
     if (body.expected_user_id !== uid) {
       logFailure("caller changed before deletion");
       return json({ error: "account_changed" }, 409);
+    }
+
+    if (body.action !== undefined) {
+      // Explicit B transfer never reaches Auth deletion. A cleanup also leaves Auth intact.
+      if (!["prepare_media", "transfer_shared_media", "remove_own_media", "reselect_media_owner"].includes(String(body.action))) return json({ error: "invalid_request" }, 400);
+      const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+      const result = await accountMediaAction(admin, userClient, uid, body, SUPABASE_URL);
+      return json(result.body, result.status);
     }
 
     const replacementId = body.replacement_user_id ?? null;

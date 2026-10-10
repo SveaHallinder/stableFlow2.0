@@ -8,6 +8,8 @@ import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/cha
 import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
+import { isFutureOpenSeriesAssignment, updateRecurringSeries, validateRecurringSeriesEdit,
+  type RecurringSeriesEdit, type RecurringSeriesResult } from '@/lib/recurringSeries';
 import { supabase } from '@/lib/supabase';
 import { trackPendingWrite } from '@/lib/writeTracker';
 import { createTimeoutFetch } from '@/lib/requestTimeout';
@@ -344,6 +346,7 @@ export type AssignmentAssignedVia = 'default' | 'manual';
 
 export type Assignment = {
   id: string;
+  seriesId?: string;
   date: string; // ISO date string e.g. 2025-03-10
   stableId: string;
   label: string;
@@ -1238,6 +1241,7 @@ type AppDataContextValue = {
     createRecurringAssignments: (
       input: CreateRecurringAssignmentsInput,
     ) => Promise<ActionResult<{ createdCount: number; skippedCount: number }>>;
+    updateRecurringAssignmentSeries: (input: RecurringSeriesEdit) => Promise<RecurringSeriesResult>;
     updateAssignment: (input: UpdateAssignmentInput) => Promise<ActionResult<Assignment>>;
     deleteAssignment: (assignmentId: string) => Promise<ActionResult>;
     addEvent: (message: string, type?: AlertMessage['type'], requestId?: string) => Promise<ActionResult<AlertMessage>>;
@@ -2765,6 +2769,7 @@ function hasOwnProperty<T extends object>(target: T, key: keyof T) {
 function buildAssignmentInsertPayload(assignment: Assignment) {
   return {
     id: assignment.id,
+    ...(assignment.seriesId ? { series_id: assignment.seriesId } : {}),
     stable_id: assignment.stableId,
     date: assignment.date,
     slot: assignment.slot,
@@ -3050,7 +3055,7 @@ async function uploadImageToStorage(
 
   const { error } = await supabase.storage.from(bucket).upload(filePath, blob, {
     contentType,
-    upsert: true,
+    upsert: false,
   });
 
   if (error) {
@@ -3065,6 +3070,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
   const { user } = useAuth();
+  const recurringScope = React.useMemo(() => ({ userId: user?.id, sessionUserId: state.sessionUserId,
+    viewerId: state.currentUserId, stableId: state.currentStableId }),
+  [user?.id, state.sessionUserId, state.currentUserId, state.currentStableId]);
+  const recurringScopeRef = React.useRef<typeof recurringScope | null>(recurringScope);
+  recurringScopeRef.current = recurringScope;
+  React.useEffect(() => { recurringScopeRef.current = recurringScope;
+    return () => { if (recurringScopeRef.current === recurringScope) recurringScopeRef.current = null; };
+  }, [recurringScope]);
   const chatReadScope = React.useRef({ userId: user?.id ?? null, epoch: 0 });
   if (chatReadScope.current.userId !== (user?.id ?? null)) {
     chatReadScope.current = { userId: user?.id ?? null, epoch: chatReadScope.current.epoch + 1 };
@@ -5639,6 +5652,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
           id: row.id,
+          seriesId: row.series_id ?? undefined,
           stableId: row.stable_id,
           date: row.date,
           label: row.label,
@@ -6619,6 +6633,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true, data: { createdCount: 0, skippedCount } };
       }
 
+      // The first generated pass UUID is also the durable batch identity. Retries
+      // retain the same rows and series UUID; legacy rows are never inferred.
+      if (!pendingRecurringBatches.current.has(batchKey)) {
+        assignmentsToCreate.forEach(assignment => { assignment.seriesId = assignmentsToCreate[0].id; });
+      }
       pendingRecurringBatches.current.set(batchKey, assignmentsToCreate);
       const { error } = await persistAssignmentBatchInsert(assignmentsToCreate);
       if (error) return { success: false, reason: 'Kunde inte skapa återkommande pass. Försök igen eller uppdatera schemat.' };
@@ -6639,6 +6658,60 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
     },
     [ensurePermission, persistAssignmentBatchInsert, persistAssignmentHistory],
+  );
+
+  const updateRecurringAssignmentSeries = React.useCallback(
+    async (input: RecurringSeriesEdit): Promise<RecurringSeriesResult> => {
+      const current = stateRef.current;
+      const scope = recurringScopeRef.current;
+      const userId = user?.id;
+      if (!scope || !userId || scope.userId !== userId || current.sessionUserId !== userId
+        || current.currentUserId !== userId || scope.stableId !== current.currentStableId) {
+        return { success: false, reason: 'Kontot eller stallet har ändrats. Öppna serien igen.' };
+      }
+      const access = ensurePermission(current.currentStableId, permissions => permissions.canManageAssignments);
+      if (!access.success) return access;
+      const invalid = validateRecurringSeriesEdit(input);
+      if (invalid) return { success: false, reason: invalid };
+      const key = `assignment-series:${userId}:${current.currentStableId}:${input.seriesId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Serien sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key); dataWriteVersion.current += 1;
+      try {
+        const eligible = current.assignments.filter(assignment => assignment.stableId === current.currentStableId
+          && assignment.seriesId === input.seriesId && isFutureOpenSeriesAssignment(assignment));
+        let result: RecurringSeriesResult;
+        if (isQaDemoMode) {
+          if (eligible.length > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+            return { success: false, reason: `Högst ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH} pass per ändring. Välj en mindre serie.` };
+          }
+          const updates = eligible.map(assignment => ({ ...assignment, label: input.label.trim(),
+            time: input.startTime.trim(), slot: resolveSlotFromTime(input.startTime.trim()),
+            icon: slotIcons[resolveSlotFromTime(input.startTime.trim())],
+            note: assignment.note && ASSIGNMENT_NOTE_METADATA_REGEX.test(assignment.note)
+              ? assignment.note.replace(ASSIGNMENT_NOTE_METADATA_REGEX, `Slut: ${input.endTime.trim()}`)
+              : `${assignment.note ? assignment.note + '\n' : ''}Slut: ${input.endTime.trim()}`,
+          }));
+          if (updates.some(assignment => !isFutureOpenSeriesAssignment(assignment))) {
+            return { success: false, reason: 'Den nya starttiden måste ligga i framtiden för alla berörda pass.' };
+          }
+          result = { success: true, data: updates };
+        } else result = await updateRecurringSeries(supabase, userId, current.currentStableId, input);
+        if (recurringScopeRef.current !== scope || stateRef.current.currentStableId !== scope.stableId
+          || stateRef.current.sessionUserId !== userId || stateRef.current.currentUserId !== userId) {
+          return { success: false, reason: 'Kontot eller stallet har ändrats. Öppna serien igen.' };
+        }
+        if (result.success) for (const assignment of result.data) {
+          const latest = stateRef.current.assignments.find(value => value.id === assignment.id);
+          // A claim/completion received after the server commit remains authoritative.
+          if (latest && latest.status === 'open' && !latest.assigneeId && !latest.completedAt) {
+            dispatch({ type: 'ASSIGNMENT_UPDATE', payload: { id: assignment.id,
+              updates: { label: assignment.label, time: assignment.time, slot: assignment.slot,
+                icon: assignment.icon, note: assignment.note }, silent: true } });
+          }
+        }
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
+    }, [ensurePermission, user],
   );
 
   const updateAssignment = React.useCallback(
@@ -9463,6 +9536,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         completeAssignment,
         createAssignment,
         createRecurringAssignments,
+        updateRecurringAssignmentSeries,
         updateAssignment,
         deleteAssignment,
         addEvent,
@@ -9545,6 +9619,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       completeAssignment,
       createAssignment,
       createRecurringAssignments,
+      updateRecurringAssignmentSeries,
       updateAssignment,
       deleteAssignment,
       addEvent,

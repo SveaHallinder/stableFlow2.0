@@ -101,9 +101,11 @@ for (const view of ['mine', 'open']) {
 
 test('guest has no claim, complete, release or manage buttons', async ({ page }, testInfo) => {
   await page.goto('/calendar?qaDemo=1');
+  await expect(page.getByRole('button', { name: 'Redigera återkommande pass', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ta Lunchfodring', exact: true })).toBeVisible();
   await loadFixture(page, 'guest');
   await expect(page.getByRole('button', { name: 'Nytt pass', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Redigera återkommande pass', exact: true })).toHaveCount(0);
   await expect(page.getByText('Lunchfodring', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ta Lunchfodring', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Markera Morgonfodring klart', exact: true })).toHaveCount(0);

@@ -14,14 +14,29 @@ async function until(predicate) {
   assert.ok(predicate(), 'The synthetic callback must reach the expected stage');
 }
 
+// Execute the real media validator/RPC reader. Only the transport and explicit
+// complete-empty inventory below are synthetic; the media gate is not bypassed.
+async function loadMediaHelpers(dependencies) {
+  const source = await readFile(new URL('../lib/accountMedia.ts', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('accountMedia.ts', source, ts.ScriptTarget.Latest, true);
+  const body = ast.statements.filter(node => !ts.isImportDeclaration(node))
+    .map(node => node.getText(ast).replace(/^export\s+/, '')).join('\n');
+  const { outputText } = ts.transpileModule(`export default ({ supabase, supabaseConfig }) => {
+    ${body}
+    return { readOwnAccountMediaStatus };
+  };`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+  return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(dependencies);
+}
+
 async function loadResumeHelpers(dependencies) {
+  dependencies = { ...dependencies, ...await loadMediaHelpers(dependencies) };
   const source = await readFile(new URL('../lib/accountDeletionResume.ts', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('accountDeletionResume.ts', source, ts.ScriptTarget.Latest, true);
   const body = ast.statements.filter(node => !ts.isImportDeclaration(node))
     .map(node => node.getText(ast).replace(/^export\s+/, '')).join('\n');
-  const { outputText } = ts.transpileModule(`export default ({ Platform, SecureStore, navigatorLock, processLock, authStorageKey, supabase }) => {
+  const { outputText } = ts.transpileModule(`export default ({ Platform, SecureStore, navigatorLock, processLock, authStorageKey, supabase, readOwnAccountMediaStatus }) => {
     ${body}
-    return { readAccountDeletionPlan, readOwnAccountDeletionStatus, persistAccountDeletionPlan, reserveAccountDeletionAttempt };
+    return { readAccountDeletionPlan, readOwnAccountDeletionStatus, persistAccountDeletionPlan, reserveAccountDeletionAttempt, reconcileAccountMediaJournal };
   };`, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
   return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default({
     ...dependencies, navigatorLock, processLock, Platform: { OS: 'ios' },
@@ -38,8 +53,12 @@ async function loadDeleteCallback(dependencies, kind = 'handleDeleteAccount') {
     .flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(ast) === kind);
   const refresh = component.body.statements.filter(ts.isVariableStatement)
     .flatMap(node => [...node.declarationList.declarations]).find(node => node.name.getText(ast) === 'refreshDeletionReceipt');
+  const mediaGate = component.body.statements.filter(ts.isVariableStatement).filter(node =>
+    node.declarationList.declarations.some(node => ['mediaReceipt', 'mediaPending'].includes(node.name.getText(ast))))
+    .map(node => node.getText(ast)).join('\n');
   const callback = declaration.initializer.arguments[0].getText(ast);
   const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(dependencies).join(', ')} }) => {
+    ${mediaGate}
     const refreshDeletionReceipt = (${refresh.initializer.arguments[0].getText(ast)});
     return (${callback});
   };`, {
@@ -70,9 +89,20 @@ async function loadRecovery(pendingAccountDeletionId, user) {
   return { ...recovery, state };
 }
 
+// Each legacy deletion fixture explicitly has a complete, empty own-file
+// inventory while preserving its existing synthetic creator/owner scope.
+function emptyMediaInventory(receipt) {
+  return { user_id: receipt.user_id, complete: true, blocked_count: 0,
+    requires_owner: receipt.requires_owner, affected_stable_count: receipt.affected_stable_count,
+    replacement_owners: receipt.replacement_owners,
+    own: { plan_id: null, plan_generation: null, reselect_allowed: false, reselect_blocked_reason: null,
+      replacement_user_id: null, state: 'not_started', delete_count: 0, transfer_count: 0,
+      copied_count: 0, removed_count: 0, next_copy_item_id: null, next_remove_item_id: null }, incoming: [] };
+}
+
 function setup(invoke, overrides = {}) {
   const state = { deleting: false, confirmingDelete: true, toasts: [], calls: [], logs: [], needsSessionCleanup: false,
-    journal: new Map(), trace: [], deletionResume: { userId: actor, status: 'ready', plan: null, receipt: null } };
+    journal: new Map(), trace: [], mediaCalls: [], mediaInventory: undefined, deletionResume: { userId: actor, status: 'ready', plan: null, receipt: null } };
   const receipt = { user_id: actor, status: 'not_started', auth_present: true, profile_present: true,
     requires_owner: false, affected_stable_count: 0, replacement_owners: [], replacement_user_id: null, prepared_at: null };
   const dependencies = {
@@ -80,6 +110,7 @@ function setup(invoke, overrides = {}) {
     user: { id: actor }, securityAccountRef: { current: { userId: actor } },
     deletionPlanRef: { current: null }, deletionResume: state.deletionResume, requiresOwner: false, selectedOwner: undefined,
     authStorageKey: `synthetic-delete-test-${++fixtureNumber}`,
+    supabaseConfig: { url: 'https://fixture.supabase.co' },
     SecureStore: {
       getItemAsync: async key => state.journal.get(key) ?? null,
       setItemAsync: async (key, value) => { state.trace.push(['journal', JSON.parse(value)]); state.journal.set(key, value); },
@@ -94,6 +125,12 @@ function setup(invoke, overrides = {}) {
     },
     supabase: {
       rpc: (name, ...args) => {
+        if (name === 'own_account_media_status') {
+          assert.deepEqual(args, [{ p_project_url: 'https://fixture.supabase.co' }]);
+          state.mediaCalls.push(args[0]);
+          const query = Promise.resolve({ data: state.mediaInventory === undefined ? emptyMediaInventory(receipt) : state.mediaInventory, error: null });
+          query.abortSignal = () => query; return query;
+        }
         assert.equal(name, 'own_account_deletion_status'); assert.deepEqual(args, []);
         state.trace.push(['status']);
         const query = Promise.resolve({ data: receipt, error: null }); query.abortSignal = () => query; return query;
@@ -484,4 +521,27 @@ test('a deferred Response body cannot mutate another account, a new A epoch or a
     assert.equal(state.confirmingDelete, true); assert.equal(dependencies.deletedAccountRef.current, null);
     assert.ok(!state.calls.some(([method]) => method === 'finishAccountDeletion' || method === 'replace'));
   }
+});
+
+
+test('unknown, incomplete or wrong-caller media cannot reserve a journal or invoke Auth deletion', async () => {
+  for (const failure of ['unknown', 'incomplete', 'wrong-caller', 'blocked']) {
+    const { state, dependencies, receipt } = setup(() => assert.fail('Unverified media must not dispatch Auth deletion'));
+    const media = emptyMediaInventory(receipt);
+    state.mediaInventory = failure === 'unknown' ? null : failure === 'incomplete'
+      ? { ...media, complete: false } : failure === 'wrong-caller' ? { ...media, user_id: owner } : { ...media, blocked_count: 1 };
+    await (await loadDeleteCallback(dependencies))();
+    assert.equal(state.calls.length, 0); assert.equal(state.journal.size, 0);
+    assert.equal(state.needsSessionCleanup, false); assert.equal(state.deleting, false);
+    assert.equal(state.toasts.at(-1)[1], 'error');
+    assert.deepEqual(state.mediaCalls, [{ p_project_url: 'https://fixture.supabase.co' }]);
+  }
+});
+
+test('actual render-derived mediaPending stops a known blocked file before even rereading status', async () => {
+  const { state, dependencies, receipt } = setup(() => assert.fail('Pending media must not dispatch Auth deletion'));
+  dependencies.deletionResume.receipt = { ...receipt, media: { ...emptyMediaInventory(receipt), blocked_count: 1 } };
+  await (await loadDeleteCallback(dependencies))();
+  assert.equal(state.calls.length, 0); assert.equal(state.journal.size, 0);
+  assert.equal(state.mediaCalls.length, 0); assert.equal(state.trace.length, 0);
 });

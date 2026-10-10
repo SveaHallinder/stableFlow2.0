@@ -19,6 +19,13 @@ async function loadAccount(page, outcome) {
       if (outcome === 'status_abort') return route.abort('failed');
       return route.fulfill({ json: deletionStatus('00000000-0000-4000-8000-000000000001'), headers });
     }
+    if (url.pathname === '/rest/v1/rpc/own_account_media_status') {
+      if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+      expect(request.postDataJSON()).toEqual({ p_project_url: url.origin });
+      const receipt = emptyMediaStatus('00000000-0000-4000-8000-000000000001');
+      return route.fulfill({ json: outcome === 'media_incomplete' ? { ...receipt, complete: false }
+        : outcome === 'media_mismatch' ? { ...receipt, user_id: ownerId } : receipt, headers });
+    }
     if (url.pathname === '/functions/v1/delete-account') {
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
       calls.push('delete-account');
@@ -51,6 +58,17 @@ function deletionStatus(userId, { deleted = false, requiresOwner = false } = {})
     affected_stable_count: !deleted && requiresOwner ? 1 : 0,
     replacement_owners: !deleted && requiresOwner ? [{ user_id: replacementOwnerId, display_name: 'Offline Ny ägare' }] : [],
     replacement_user_id: null, prepared_at: null };
+}
+
+// Explicit complete-empty media fixture; no real Storage inventory is read.
+function emptyMediaStatus(userId, options) {
+  const scope = deletionStatus(userId, options);
+  return { user_id: userId, complete: true, blocked_count: 0,
+    requires_owner: scope.requires_owner, affected_stable_count: scope.affected_stable_count,
+    replacement_owners: scope.replacement_owners,
+    own: { plan_id: null, plan_generation: null, reselect_allowed: false, reselect_blocked_reason: null,
+      replacement_user_id: null, state: 'not_started', delete_count: 0, transfer_count: 0,
+      copied_count: 0, removed_count: 0, next_copy_item_id: null, next_remove_item_id: null }, incoming: [] };
 }
 
 // Exercise the installed Auth SDK and real provider against an entirely offline
@@ -114,6 +132,10 @@ async function productionAccount(page, { holdDeletion = false } = {}) {
     if (request.method() === 'POST' && rpc === 'own_account_deletion_status') {
       expect(request.postDataJSON()).toEqual({});
       return respond(deletionStatus(ownerId, { deleted: serverDeleted, requiresOwner: true }));
+    }
+    if (request.method() === 'POST' && rpc === 'own_account_media_status') {
+      expect(request.postDataJSON()).toEqual({ p_project_url: url.origin });
+      return respond(emptyMediaStatus(ownerId, { requiresOwner: true }));
     }
     if (request.method() === 'POST' && rpc === 'own_chat_read_state') {
       const body = request.postDataJSON();
@@ -230,7 +252,7 @@ test('account deletion describes the actual scope and lets confirmation be cance
   const calls = await loadAccount(page, 'abort');
   await expect(page.getByText(/Ditt inloggningskonto och din profil raderas permanent/)).toBeVisible();
   await expect(page.getByText(/Din egen text i flödesinlägg, kommentarer och chattar tas bort/)).toBeVisible();
-  await expect(page.getByText(/Kontoradering med egna eller okänt tillskrivna filer är därför stoppad/)).toBeVisible();
+  await expect(page.getByText(/Inga egna bilder behöver hanteras enligt den verifierade inventeringen/)).toBeVisible();
   await expect(page.getByText(/Raderingen går inte att ångra/)).toBeVisible();
   await expect(page.getByText(/personuppgifter \(GDPR\)/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Radera konto', exact: true }).click();
@@ -268,3 +290,17 @@ test('unverified own deletion status blocks dispatch and keeps the current sessi
   expect(calls).not.toContain('delete-account');
   await expect(page.getByText('Logga ut', { exact: true })).toBeVisible();
 });
+
+
+for (const outcome of ['media_incomplete', 'media_mismatch']) {
+  test(`unverified ${outcome} inventory blocks Auth deletion and durable journal`, async ({ page }) => {
+    const calls = await loadAccount(page, outcome);
+    await expect(page.getByText('Filstatus är okänd. Kontrollera status; inga filer eller konton ändras.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Radera konto', exact: true })).toBeDisabled();
+    await page.getByRole('button', { name: 'Kontrollera raderingsstatus', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Radera konto', exact: true })).toBeDisabled();
+    expect(calls).not.toContain('delete-account');
+    expect(await page.evaluate(() => Object.keys(globalThis.localStorage).filter(key => key.includes('-deletion-plan-')))).toEqual([]);
+    await expect(page.getByText('Logga ut', { exact: true })).toBeVisible();
+  });
+}

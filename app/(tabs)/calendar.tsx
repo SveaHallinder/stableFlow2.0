@@ -52,6 +52,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { NewAssignmentModal } from '@/components/NewAssignmentModal';
+import { RecurringSeriesModal } from '@/components/RecurringSeriesModal';
 import { isValidTime } from '@/lib/dateValidation';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
@@ -335,6 +336,7 @@ export default function CalendarScreen() {
   const [savingAssignmentIds, setSavingAssignmentIds] = React.useState<Set<string>>(() => new Set());
   const [assignmentSaveErrors, setAssignmentSaveErrors] = React.useState<Record<string, string>>({});
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
+  const [seriesEditor, setSeriesEditor] = React.useState<{ initialSeriesId?: string } | null>(null);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
   const [recurringSaveError, setRecurringSaveError] = React.useState<string | null>(null);
   const toast = useToast();
@@ -1068,6 +1070,7 @@ export default function CalendarScreen() {
         return;
       }
 
+      if (assignment.seriesId) { setSeriesEditor({ initialSeriesId: assignment.seriesId }); return; }
       setAssignmentModal({
         visible: true,
         mode: 'edit',
@@ -1530,6 +1533,17 @@ export default function CalendarScreen() {
                 >
                   <Feather name="repeat" size={14} color={palette.primary} />
                   <Text style={styles.recurringButtonText}>Återkommande pass</Text>
+                </TouchableOpacity>
+              ) : null}
+              {canManageAssignments ? (
+                <TouchableOpacity
+                  style={styles.recurringButton}
+                  onPress={() => setSeriesEditor({})}
+                  accessibilityRole="button"
+                  accessibilityLabel="Redigera återkommande pass"
+                >
+                  <Feather name="edit-3" size={14} color={palette.primary} />
+                  <Text style={styles.recurringButtonText}>Redigera serier</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -2805,6 +2819,15 @@ export default function CalendarScreen() {
           </View>
         </Modal>
       ) : null}
+
+      {seriesEditor && canManageAssignments ? <RecurringSeriesModal
+        key={dateTimeScope}
+        scopeKey={dateTimeScope}
+        assignments={activeAssignments}
+        initialSeriesId={seriesEditor.initialSeriesId}
+        onClose={() => setSeriesEditor(null)}
+        onSave={actions.updateRecurringAssignmentSeries}
+      /> : null}
 
       <NewAssignmentModal
         scopeKey={JSON.stringify([dateTimeScope, assignmentModal.mode, assignmentModal.assignmentId])}
