@@ -1,0 +1,199 @@
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { readFile,writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { dirname,join } from 'node:path';
+import { fileURLToPath,URL } from 'node:url';
+import { setImmediate } from 'node:timers/promises';
+import { createClient,processLock,navigatorLock } from '@supabase/supabase-js';
+import ts from 'typescript';
+const {Headers,Request,Response}=globalThis;
+const root=dirname(dirname(fileURLToPath(import.meta.url))),MODE=process.argv.includes('--baseline')?'baseline':process.argv.includes('--rev1')?'revision1':process.argv.includes('--rev2')?'revision2':process.argv.includes('--rev3')?'revision3':'source';
+const read=path=>readFile(join(root,MODE,path),'utf8');
+const compile=async source=>import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText).toString('base64'));
+const bodyOf=(text,tsx=false)=>{const tree=ts.createSourceFile('source.'+(tsx?'tsx':'ts'),text,ts.ScriptTarget.Latest,true,tsx?ts.ScriptKind.TSX:ts.ScriptKind.TS);return tree.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(tree)).join('\n').replace(/\bexport /g,'');};
+const libraryBody=bodyOf(await read('lib/notifications.ts')),hookBody=bodyOf(await read('hooks/usePushNotifications.ts'));
+const shared=await compile(await read('supabase/functions/_shared/push-receipts.ts'));
+const senderBody=bodyOf(await read('supabase/functions/send-push-notification/index.ts'));
+const authBody=bodyOf(await read('context/AuthContext.tsx'),true);
+const primaryText=await read('lib/supabase.ts'),primaryTree=ts.createSourceFile('supabase.ts',primaryText,ts.ScriptTarget.Latest,true);
+const primaryDefinitions=primaryTree.statements.filter(n=>(ts.isFunctionDeclaration(n)&&['withSessionLock','withPrimarySessionMutation','assertPrimarySessionMutationSupported'].includes(n.name?.text))||(ts.isClassDeclaration(n)&&n.name?.text==='PrimarySessionMutationUnsupportedError')||(ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(primaryTree)==='PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE'))).map(n=>n.getText(primaryTree)).join('\n').replace(/\bexport /g,'');
+const hasPrimaryGate=primaryDefinitions.includes('function withPrimarySessionMutation');
+const primaryFactory=hasPrimaryGate?(await compile('export default ({Platform,selectedSessionLock,authStorageKey})=>{'+primaryDefinitions+';return {withPrimarySessionMutation,assertPrimarySessionMutationSupported:typeof assertPrimarySessionMutationSupported==="function"?assertPrimarySessionMutationSupported:()=>{},PrimarySessionMutationUnsupportedError:typeof PrimarySessionMutationUnsupportedError==="function"?PrimarySessionMutationUnsupportedError:Error,message:typeof PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE==="string"?PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:""};};')).default:()=>({withPrimarySessionMutation:async operation=>operation(),assertPrimarySessionMutationSupported:()=>{},PrimarySessionMutationUnsupportedError:Error,message:''});
+const authKey='sb-ownership-overlay-fixture-auth-token';
+const confirmText=await read('app/(auth)/confirm.tsx'),confirmTree=ts.createSourceFile('confirm.tsx',confirmText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let confirmCallback;
+function findConfirm(n){if(ts.isVariableDeclaration(n)&&n.name.getText(confirmTree)==='applyUrl')confirmCallback=n.initializer.arguments[0].getText(confirmTree);ts.forEachChild(n,findConfirm);}findConfirm(confirmTree);
+const parseConfirm=confirmTree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='parseParamsFromUrl').getText(confirmTree);
+const loginText=await read('app/(auth)/index.tsx'),loginTree=ts.createSourceFile('login.tsx',loginText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let actualLogin;
+function findLogin(n){if(ts.isAwaitExpression(n)&&n.expression.getText(loginTree).includes('supabase.auth.signInWithPassword'))actualLogin=n.expression.getText(loginTree);ts.forEachChild(n,findLogin);}findLogin(loginTree);
+const uuid=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),A=uuid(1),B=uuid(2),C=uuid(3),T='synthetic-private-current-token',OTHER='synthetic-private-other-token',PRIVATE='synthetic-private-message-author-pass-alert',BASE='https://ownership-overlay-fixture.invalid';
+const encode=x=>Buffer.from(JSON.stringify(x)).toString('base64url'),access=user=>[encode({alg:'HS256',typ:'JWT'}),encode({sub:user,role:'authenticated',aud:'authenticated',iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}),Buffer.from('synthetic-signature').toString('base64url')].join('.');
+const actor=headers=>{const token=new Headers(headers).get('authorization')?.slice(7);return token==='synthetic-service-key'?'service':token&&token.includes('.')?JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).sub:null;};
+const hash=token=>createHash('sha256').update(token).digest('hex');
+const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+const reject=(code='40001')=>response({code,message:PRIVATE,details:T},409);
+const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
+let unmocked=0;globalThis.fetch=async()=>{unmocked++;throw new Error('External fetch forbidden');};
+async function fixture(options={}){
+ let seq=20,tokenCount=0,claims=0;const next=()=>uuid(++seq),calls=[],provider=[],logs=[],rows=[{id:uuid(8),user_id:A,token:OTHER,registration_generation:uuid(9),platform:'ios'}],bindings=new Map([[hash(OTHER),{user_id:A,token_id:uuid(8),registration_generation:uuid(9),binding_generation:uuid(10)}]]),tokens=[],gates={},attempts=new Set(),timers=new Map();let timerId=0;
+ const binding=token=>{const key=hash(token);if(!bindings.has(key))bindings.set(key,{binding_generation:next()});return bindings.get(key);};
+ const active=reg=>{const row=rows.find(x=>x.id===reg.token_id),b=row&&bindings.get(hash(row.token));return b&&b.user_id===reg.user_id&&b.token_id===reg.token_id&&b.registration_generation===reg.registration_generation;};
+ const fetch=async(input,init={})=>{
+  const url=new URL(String(input));assert.equal(url.origin,BASE);const uid=actor(init.headers),path=url.pathname,params=init.body?JSON.parse(init.body):null;
+  calls.push({path,method:init.method,actor:uid,params});
+  if(path==='/auth/v1/user'){if(options.holdUser?.()&&!gates.user){gates.user=deferred();await gates.user.promise;}return response({id:uid,role:'authenticated',aud:'authenticated'});}
+  if(path==='/auth/v1/token'){if(options.holdLogin){gates.login=deferred();await gates.login.promise;}const id=params.email.startsWith('b@')?B:A;return response({access_token:access(id),refresh_token:'synthetic-refresh',expires_in:3600,user:{id,role:'authenticated',aud:'authenticated'}});}
+  if(path==='/auth/v1/logout')return options.logoutError?response({message:PRIVATE},500):new Response(null,{status:204});
+  const name=path.replace('/rest/v1/','');
+  if(name.startsWith('rpc/')){
+   const rpc=name.slice(4);if(options.rpcError===rpc)return reject();
+   if(rpc==='push_device_state'){if(params.p_expected_user_id!==uid)return reject('42501');if(options.holdState&&!gates.state){gates.state=deferred();gates.stateEntered=deferred();gates.stateEntered.resolve();await gates.state.promise;}return response(options.badState??{binding_generation:binding(params.p_token).binding_generation});}
+   if(rpc==='push_device_claim'){
+    claims++;if(options.holdClaim===claims){gates.claim=deferred();gates.claimEntered=deferred();gates.claimEntered.resolve();await gates.claim.promise;}
+    if(params.p_expected_user_id!==uid)return reject('42501');const b=binding(params.p_token);if(b.binding_generation!==params.p_expected_binding_generation)return reject();
+    let row=rows.find(r=>r.user_id===uid&&r.token===params.p_token);if(!row){row={id:next(),user_id:uid,token:params.p_token};rows.push(row);}row.registration_generation=next();row.platform=params.p_platform;
+    const ack={user_id:uid,token_id:row.id,registration_generation:row.registration_generation,binding_generation:next()};bindings.set(hash(params.p_token),ack);
+    return response(options.badClaim??ack);
+   }
+   if(rpc==='push_device_release'){
+    if(options.holdRelease){gates.release=deferred();await gates.release.promise;}
+    if(params.p_expected_user_id!==uid)return reject('42501');const b=binding(params.p_token);const matched=b.user_id===uid&&b.token_id===params.p_token_id&&b.registration_generation===params.p_registration_generation&&b.binding_generation===params.p_binding_generation;
+    if(matched){for(let i=rows.length-1;i>=0;i--)if(rows[i].id===b.token_id&&rows[i].user_id===uid)rows.splice(i,1);bindings.set(hash(params.p_token),{binding_generation:next()});}
+    return response(options.badRelease??{user_id:uid,released:matched});
+   }
+   if(rpc==='push_device_active_registrations')return response(options.badActive??{registrations:params.p_registrations.filter(active)});
+   if(rpc==='push_receipts_prepare'){
+    if(options.holdPrepare&&!gates.prepare){gates.prepare=deferred();await gates.prepare.promise;}
+    if(MODE!=='baseline'&&params.p_registrations.some(reg=>!active(reg)))return reject();
+    const started=!attempts.has(params.p_attempt_id);attempts.add(params.p_attempt_id);return response({attempt_id:params.p_attempt_id,started});
+   }
+   if(rpc==='push_receipts_record_tickets')return response({attempt_id:params.p_attempt_id,recorded_count:params.p_results.length});
+   assert.fail('Unexpected RPC '+rpc);
+  }
+  if(name==='push_tokens'&&init.method==='POST'){
+   assert.equal(params.user_id,uid);const existing=rows.find(r=>r.user_id===uid&&r.token===params.token);if(existing)Object.assign(existing,params);else rows.push({...params,id:next(),registration_generation:next()});return new Response(null,{status:201});
+  }
+  if(name==='push_tokens'&&init.method==='DELETE'){
+   if(options.rpcError==='push_device_release')return reject();const token=url.searchParams.get('token').slice(3),user=url.searchParams.get('user_id').slice(3);for(let i=rows.length-1;i>=0;i--)if(rows[i].token===token&&rows[i].user_id===uid&&user===uid)rows.splice(i,1);return new Response(null,{status:204});
+  }
+  assert.equal(init.method,'GET');const tables={push_tokens:uid==='service'?rows:rows.filter(x=>x.user_id===uid),notification_preferences:options.prefs??[{user_id:B,messages:false,assignments:false,reminders:false}],conversation_members:[{conversation_id:'safe-conversation',user_id:options.recipient??A}],conversations:[{id:'safe-conversation',is_group:false}],blocked_users:options.blocks??[],profiles:[{id:C,full_name:PRIVATE}],stable_members:[{stable_id:'safe-stable',user_id:A},{stable_id:'safe-stable',user_id:B},{stable_id:'safe-stable',user_id:C}]};let selected=tables[name];assert.ok(selected,'Unexpected table '+name);
+  for(const[key,value]of url.searchParams){if(key==='select')continue;if(value.startsWith('eq.'))selected=selected.filter(x=>String(x[key])===value.slice(3));if(value.startsWith('neq.'))selected=selected.filter(x=>String(x[key])!==value.slice(4));if(value.startsWith('in.('))selected=selected.filter(x=>value.slice(4,-1).split(',').includes(String(x[key])));}
+  return response(new Headers(init.headers).get('accept')==='application/vnd.pgrst.object+json'?(selected[0]??null):selected);
+ };
+ const primitive=options.lockPrimitive??processLock,primaryApi=primaryFactory({Platform:{OS:options.platform??'ios'},selectedSessionLock:primitive,authStorageKey:authKey}),primaryMutation=primaryApi.withPrimarySessionMutation;
+ const create=key=>createClient(BASE,key,{auth:{storageKey:authKey,persistSession:!!options.sharedStorage,storage:options.sharedStorage,autoRefreshToken:false,detectSessionInUrl:false,lock:options.authLock??primitive},global:{fetch}}),sdk=create('synthetic-public-key');
+ const setUser=async id=>{if(!id){await sdk.auth.signOut();return;}const r=await sdk.auth.setSession({access_token:access(id),refresh_token:'synthetic-refresh'});assert.equal(r.error,null);};await setUser(A);
+ const deps={Platform:{OS:'ios'},Device:{isDevice:true},Constants:{expoConfig:{extra:{eas:{projectId:'synthetic-project'}}}},Notifications:{setNotificationHandler(){},getExpoPushTokenAsync:async()=>{tokenCount++;if(options.holdToken===tokenCount){const gate=deferred();tokens.push(gate);await gate.promise;}return {data:options.nullToken?null:T};}},supabase:sdk,console:{warn:(...x)=>logs.push(x)}};
+ if(options.virtualTimers){deps.setTimeout=(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;};deps.clearTimeout=id=>timers.delete(id);}
+ const libraryFactory=(await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+libraryBody+';return {registerPushToken,deregisterPushToken};};')).default;
+ const api=libraryFactory(deps);
+ async function route({type='message',recipient=A,severity='important',request=uuid(900)}={}){
+  let handler;const transport=async(input,init)=>{assert.equal(String(input),'https://exp.host/--/api/v2/push/send');const messages=JSON.parse(init.body);provider.push(...messages);return response({data:messages.map((_,i)=>({status:'ok',id:'ticket-'+request+'-'+i}))});};
+  const deps={createClient:()=>create('synthetic-service-key'),Deno:{env:{get:key=>key==='SUPABASE_SERVICE_ROLE_KEY'?'synthetic-service-key':BASE},serve:fn=>{handler=fn;}},isUuid:shared.isUuid,registration:shared.registration,activePushRegistrations:shared.activePushRegistrations,sendPushTargets:(sdk,id,targets)=>shared.sendPushTargets(sdk,id,targets,transport),Response,console:{error:(...x)=>logs.push(x)}};
+  (await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+senderBody+'};')).default(deps);
+  const record=type==='message'?{conversation_id:'safe-conversation',author_id:C,text:PRIVATE}:type==='assignment'?{assignee_id:recipient,label:PRIVATE,date:PRIVATE,time:PRIVATE}:{stable_id:'safe-stable',created_by_user_id:C,severity,title:PRIVATE,body:PRIVATE};
+  const result=await handler(new Request('https://local-edge.invalid',{method:'POST',headers:{Authorization:'Bearer synthetic-service-key','Content-Type':'application/json'},body:JSON.stringify({request_id:request,type,record})}));return {status:result.status,body:await result.json()};
+ }
+ async function hook(userId){
+  const slots=[],effects=[],listeners=[],routes=[],promises=[];let cursor=0,id=userId;
+  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+  const deps={Platform:{OS:'ios'},supabase:sdk,console:{warn:(...x)=>logs.push(x)},useRef:current=>{const i=cursor++;slots[i]??={current};return slots[i];},useMemo:(fn,d)=>{const i=cursor++;if(!same(slots[i]?.deps,d))slots[i]={deps:d,value:fn()};return slots[i].value;},useEffect:(fn,d)=>{const i=cursor++,old=slots[i];if(!same(old?.deps,d)){const slot={deps:d};slots[i]=slot;effects.push(()=>{old?.cleanup?.();slot.cleanup=fn();});}},Notifications:{addNotificationResponseReceivedListener:fn=>{const listener={fn,removed:false,remove(){this.removed=true;}};listeners.push(listener);return listener;}},router:{push:path=>routes.push(path)},registerPushToken:(...args)=>{const promise=api.registerPushToken(...args);promises.push(promise);return promise;}};
+  deps.useLayoutEffect=deps.useEffect;
+  const fn=(await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+hookBody+';return usePushNotifications;};')).default(deps);
+  const render=()=>{cursor=0;fn(id);while(effects.length)effects.shift()();};render();
+  return {setUser:uid=>{id=uid;render();},unmount:()=>{for(const slot of slots)slot.cleanup?.();},listeners,routes,promises};
+ }
+ let authDriver;
+ async function auth(){
+  if(authDriver)return authDriver;
+  const slots=[],effects=[];let cursor=0,value;
+  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+  const memo=(fn,d)=>{const i=cursor++;if(!same(slots[i]?.deps,d))slots[i]={deps:d,value:fn()};return slots[i].value;};
+  const React={createContext:()=>({Provider:{}}),createElement:(type,props)=>{value=props.value;return {type,props};},useState:initial=>{const i=cursor++;slots[i]??={value:typeof initial==='function'?initial():initial};return [slots[i].value,next=>{slots[i].value=typeof next==='function'?next(slots[i].value):next;}];},useRef:current=>{const i=cursor++;slots[i]??={current};return slots[i];},useMemo:memo,useCallback:(fn,d)=>memo(()=>fn,d),useEffect:(fn,d)=>{const i=cursor++,old=slots[i];if(!same(old?.deps,d)){const slot={deps:d};slots[i]=slot;effects.push(()=>{old?.cleanup?.();slot.cleanup=fn();});}}};
+  const args={React,assertPrimarySessionMutationSupported:primaryApi.assertPrimarySessionMutationSupported,withPrimarySessionMutation:primaryMutation,isQaDemoMode:false,createQaDemoSession(){throw new Error('No demo Auth');},supabase:sdk,deregisterPushToken:api.deregisterPushToken,clearDeletedAccountSession:async()=>true,markDeletedAccountSession(){},console:{warn:(...x)=>logs.push(x)}};
+  const Provider=(await compile('export default ({'+Object.keys(args).join(',')+'})=>{'+authBody+';return AuthProvider;};')).default(args);
+  const flush=()=>{cursor=0;Provider({children:null});while(effects.length)effects.shift()();};flush();await tick();await tick();flush();assert.equal(value.user?.id,A);
+  authDriver={flush,get value(){return value;},unmount:()=>{for(const slot of slots)slot.cleanup?.();}};return authDriver;
+ }
+ const confirmErrors=[],confirmRoutes=[];
+ async function primarySetUser(id){
+  const args={supabase:sdk,PrimarySessionMutationUnsupportedError:primaryApi.PrimarySessionMutationUnsupportedError,PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:primaryApi.message,withPrimarySessionMutation:primaryMutation,router:{replace:x=>confirmRoutes.push(x)},setError:x=>confirmErrors.push(x),setVerifying(){},console:{warn:(...x)=>logs.push(x)}};
+  const fn=(await compile('export default ({'+Object.keys(args).join(',')+'})=>{'+parseConfirm+';return '+confirmCallback+';};')).default(args);
+  return fn('stableflow://confirm#access_token='+access(id)+'&refresh_token=synthetic-refresh');
+ }
+ async function primaryLogin(id){const args={supabase:sdk,withPrimarySessionMutation:primaryMutation,trimmedEmail:(id===B?'b':'a')+'@example.invalid',password:'synthetic-password'};return (await compile('export default async ({'+Object.keys(args).join(',')+'})=>'+actualLogin+';')).default(args);}
+ return {api,freshApi:()=>libraryFactory(deps),auth,primarySetUser,primaryLogin,primaryMutation,primaryApi,confirmErrors,confirmRoutes,get tokenAcquisitions(){return tokenCount;},signOut:async()=>{const a=await auth();return a.value.signOut();},sdk,setUser,calls,provider,logs,rows,bindings,route,hook,gates,tokens,timers,fire:ms=>{for(const[id,t]of timers)if(t.ms===ms){timers.delete(id);t.fn();}}};
+}
+const tick=async()=>{await setImmediate();},cases=[];
+async function check(name,fn){try{cases.push({name,passed:true,detail:await fn()});}catch(e){cases.push({name,passed:false,error:String(e.stack)});}}
+
+const evidence={};const boundary=process.argv.includes('--no-weblocks-boundary'),raw=process.argv.includes('--raw-boundary');
+if(!boundary&&!raw){
+await check('A mutation gate acquired first: actual confirmation waits, logout authenticates A, then B survives',async()=>{
+ const queued=deferred(),release=deferred();let arm=false;
+ const authLock=async(name,timeout,fn)=>{if(arm){arm=false;queued.resolve();await release.promise;}return processLock(name,timeout,fn);};
+ const f=await fixture({authLock}),auth=await f.auth(),ordinary=f.sdk.auth.signOut.bind(f.sdk.auth);f.sdk.auth.signOut=(...args)=>{arm=true;return ordinary(...args);};
+ const a=auth.value.signOut();await queued.promise;let bDone=false;const b=f.primarySetUser(B).then(()=>{bDone=true;});await tick();
+ if(hasPrimaryGate)assert.equal(bDone,false,'actual confirmation must wait for app gate');release.resolve();await Promise.all([a,b]);auth.flush();
+ assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1)?.actor,A);assert.equal(auth.value.user?.id,B);auth.unmount();
+});
+await check('B password login gate acquired first: captured A callback aborts after gate acquisition without logout',async()=>{
+ const f=await fixture({holdLogin:true}),auth=await f.auth(),old=auth.value.signOut;const b=f.primaryLogin(B);await tick();assert.ok(f.gates.login);const a=old();await tick();f.gates.login.resolve();await Promise.all([a,b]);auth.flush();
+ assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').length,0);assert.equal(auth.value.user?.id,B);auth.unmount();
+});
+await check('already acquired SDK lock queues actual signOut internally while B actual password mutation waits app gate',async()=>{
+ let arm=false;const f=await fixture({holdUser:()=>arm}),auth=await f.auth(),ordinary=f.sdk.auth.signOut.bind(f.sdk.auth),queued=deferred();
+ f.sdk.auth.signOut=async(...args)=>{arm=true;const busy=f.sdk.auth.getUser();for(let i=0;!f.gates.user&&i<30;i++)await tick();assert.ok(f.gates.user,'actual getUser transport confirms SDK operation has acquired auth lock');const out=ordinary(...args);queued.resolve();await busy;return out;};
+ const a=auth.value.signOut();await queued.promise;const b=f.primaryLogin(B);await tick();if(hasPrimaryGate)assert.equal(f.calls.filter(x=>x.path==='/auth/v1/token').length,0);f.gates.user.resolve();await Promise.all([a,b]);auth.flush();
+ assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1)?.actor,A);auth.unmount();
+});
+await check('actual navigatorLock helper with shared LockManager adapter serializes two SDK clients and distinct app/auth names',async()=>{
+ const descriptor=Object.getOwnPropertyDescriptor(globalThis,'navigator'),requested=[],store=new Map(),storage={getItem:k=>store.get(k)??null,setItem:(k,v)=>{store.set(k,v);},removeItem:k=>{store.delete(k);}};
+ Object.defineProperty(globalThis,'navigator',{configurable:true,value:{locks:{request:(name,options,fn)=>{requested.push(name);return processLock('model-WebLocks:'+name,-1,()=>fn({name}));}}}});
+ try{const queued=deferred(),release=deferred();let arm=false;const authLock=async(name,timeout,fn)=>{if(arm){arm=false;queued.resolve();await release.promise;}return navigatorLock(name,timeout,fn);};
+  const f=await fixture({platform:'web',lockPrimitive:navigatorLock,authLock,sharedStorage:storage}),peer=await fixture({platform:'web',lockPrimitive:navigatorLock,sharedStorage:storage}),auth=await f.auth(),ordinary=f.sdk.auth.signOut.bind(f.sdk.auth);f.sdk.auth.signOut=(...args)=>{arm=true;return ordinary(...args);};
+  const a=auth.value.signOut();await queued.promise;let done=false;const b=peer.primarySetUser(B).then(()=>{done=true;});await tick();if(hasPrimaryGate)assert.equal(done,false);release.resolve();await Promise.all([a,b]);
+  assert.equal((await peer.sdk.auth.getSession()).data.session?.user.id,B);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1)?.actor,A);if(hasPrimaryGate)assert.ok(requested.includes('auth-mutation:'+authKey));assert.ok(requested.includes('lock:'+authKey));auth.unmount();
+ }finally{if(descriptor)Object.defineProperty(globalThis,'navigator',descriptor);else delete globalThis.navigator;}
+});
+await check('all four primary UI mutations are wrapped; recovery-client setSession remains byte-identical',async()=>{
+ const tree=ts.createSourceFile('index.tsx',loginText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let count=0,bare=0;function visit(n){if(ts.isCallExpression(n)&&/^supabase\.auth\.(signInWithPassword|signUp)$/.test(n.expression.getText(tree))){count++;if(!ts.isArrowFunction(n.parent))bare++;}ts.forEachChild(n,visit);}visit(tree);assert.equal(count,3);assert.equal(bare,0);assert.match(confirmCallback,/withPrimarySessionMutation/);
+ const recovery=primaryText.slice(primaryText.indexOf('function createRecoveryClient'));const original=await readFile(join(root,'baseline','lib/supabase.ts'),'utf8');assert.equal(recovery,original.slice(original.indexOf('function createRecoveryClient')));
+});
+}
+if(boundary){
+await check('unsupported no-WebLocks web refuses logout before cleanup and SDK, with actual visible account caller',async()=>{
+ const f=await fixture({platform:'web'}),auth=await f.auth(),before=(await f.sdk.auth.getSession()).data.session;
+ const text=await read('app/settings/account.tsx'),tree=ts.createSourceFile('account.tsx',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback;
+ function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(tree)==='handleLogout')callback=n.initializer.arguments[0].getText(tree);ts.forEachChild(n,visit);}visit(tree);assert.ok(callback);
+ const toasts=[],routes=[],args={signOut:auth.value.signOut,toast:{showToast:(...x)=>toasts.push(x)},router:{replace:x=>routes.push(x)},PrimarySessionMutationUnsupportedError:f.primaryApi.PrimarySessionMutationUnsupportedError,PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:f.primaryApi.message};
+ const logout=(await compile('export default ({'+Object.keys(args).join(',')+'})=>'+callback+';')).default(args);logout();await tick();await tick();auth.flush();
+ evidence.sessionPreserved=(await f.sdk.auth.getSession()).data.session?.access_token===before.access_token;evidence.reactUserPreserved=auth.value.user?.id===A;evidence.noSDKLogout=f.calls.filter(x=>x.path==='/auth/v1/logout').length===0;evidence.noCleanup=f.calls.filter(x=>x.path.endsWith('push_device_release')).length===0&&f.tokenAcquisitions===0;evidence.noSuccessOrRoute=routes.length===0&&toasts.every(x=>x[1]==='error');evidence.visibleFixedCopy=toasts.some(x=>x[0]===f.primaryApi.message&&x[0].includes('Uppdatera webbläsaren'));
+ auth.unmount();assert.equal(evidence.sessionPreserved,true);assert.equal(evidence.reactUserPreserved,true);assert.equal(evidence.noSDKLogout,true);assert.equal(evidence.noCleanup,true);assert.equal(evidence.noSuccessOrRoute,true);assert.equal(evidence.visibleFixedCopy,true);
+});
+await check('legacy peer B shared-storage session survives unsupported current-web logout without false local SIGNED_OUT',async()=>{
+ const store=new Map(),storage={getItem:k=>store.get(k)??null,setItem:(k,v)=>{store.set(k,v);},removeItem:k=>{store.delete(k);}};
+ const f=await fixture({platform:'web',sharedStorage:storage}),peer=await fixture({platform:'web',sharedStorage:storage}),auth=await f.auth();
+ await peer.setUser(B);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(auth.value.user?.id,A,'shared-storage peer event is not a synthetic React rerender');
+ await assert.rejects(auth.value.signOut(),err=>err instanceof f.primaryApi.PrimarySessionMutationUnsupportedError);auth.flush();
+ assert.equal((await peer.sdk.auth.getSession()).data.session?.user.id,B);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(auth.value.user?.id,A);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').length,0);assert.equal(f.tokenAcquisitions,0);auth.unmount();
+});
+await check('unsupported actual login and confirmation helpers retain session and use fixed visible copy',async()=>{
+ const f=await fixture({platform:'web'});await assert.rejects(f.primaryLogin(B),err=>err instanceof f.primaryApi.PrimarySessionMutationUnsupportedError);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/token').length,0);
+ await f.primarySetUser(B);assert.ok(f.confirmErrors.includes(f.primaryApi.message));assert.equal(f.confirmRoutes.length,0);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,A);
+ const tree=ts.createSourceFile('index.tsx',loginText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback,catchBlock;
+ function visit(n){if(ts.isVariableDeclaration(n)&&n.name.getText(tree)==='handleSubmit')callback=n.initializer.arguments[0];ts.forEachChild(n,visit);}visit(tree);
+ function find(n){if(ts.isTryStatement(n)&&n.catchClause)catchBlock=n.catchClause.block.getText(tree);ts.forEachChild(n,find);}find(callback);assert.ok(catchBlock);
+ const toasts=[],args={error:new f.primaryApi.PrimarySessionMutationUnsupportedError(),PrimarySessionMutationUnsupportedError:f.primaryApi.PrimarySessionMutationUnsupportedError,PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:f.primaryApi.message,toast:{showToast:(...x)=>toasts.push(x)},console:{warn(){}},mode:'login'};
+ (await compile('export default ({'+Object.keys(args).join(',')+'})=>'+catchBlock+';')).default(args);assert.deepEqual(toasts,[[f.primaryApi.message,'error']]);
+});
+
+}
+if(raw){
+await check('raw SDK setSession bypassing product app gate must preserve B (explicit external-call boundary)',async()=>{
+ const queued=deferred(),release=deferred();let arm=false;const authLock=async(name,timeout,fn)=>{if(arm){arm=false;queued.resolve();await release.promise;}return processLock(name,timeout,fn);};
+ const f=await fixture({authLock}),auth=await f.auth(),ordinary=f.sdk.auth.signOut.bind(f.sdk.auth);f.sdk.auth.signOut=(...args)=>{arm=true;return ordinary(...args);};const a=auth.value.signOut();await queued.promise;await f.setUser(B);release.resolve();await a;
+ evidence.logoutActorIsB=f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1)?.actor===B;evidence.BPreserved=(await f.sdk.auth.getSession()).data.session?.user.id===B;auth.unmount();assert.equal(evidence.BPreserved,true);
+});
+}
+assert.equal(unmocked,0);const label=boundary?'no-weblocks-boundary':raw?'raw-sdk-boundary':'primary-mutation';const result={mode:MODE,total:cases.length,passed:cases.filter(x=>x.passed).length,cases,evidence,unmockedExternalFetchAttempts:unmocked,boundary:'Actual helper/AuthProvider/UI primary SDK call expressions + installed SDK/processLock/navigatorLock. Synthetic HTTP/JWT/hooks; shared LockManager is an adapter model, not actual browser/WebLocks acceptance. No WebLocks boundary uses two separately evaluated exact installed processLock source bodies.'};await writeFile(join(root,'reports',label+'-'+MODE+'.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result,null,2));if(result.passed!==result.total)process.exitCode=1;

@@ -74,6 +74,9 @@ const MessageItem = React.memo(function MessageItem({
         <Text numberOfLines={1} style={styles.itemSubtitle}>
           {item.subtitle}
         </Text>
+        {(!item.readMessageIds || !item.unreadMessageIds) && (
+          <Text style={styles.itemPreview}>Oläststatus ej bekräftad. Uppdatera chattlistan.</Text>
+        )}
         <Text numberOfLines={1} style={styles.itemPreview}>
           {item.description}
         </Text>
@@ -99,7 +102,7 @@ const FILTER_OPTIONS: { label: string; value: MessageFilter }[] = [
 
 export default function MessagesScreen() {
   const router = useRouter();
-  const { state, actions, derived, hydrating, refreshing } = useAppData();
+  const { state, actions, derived, hydrating, refreshing, refreshError } = useAppData();
   const { messages, currentStableId, conversations, currentUserId, blockedUserIds } = state;
 
   // A private conversation whose only other participant is blocked is hidden from the list.
@@ -125,7 +128,6 @@ export default function MessagesScreen() {
   const [filter, setFilter] = React.useState<MessageFilter>('all');
 
   const handleOpenConversation = (item: MessagePreview) => {
-    actions.markConversationRead(item.id);
     router.push({
       pathname: '/chat/[id]',
       params: { id: item.id, name: item.title },
@@ -226,6 +228,7 @@ export default function MessagesScreen() {
         title="Meddelanden"
       />
       {!isDesktopWeb ? <StableSwitcher /> : null}
+      {refreshError && <Text accessibilityRole="alert" style={styles.emptyText}>{refreshError} Oläststatus kan inte bekräftas just nu.</Text>}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}

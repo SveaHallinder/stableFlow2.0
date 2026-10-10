@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { URL } from 'node:url';
 import ts from 'typescript';
+
+const { outputText: scheduleSource } = ts.transpileModule(await readFile(new URL('../lib/schedule.ts', import.meta.url), 'utf8'),
+  { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } = await import(`data:text/javascript;base64,${Buffer.from(scheduleSource).toString('base64')}`);
 
 async function loadAction(dependencies) {
   const source = await readFile(new URL('../context/AppDataContext.tsx', import.meta.url), 'utf8');
@@ -17,6 +23,7 @@ function setup(persist) {
   let ids = 0;
   const dispatched = [];
   const deps = {
+    MAX_RECURRING_ASSIGNMENTS_PER_BATCH,
     stateRef: { current: { currentStableId: 'stable', currentUserId: 'user', assignments: [] } },
     ensurePermission: () => ({ success: true }), DEFAULT_ASSIGNMENT_DURATION_MINUTES: 60,
     isValidISODate: value => value === '2026-09-08', isValidTime: value => value === '07:00',

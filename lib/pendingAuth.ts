@@ -13,7 +13,7 @@ const isWeb = Platform.OS === 'web';
 
 async function storageSet(key: string, value: string): Promise<void> {
   if (isWeb) {
-    globalThis.localStorage?.setItem(key, value);
+    globalThis.localStorage.setItem(key, value);
     return;
   }
   await SecureStore.setItemAsync(key, value);
@@ -34,23 +34,28 @@ async function storageDelete(key: string): Promise<void> {
   await SecureStore.deleteItemAsync(key);
 }
 
-export async function savePendingJoinCode(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return;
+export async function savePendingJoinCode(value: string, email: string): Promise<boolean> {
+  const code = value.trim().toUpperCase();
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!code || !normalizedEmail) {
+    return false;
   }
   try {
-    await storageSet(PENDING_JOIN_CODE_KEY, trimmed);
+    await storageSet(PENDING_JOIN_CODE_KEY, JSON.stringify({ code, email: normalizedEmail }));
+    return true;
   } catch {
-    return;
+    return false;
   }
 }
 
-export async function loadPendingJoinCode(): Promise<string | null> {
+export async function loadPendingJoinCode(email: string): Promise<string | null> {
   try {
     const stored = await storageGet(PENDING_JOIN_CODE_KEY);
-    const trimmed = stored?.trim();
-    return trimmed ? trimmed : null;
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as { code?: unknown; email?: unknown } | null;
+    const code = typeof parsed?.code === 'string' ? parsed.code.trim().toUpperCase() : '';
+    const savedEmail = typeof parsed?.email === 'string' ? parsed.email.trim().toLowerCase() : '';
+    return code && savedEmail && savedEmail === email.trim().toLowerCase() ? code : null;
   } catch {
     return null;
   }

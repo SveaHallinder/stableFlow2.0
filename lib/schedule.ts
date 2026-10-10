@@ -1,5 +1,7 @@
 import type { Assignment } from '@/context/AppDataContext';
 
+export const MAX_RECURRING_ASSIGNMENTS_PER_BATCH = 365;
+
 export type GroupedAssignmentDay = {
   isoDate: string;
   date: Date;
@@ -106,7 +108,9 @@ export function findInitialWeekIndex(
     return 0;
   }
 
-  const referenceTime = referenceDate.getTime();
+  const referenceDay = new Date(referenceDate);
+  referenceDay.setHours(0, 0, 0, 0);
+  const referenceTime = referenceDay.getTime();
   const containingIndex = weeks.findIndex(
     (week) => referenceTime >= week.start.getTime() && referenceTime <= week.end.getTime(),
   );

@@ -69,3 +69,33 @@ test('validation errors are announced and remain readable for six seconds', asyn
   await page.clock.fastForward(500);
   await expect(error).toHaveCount(0);
 });
+
+test('mobile calendar sections remain reachable without horizontal content shift', async ({ page }) => {
+  await page.route('**/rest/v1/**', route => route.abort('blockedbyclient'));
+  await page.route('**/auth/v1/**', route => route.abort('blockedbyclient'));
+  await page.route('**/functions/v1/**', route => route.abort('blockedbyclient'));
+  await page.goto('/calendar?qaDemo=1');
+  const labels = ['Stallschema', 'Ridschema', 'Ridhus', 'Tävling', 'Vård'];
+  const first = page.getByRole('button', { name: 'Stallschema', exact: true });
+  for (const active of ['Vård', 'Stallschema']) {
+    await page.getByRole('button', { name: active, exact: true }).click();
+    if (active === 'Stallschema') await page.getByText('Lediga', { exact: true }).first().click();
+    for (const name of labels) {
+      const section = page.getByRole('button', { name, exact: true });
+      await expect(section).toBeVisible();
+      const box = await section.boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+    }
+    const offsets = await first.evaluate(element => {
+      const values = [];
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (window.getComputedStyle(parent).overflowX === 'hidden') values.push(parent.scrollLeft);
+      }
+      return values;
+    });
+    expect(offsets.length).toBeGreaterThan(0);
+    expect(offsets.every(value => value === 0)).toBe(true);
+  }
+  await page.screenshot({ path: '/tmp/stableflow-calendar-mobile-sections-final-20261005.png' });
+});

@@ -4,7 +4,12 @@ import type { ImageSourcePropType } from 'react-native';
 import { AppState, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
+import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/chatReadReceipts';
+import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
+import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
+import { isFutureOpenSeriesAssignment, updateRecurringSeries, validateRecurringSeriesEdit,
+  type RecurringSeriesEdit, type RecurringSeriesResult } from '@/lib/recurringSeries';
 import { supabase } from '@/lib/supabase';
 import { trackPendingWrite } from '@/lib/writeTracker';
 import { createTimeoutFetch } from '@/lib/requestTimeout';
@@ -341,6 +346,7 @@ export type AssignmentAssignedVia = 'default' | 'manual';
 
 export type Assignment = {
   id: string;
+  seriesId?: string;
   date: string; // ISO date string e.g. 2025-03-10
   stableId: string;
   label: string;
@@ -429,9 +435,12 @@ export type MessagePreview = {
   description: string;
   timeAgo: string;
   unreadCount?: number;
+  readMessageIds?: string[];
+  unreadMessageIds?: string[];
   group?: boolean;
   avatar?: ImageSourcePropType;
   stableId?: string;
+  participantUserIds?: string[];
 };
 
 export type ConversationMessage = {
@@ -540,7 +549,11 @@ export type Paddock = {
   id: string;
   name: string;
   stableId: string;
-  horseNames: string[];
+  horseNames: (string | null)[];
+  horseIds: string[];
+  revision: number;
+  linksReady: boolean;
+  lastSaveRequestId?: string;
   image?: PaddockImage;
   updatedAt: string;
   season?: 'summer' | 'winter' | 'yearRound';
@@ -617,7 +630,8 @@ export type UserProfile = {
 export type UpsertPaddockInput = {
   id?: string;
   name: string;
-  horseNames: string[];
+  horseIds: string[];
+  expectedRevision: number | null;
   stableId: string;
   image?: PaddockImage | null;
   season?: Paddock['season'];
@@ -742,7 +756,7 @@ export type CompleteCareEventInput = {
   note?: string;
 };
 
-export type InviteConfirmation = { inviteCode: string; codes: { stableId: string; code: string }[] };
+export type InviteConfirmation = { email: string; inviteCode: string; codes: { stableId: string; code: string }[] };
 
 export type AddMemberInput = {
   name: string;
@@ -845,6 +859,7 @@ export type AppDataState = {
   arenaStatuses: ArenaStatus[];
   rideLogs: RideLogEntry[];
   paddocks: Paddock[];
+  paddockLinksReady: boolean;
   horseDayStatuses: HorseDayStatus[];
   horseResponsibilities: HorseResponsibility[];
   feedPlans: FeedPlanItem[];
@@ -891,7 +906,7 @@ type StableAlertUpsertAction = {
 
 type MarkMessageReadAction = {
   type: 'MESSAGE_MARK_READ';
-  payload: { id: string };
+  payload: ChatReadReceipt;
 };
 
 type AppendConversationMessageAction = {
@@ -921,6 +936,10 @@ type PaddockUpsertAction = {
 type PaddockDeleteAction = {
   type: 'PADDOCK_DELETE';
   payload: { id: string };
+};
+
+type PaddockLinksUnavailableAction = {
+  type: 'PADDOCK_LINKS_UNAVAILABLE';
 };
 
 type DayEventAddAction = {
@@ -1123,6 +1142,7 @@ type AppDataAction =
   | UserUpsertAction
   | PaddockUpsertAction
   | PaddockDeleteAction
+  | PaddockLinksUnavailableAction
   | DayEventAddAction
   | DayEventDeleteAction
   | ArenaBookingAddAction
@@ -1221,6 +1241,7 @@ type AppDataContextValue = {
     createRecurringAssignments: (
       input: CreateRecurringAssignmentsInput,
     ) => Promise<ActionResult<{ createdCount: number; skippedCount: number }>>;
+    updateRecurringAssignmentSeries: (input: RecurringSeriesEdit) => Promise<RecurringSeriesResult>;
     updateAssignment: (input: UpdateAssignmentInput) => Promise<ActionResult<Assignment>>;
     deleteAssignment: (assignmentId: string) => Promise<ActionResult>;
     addEvent: (message: string, type?: AlertMessage['type'], requestId?: string) => Promise<ActionResult<AlertMessage>>;
@@ -1228,7 +1249,7 @@ type AppDataContextValue = {
     resolveStableAlert: (alertId: string) => Promise<ActionResult<StableAlert>>;
     toggleDefaultPass: (weekday: WeekdayIndex, slot: AssignmentSlot) => Promise<ActionResult<UserProfile>>;
     upsertPaddock: (input: UpsertPaddockInput) => Promise<ActionResult<Paddock>>;
-    deletePaddock: (paddockId: string) => Promise<ActionResult>;
+    deletePaddock: (paddockId: string, expectedRevision: number) => Promise<ActionResult>;
     updateHorseDayStatus: (input: UpdateHorseDayStatusInput) => Promise<ActionResult<HorseDayStatus>>;
     upsertFeedPlan: (input: UpsertFeedPlanInput) => Promise<ActionResult<FeedPlanItem>>;
     deleteFeedPlan: (feedPlanId: string) => Promise<ActionResult>;
@@ -1266,7 +1287,7 @@ type AppDataContextValue = {
     createGroup: (input: CreateGroupInput) => Promise<ActionResult<Group>>;
     renameGroup: (input: RenameGroupInput) => Promise<ActionResult<Group>>;
     deleteGroup: (groupId: string) => Promise<ActionResult>;
-    markConversationRead: (conversationId: string) => void;
+    markConversationRead: (conversationId: string, messageIds: readonly string[]) => Promise<ActionResult<ChatReadReceipt>>;
     sendConversationMessage: (conversationId: string, text: string, requestId?: string) => Promise<ActionResult<ConversationMessage>>;
     createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
     setCurrentStable: (stableId: string) => void;
@@ -1525,6 +1546,7 @@ const initialState: AppDataState = {
   arenaStatuses: [],
   rideLogs: [],
   paddocks: [],
+  paddockLinksReady: false,
   horseDayStatuses: [],
   horseResponsibilities: [],
   feedPlans: [],
@@ -1652,10 +1674,14 @@ function createQaDemoState(): AppDataState {
         stableId,
         name: 'Vinterhagen',
         horseNames: ['Saga'],
+        horseIds: [horseId],
+        revision: 1,
+        linksReady: true,
         updatedAt: now,
         season: 'winter',
       },
     ],
+    paddockLinksReady: true,
     assignments: [
       {
         id: 'qa-assignment-open',
@@ -2120,13 +2146,21 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         posts: nextPosts,
       };
     }
-    case 'MESSAGE_MARK_READ':
+    case 'MESSAGE_MARK_READ': {
+      const receipt = action.payload;
+      if (state.sessionUserId !== receipt.userId || state.currentUserId !== receipt.userId) return state;
       return {
         ...state,
-        messages: state.messages.map((message) =>
-          message.id === action.payload.id ? { ...message, unreadCount: 0 } : message,
-        ),
+        messages: state.messages.map(preview => {
+          if (preview.id !== receipt.conversationId) return preview;
+          const next = { ...preview,
+            readMessageIds: [...new Set([...(preview.readMessageIds ?? []), ...receipt.readMessageIds])],
+            unreadMessageIds: receipt.unreadMessageIds,
+          };
+          return { ...next, unreadCount: chatUnreadIds(next, state.conversations[preview.id] ?? [], receipt.userId, state.blockedUserIds).length };
+        }),
       };
+    }
     case 'CONVERSATION_APPEND': {
       const { conversationId, message, preview } = action.payload;
       const existingMessages = state.conversations[conversationId] ?? [];
@@ -2136,16 +2170,20 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         : existingMessages;
       const preservePreview = duplicate || (message && nextMessages.at(-1)?.id !== message.id);
       const hasPreview = state.messages.some((msg) => msg.id === conversationId);
+      const updatePreview = (existing?: MessagePreview) => {
+        const next = preservePreview && existing ? existing : { ...preview };
+        if (!existing?.readMessageIds || !existing.unreadMessageIds) return next;
+        // A send acknowledgement can be older than an incoming/read acknowledgement.
+        // Always preserve the latest read state, independently of preview ordering.
+        const readPreview = { ...next, readMessageIds: existing.readMessageIds, unreadMessageIds: existing.unreadMessageIds };
+        return { ...readPreview, unreadCount: chatUnreadIds(readPreview, nextMessages, state.currentUserId, state.blockedUserIds).length };
+      };
       const updatedPreview = hasPreview
-        ? state.messages.map((msg) => (msg.id === conversationId && !preservePreview ? preview : msg))
-        : [preview, ...state.messages];
-
+        ? state.messages.map(msg => msg.id === conversationId ? updatePreview(msg) : msg)
+        : [updatePreview(), ...state.messages];
       return {
         ...state,
-        conversations: {
-          ...state.conversations,
-          [conversationId]: nextMessages,
-        },
+        conversations: { ...state.conversations, [conversationId]: nextMessages },
         messages: updatedPreview,
       };
     }
@@ -2180,6 +2218,9 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
     }
     case 'SESSION_CLEAR': {
       return { ...state, sessionUserId: null };
+    }
+    case 'PADDOCK_LINKS_UNAVAILABLE': {
+      return { ...state, paddockLinksReady: false };
     }
     case 'PADDOCK_UPSERT': {
       const existingIndex = state.paddocks.findIndex((paddock) => paddock.id === action.payload.id);
@@ -2309,6 +2350,12 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
       const sessionUserId =
         rawSessionUserId && users[rawSessionUserId] ? rawSessionUserId : null;
       const groups = ensureSystemGroups(action.payload.groups, farms, stables, horses);
+      const blockedUserIds = action.payload.blockedUserIds ?? state.blockedUserIds;
+      const conversations = action.payload.conversations ?? state.conversations;
+      const messages = (action.payload.messages ?? state.messages).map((preview) =>
+        preview.readMessageIds && preview.unreadMessageIds ? { ...preview,
+          unreadCount: chatUnreadIds(preview, conversations[preview.id] ?? [], currentUserId, blockedUserIds).length,
+        } : preview);
       return {
         ...state,
         ...action.payload,
@@ -2319,6 +2366,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         currentUserId,
         sessionUserId,
         groups,
+        messages,
         horseDayStatuses: action.payload.horseDayStatuses ?? state.horseDayStatuses,
         horseResponsibilities: action.payload.horseResponsibilities ?? state.horseResponsibilities,
         stableAlerts: action.payload.stableAlerts ?? state.stableAlerts,
@@ -2327,7 +2375,7 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
         plannedRides: action.payload.plannedRides ?? state.plannedRides,
         externalContacts: action.payload.externalContacts ?? state.externalContacts,
         careEvents: action.payload.careEvents ?? state.careEvents,
-        blockedUserIds: action.payload.blockedUserIds ?? state.blockedUserIds,
+        blockedUserIds,
       };
     }
     case 'STATE_RESET':
@@ -2704,24 +2752,14 @@ function formatNextUpdate(assignments: Assignment[]) {
   })}`;
 }
 
-function normalizeHorseNames(names: string[]) {
-  const seen = new Set<string>();
-  const result: string[] = [];
-
-  names.forEach((name) => {
-    const cleaned = name.trim();
-    if (!cleaned) {
-      return;
-    }
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    result.push(cleaned);
-  });
-
-  return result;
+async function fetchPaddocks(stableIds: string[]) {
+  const result = await supabase.from('paddocks').select('*, paddock_horses(horse_id)').in('stable_id', stableIds);
+  if (result.error && ['PGRST200', 'PGRST205', '42P01'].includes(result.error.code)) {
+    console.warn('[paddock load] ID-kopplingen är inte installerad', { code: result.error.code });
+    const legacy = await supabase.from('paddocks').select('*').in('stable_id', stableIds);
+    return { ...legacy, linksReady: false };
+  }
+  return { ...result, linksReady: !result.error };
 }
 
 function hasOwnProperty<T extends object>(target: T, key: keyof T) {
@@ -2731,6 +2769,7 @@ function hasOwnProperty<T extends object>(target: T, key: keyof T) {
 function buildAssignmentInsertPayload(assignment: Assignment) {
   return {
     id: assignment.id,
+    ...(assignment.seriesId ? { series_id: assignment.seriesId } : {}),
     stable_id: assignment.stableId,
     date: assignment.date,
     slot: assignment.slot,
@@ -2993,7 +3032,7 @@ async function uploadPostImage(params: {
 
   const { error } = await supabase.storage.from(POSTS_BUCKET).upload(filePath, blob, {
     contentType,
-    upsert: true,
+    upsert: false,
   });
 
   if (error) {
@@ -3016,7 +3055,7 @@ async function uploadImageToStorage(
 
   const { error } = await supabase.storage.from(bucket).upload(filePath, blob, {
     contentType,
-    upsert: true,
+    upsert: false,
   });
 
   if (error) {
@@ -3031,6 +3070,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = React.useReducer(reducer, initialState);
   const stateRef = React.useRef(state);
   const { user } = useAuth();
+  const recurringScope = React.useMemo(() => ({ userId: user?.id, sessionUserId: state.sessionUserId,
+    viewerId: state.currentUserId, stableId: state.currentStableId }),
+  [user?.id, state.sessionUserId, state.currentUserId, state.currentStableId]);
+  const recurringScopeRef = React.useRef<typeof recurringScope | null>(recurringScope);
+  recurringScopeRef.current = recurringScope;
+  React.useEffect(() => { recurringScopeRef.current = recurringScope;
+    return () => { if (recurringScopeRef.current === recurringScope) recurringScopeRef.current = null; };
+  }, [recurringScope]);
+  const chatReadScope = React.useRef({ userId: user?.id ?? null, epoch: 0 });
+  if (chatReadScope.current.userId !== (user?.id ?? null)) {
+    chatReadScope.current = { userId: user?.id ?? null, epoch: chatReadScope.current.epoch + 1 };
+  }
   const { showToast } = useToast();
   const [hydrating, setHydrating] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -3038,6 +3089,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string | null>(null);
   const refreshRequestId = React.useRef(0);
   const pendingDataWrites = React.useRef(new Set<string>());
+  const privateConversationAttempts = React.useRef(new Map<string, string>());
+  const paddockSaveAttempts = React.useRef(new Map<string, {
+    signature: string;
+    requestId: string;
+    imageUrl?: Promise<string | null>;
+  }>());
   const dataWriteVersion = React.useRef(0);
   const defaultPassesStableId = React.useRef('');
   const autoAssignmentAttempts = React.useRef(new Map<string, string>());
@@ -3332,7 +3389,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentHistory = React.useCallback(
     async (assignment: Assignment, action: AssignmentHistoryAction) => {
-      if (!user) return;
+      if (isQaDemoMode || !user) return;
       const { error } = await supabase.from('assignment_history').insert({
         id: generateId(),
         stable_id: assignment.stableId,
@@ -3348,42 +3405,80 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistPaddockUpsert = React.useCallback(
-    async (paddock: Paddock, imageInput: PaddockImage | null | undefined, existing: boolean): Promise<ActionResult<Paddock>> => {
-      if (isQaDemoMode) return { success: true, data: paddock };
+    async (paddock: Paddock, imageInput: PaddockImage | null | undefined, expectedRevision: number | null,
+      attempt: { requestId: string; imageUrl?: Promise<string | null> }): Promise<ActionResult<Paddock>> => {
+      if (isQaDemoMode) {
+        const saved = stateRef.current.paddocks.find((item) => item.id === paddock.id);
+        if ((saved?.revision ?? null) !== expectedRevision) {
+          return { success: false, reason: 'Hagen har ändrats. Dina val finns kvar. Uppdatera hagen innan du sparar igen.' };
+        }
+        return { success: true, data: { ...paddock, revision: (expectedRevision ?? 0) + 1,
+          linksReady: true, lastSaveRequestId: attempt.requestId } };
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Sparningen kunde inte bekräftas.')), { once: true }));
+      let stage = 'image';
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const payload: Record<string, unknown> = {
-          id: paddock.id, stable_id: paddock.stableId, name: paddock.name,
-          horse_names: paddock.horseNames, season: paddock.season ?? 'yearRound', updated_at: paddock.updatedAt,
-        };
-        if (imageInput === null) {
-          payload.image_url = null;
-        } else if (imageInput) {
-          const uploadable = getUploadableImage(imageInput);
-          if (uploadable) {
-            payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
+        if (!attempt.imageUrl) {
+          attempt.imageUrl = (async () => {
+            if (imageInput === null) return null;
+            if (!imageInput) return paddock.image?.uri ?? null;
+            const uploadable = getUploadableImage(imageInput);
+            if (!uploadable) throw new Error('Bilden kunde inte förberedas.');
+            return isRemoteUri(uploadable.uri) ? uploadable.uri
               : (await uploadImageToStorage('paddocks', paddock.stableId, uploadable)).publicUrl;
-          }
+          })().catch((error) => { attempt.imageUrl = undefined; throw error; });
         }
-        const query = existing
-          ? supabase.from('paddocks').update(payload).eq('id', paddock.id).eq('stable_id', paddock.stableId)
-          : supabase.from('paddocks').upsert(payload);
-        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
-        if (error || data?.id !== paddock.id || data.stable_id !== paddock.stableId
-          || data.name !== paddock.name || JSON.stringify(data.horse_names) !== JSON.stringify(paddock.horseNames)
-          || data.season !== (paddock.season ?? 'yearRound')
-          || ('image_url' in payload && data.image_url !== payload.image_url)) {
-          throw error ?? new Error('Servern bekräftade inte hagen.');
+        const imageUrl = await Promise.race([attempt.imageUrl, aborted]);
+        stage = 'save';
+        const { data, error } = await Promise.race([
+          supabase.rpc('save_paddock', {
+            p_paddock_id: paddock.id, p_stable_id: paddock.stableId, p_name: paddock.name,
+            p_horse_ids: paddock.horseIds, p_season: paddock.season ?? 'yearRound',
+            p_image_url: imageUrl, p_expected_revision: expectedRevision, p_request_id: attempt.requestId,
+          }).abortSignal(controller.signal),
+          aborted,
+        ]);
+        if (error) throw error;
+        stage = 'acknowledgement';
+        if (data?.id !== paddock.id || data.stable_id !== paddock.stableId || data.name !== paddock.name
+          || data.request_id !== attempt.requestId || data.last_save_request_id !== attempt.requestId
+          || data.revision !== (expectedRevision ?? 0) + 1
+          || !Array.isArray(data.horse_ids)
+          || JSON.stringify([...data.horse_ids].sort()) !== JSON.stringify([...paddock.horseIds].sort())
+          || data.season !== (paddock.season ?? 'yearRound') || data.image_url !== imageUrl
+          || typeof data.updated_at !== 'string' || !Number.isFinite(Date.parse(data.updated_at))
+          || (data.horse_names !== null && (!Array.isArray(data.horse_names)
+            || data.horse_names.some((name: unknown) => name !== null && typeof name !== 'string')))) {
+          throw new Error('Servern bekräftade inte hagen och hästvalet.');
         }
         return { success: true, data: {
-          id: data.id, stableId: data.stable_id, name: data.name, horseNames: data.horse_names,
+          id: data.id, stableId: data.stable_id, name: data.name, horseNames: data.horse_names ?? [],
+          horseIds: data.horse_ids, revision: data.revision, linksReady: true,
+          lastSaveRequestId: data.last_save_request_id,
           season: data.season, updatedAt: data.updated_at,
           image: data.image_url ? { uri: data.image_url } : undefined,
         } };
       } catch (error) {
-        console.warn('[paddock save] Kunde inte spara hage', error);
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'client_error';
+        console.warn('[paddock save] Kunde inte spara hage', { code, stage });
+        if (code === '40001' || code === '40P01' || code === '55P03' || code === 'P0002') {
+          return { success: false, reason: 'Hagen har ändrats. Dina val finns kvar. Uppdatera hagen innan du sparar igen.' };
+        }
+        if (code === 'PGRST202' || code === '42883') {
+          dispatch({ type: 'PADDOCK_LINKS_UNAVAILABLE' });
+          return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan spara. Kontakta stalladministratören.' };
+        }
+        if (code === '42501') return { success: false, reason: 'Du har inte behörighet att ändra den här hagen.' };
+        if (code === '22023' || code === '23503') {
+          return { success: false, reason: 'Hästvalet kunde inte bekräftas i detta stall. Uppdatera hästlistan och försök igen.' };
+        }
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Sparningen kunde inte bekräftas. Dina val finns kvar. Försök igen.' };
+        }
         return { success: false, reason: 'Hagen kunde inte sparas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3391,19 +3486,45 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistPaddockDelete = React.useCallback(
-    async (paddock: Paddock): Promise<ActionResult> => {
-      if (isQaDemoMode) return { success: true };
+    async (paddock: Paddock, expectedRevision: number): Promise<ActionResult> => {
+      if (isQaDemoMode) {
+        if (stateRef.current.paddocks.find((item) => item.id === paddock.id)?.revision !== expectedRevision) {
+          return { success: false, reason: 'Hagen har ändrats. Uppdatera hagen innan du tar bort den.' };
+        }
+        return { success: true };
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Borttagningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const { data, error } = await supabase.from('paddocks').delete().eq('id', paddock.id)
-          .eq('stable_id', paddock.stableId).select('id').abortSignal(controller.signal);
+        const { data, error } = await Promise.race([
+          supabase.rpc('delete_paddock', {
+            p_paddock_id: paddock.id, p_stable_id: paddock.stableId, p_expected_revision: expectedRevision,
+          }).abortSignal(controller.signal),
+          aborted,
+        ]);
         if (error) throw error;
-        if (!data?.some((row) => row.id === paddock.id)) throw new Error('Servern bekräftade inte borttagningen av hagen.');
+        if (data?.id !== paddock.id || data.stable_id !== paddock.stableId || data.deleted !== true
+          || data.revision !== expectedRevision) {
+          throw new Error('Servern bekräftade inte borttagningen av hagen.');
+        }
         return { success: true };
       } catch (error) {
-        console.warn('[paddock delete] Kunde inte ta bort hage', error);
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : 'client_error';
+        console.warn('[paddock delete] Kunde inte ta bort hage', { code });
+        if (code === '40001' || code === '40P01' || code === '55P03' || code === 'P0002') {
+          return { success: false, reason: 'Hagen har ändrats. Uppdatera hagen innan du tar bort den.' };
+        }
+        if (code === 'PGRST202' || code === '42883') {
+          dispatch({ type: 'PADDOCK_LINKS_UNAVAILABLE' });
+          return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan ta bort hagen. Kontakta stalladministratören.' };
+        }
+        if (code === '42501') return { success: false, reason: 'Du har inte behörighet att ta bort den här hagen.' };
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Borttagningen kunde inte bekräftas. Uppdatera haglistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hagen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3415,6 +3536,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (isQaDemoMode) return { success: true, data: horse };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Sparningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas.');
         const payload: Record<string, unknown> = { id: horse.id, stable_id: horse.stableId };
@@ -3430,7 +3553,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const uploadable = input.image ? getUploadableImage(input.image) : null;
           if (uploadable) {
             payload.image_url = isRemoteUri(uploadable.uri) ? uploadable.uri
-              : (await uploadImageToStorage('avatars', horse.stableId, uploadable)).publicUrl;
+              : (await Promise.race([uploadImageToStorage('avatars', horse.stableId, uploadable), aborted])).publicUrl;
           } else if (!input.image) {
             payload.image_url = null;
           }
@@ -3438,8 +3561,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const query = existing
           ? supabase.from('horses').update(payload).eq('id', horse.id).eq('stable_id', horse.stableId)
           : supabase.from('horses').upsert(payload);
-        const { data, error } = await query.select('*').abortSignal(controller.signal).single();
-        if (error || data?.id !== horse.id || data.stable_id !== horse.stableId) {
+        const { data, error } = await Promise.race([query.select('*').abortSignal(controller.signal).single(), aborted]);
+        if (error || data?.id !== horse.id || data.stable_id !== horse.stableId
+          || Object.entries(payload).some(([field, value]) => data[field] !== value)) {
           throw error ?? new Error('Servern bekräftade inte hästen.');
         }
         return { success: true, data: {
@@ -3451,6 +3575,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         } };
       } catch (error) {
         console.warn('[horse save] Kunde inte spara häst', error);
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Sparningen kunde inte bekräftas. Dina uppgifter finns kvar. Uppdatera hästlistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hästen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3462,15 +3589,23 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (isQaDemoMode) return { success: true };
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Borttagningen kunde inte bekräftas.')), { once: true }));
       try {
         if (!user) throw new Error('Session saknas. Logga in igen.');
-        const { data, error } = await supabase.from('horses').delete().eq('id', horse.id)
-          .eq('stable_id', horse.stableId).select('id').abortSignal(controller.signal);
+        const { data, error } = await Promise.race([
+          supabase.from('horses').delete().eq('id', horse.id)
+            .eq('stable_id', horse.stableId).select('id').abortSignal(controller.signal),
+          aborted,
+        ]);
         if (error) throw error;
         if (!data?.some((row) => row.id === horse.id)) throw new Error('Servern bekräftade inte borttagningen av hästen.');
         return { success: true };
       } catch (error) {
         console.warn('[horse delete] Kunde inte ta bort häst', error);
+        if (controller.signal.aborted) {
+          return { success: false, reason: 'Borttagningen kunde inte bekräftas. Uppdatera hästlistan innan du försöker igen.' };
+        }
         return { success: false, reason: 'Hästen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3889,6 +4024,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true, data: booking };
       } catch (error) {
         console.warn('[arena booking save] Kunde inte spara ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23P01') return { success: false, reason: 'Tiden blev bokad av någon annan. Uppdatera schemat och välj en annan tid. Dina uppgifter finns kvar.' };
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3916,6 +4054,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           purpose: data.purpose, note: data.note ?? undefined, bookedByUserId: data.booked_by_user_id } };
       } catch (error) {
         console.warn('[arena booking update] Kunde inte uppdatera ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23P01') return { success: false, reason: 'Tiden blev bokad av någon annan. Uppdatera schemat och välj en annan tid. Dina uppgifter finns kvar.' };
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte uppdateras. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -3935,6 +4076,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true };
       } catch (error) {
         console.warn('[arena booking delete] Kunde inte ta bort ridhusbokning', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Bokningen kunde inte tas bort. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
@@ -4067,8 +4210,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...alert, createdAt: data.created_at ?? alert.createdAt } };
       } catch (error) {
-        console.warn('[stable event save] Kunde inte spara händelse', error);
-        return { success: false, reason: 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[stable event save] Kunde inte spara händelse', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: rateLimited
+          ? 'Du har sparat många stallnotiser på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Händelsen kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4108,10 +4255,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           assignmentId: data.assignment_id ?? undefined,
         } };
       } catch (error) {
-        console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error);
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[stable alert save] Kunde inte spara viktig stallnotis', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: resolveOnly
           ? 'Notisen kunde inte markeras som löst. Försök igen.'
-          : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
+          : rateLimited
+            ? 'Du har sparat många stallnotiser på kort tid. Vänta en stund. Din text finns kvar.'
+            : 'Notisen kunde inte sparas. Din text finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4295,8 +4446,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         });
         return { success: true, data: await Promise.race([persist(), deadline]) };
       } catch (error) {
-        console.warn('[post publish] Kunde inte publicera inlägg', error);
-        return { success: false, reason: 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[post publish] Kunde inte publicera inlägg', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: rateLimited
+          ? 'Du har publicerat många inlägg på kort tid. Vänta en stund. Text och bild finns kvar.'
+          : 'Inlägget kunde inte publiceras. Text och bild finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout!); }
     },
     [user],
@@ -4331,8 +4486,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true };
       } catch (error) {
-        console.warn('[post like] Kunde inte spara gillning', error);
-        return { success: false, reason: 'Gillningen kunde inte sparas. Försök igen.' };
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[post like] Kunde inte spara gillning', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: rateLimited
+          ? 'Du har gillat många inlägg på kort tid. Vänta en stund och försök igen.'
+          : 'Gillningen kunde inte sparas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4363,8 +4522,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...comment, text: data.content, createdAt: data.created_at } };
       } catch (error) {
-        console.warn('[post comment] Kunde inte spara kommentar', error);
-        return { success: false, reason: 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[post comment] Kunde inte spara kommentar', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: rateLimited
+          ? 'Du har skrivit många kommentarer på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Kommentaren kunde inte sparas. Texten finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4639,7 +4802,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           })) throw error ?? new Error('Servern bekräftade inte alla inbjudningar.');
         }
         pendingInviteDrafts.current.delete(key);
-        return { success: true, data: { inviteCode: draft.code,
+        return { success: true, data: { email: String(draft.rows[0].email), inviteCode: draft.code,
           codes: draft.rows.map((row) => ({ stableId: String(row.stable_id), code: String(row.code) })) } };
       } catch (error) {
         console.warn('[invite create] Kunde inte skapa inbjudan', error);
@@ -4692,6 +4855,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         } };
       } catch (error) {
         console.warn('[member update] Kunde inte uppdatera medlem', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23514' && error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.startsWith('[last owner]')) {
+          return { success: false, reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.' };
+        }
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Medlemsändringen kunde inte sparas. Uppdatera eller försök igen.' };
       } finally {
         clearTimeout(timeout);
@@ -4716,6 +4884,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: true };
       } catch (error) {
         console.warn('[member delete] Kunde inte ta bort medlem', error);
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+        if (code === '23514' && error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' && error.message.startsWith('[last owner]')) {
+          return { success: false, reason: 'Stallet måste ha minst en ägare. Utse en ny ägare först.' };
+        }
+        if (code === '40001' || code === '40P01') return { success: false, reason: 'Uppgifterna ändrades samtidigt på en annan telefon. Uppdatera och försök igen.' };
         return { success: false, reason: 'Medlemmen kunde inte tas bort. Uppdatera eller försök igen.' };
       } finally {
         clearTimeout(timeout);
@@ -4776,8 +4949,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         return { success: true, data: { ...message, timestamp: data.created_at ?? message.timestamp } };
       } catch (error) {
-        console.warn('[chat send] Kunde inte skicka meddelande', error);
-        return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
+        const rateLimited = typeof error === 'object' && error !== null && 'code' in error
+          && error.code === 'PT429' && 'message' in error && error.message === 'social_rate_limited';
+        console.warn('[chat send] Kunde inte skicka meddelande', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: rateLimited
+          ? 'Du har skickat många meddelanden på kort tid. Vänta en stund. Texten finns kvar.'
+          : 'Meddelandet kunde inte skickas. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },
     [user],
@@ -4867,25 +5044,28 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
-        const pendingJoinCode = await loadPendingJoinCode();
+        const inviteResult = await supabase.rpc('accept_pending_invites');
+        if (inviteResult.error) {
+          console.warn('[invite accept] Kunde inte kontrollera inbjudningar', inviteResult.error);
+          return fail('Kunde inte kontrollera dina inbjudningar. Kontrollera anslutningen och försök igen.');
+        }
+
+        const pendingJoinCode = await loadPendingJoinCode(authEmail);
         if (pendingJoinCode) {
+          // Accept email roles first; a generic code cannot downgrade them via
+          // ON CONFLICT and may belong to a different stable. An email invite's
+          // own code is not a generic code, so discard only a confirmed invalid one.
           const joinResult = await supabase.rpc('accept_join_code', { p_code: pendingJoinCode });
           if (joinResult.error) {
-            console.warn('Kunde inte använda inbjudningskod', joinResult.error);
-            if (
-              typeof joinResult.error.message === 'string' &&
-              joinResult.error.message.includes('Invalid join code')
-            ) {
+            console.warn('[invite join] Kunde inte använda inbjudningskod', joinResult.error);
+            if (joinResult.error.message?.includes('Invalid join code')) {
               await clearPendingJoinCode();
+            } else {
+              return fail('Kunde inte gå med i stallet. Din kod finns kvar. Kontrollera anslutningen och försök igen.');
             }
           } else {
             await clearPendingJoinCode();
           }
-        }
-
-        const inviteResult = await supabase.rpc('accept_pending_invites');
-        if (inviteResult.error) {
-          console.warn('Kunde inte hämta inbjudan', inviteResult.error);
         }
 
         const membershipResult = await supabase
@@ -4929,6 +5109,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
                 farms: [],
                 horses: [],
                 paddocks: [],
+                paddockLinksReady: false,
                 assignments: [],
                 assignmentHistory: [],
                 dayEvents: [],
@@ -5013,7 +5194,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('stables').select('*').in('id', stableIds),
           supabase.from('farms').select('*'),
           supabase.from('horses').select('*').in('stable_id', stableIds),
-          supabase.from('paddocks').select('*').in('stable_id', stableIds),
+          fetchPaddocks(stableIds),
           supabase.from('assignments').select('*').in('stable_id', stableIds),
           supabase.from('assignment_history').select('*').in('stable_id', stableIds),
           supabase.from('day_events').select('*').in('stable_id', stableIds),
@@ -5124,6 +5305,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           },
           {},
         );
+        conversationRows = conversationRows.filter((row) =>
+          row.is_group || membersByConversation[row.id]?.includes(authUser.id));
 
         // PII-safe: co-member name/avatar/location come from get_member_directory()
         // (phone masked for non-admins). The base profiles table is self-only RLS, so a
@@ -5311,7 +5494,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             return {
               id: post.id,
               authorId: post.user_id,
-              author: authorProfile?.full_name || authorProfile?.username || 'Okänd',
+              author: post.user_id == null && !post.content && !post.caption && !post.image_url
+                ? 'Innehåll borttaget'
+                : authorProfile?.full_name || authorProfile?.username || 'Okänd',
               avatar: authorProfile?.avatar_url
                 ? { uri: authorProfile.avatar_url }
                 : require('@/assets/images/dummy-avatar.png'),
@@ -5351,7 +5536,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           list.push({
             id: row.id,
             conversationId: row.conversation_id,
-            authorId: row.author_id,
+            authorId: row.author_id ?? '',
             text: row.text,
             timestamp: row.created_at,
             status: row.status ?? undefined,
@@ -5360,6 +5545,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return acc;
         }, {});
 
+        const readReceipts = await Promise.all(conversationRows.map(async row => {
+          const result = await requestChatReadReceipt(supabase, 'load', authUser.id, row.id,
+            peerMessageIds(conversations[row.id] ?? [], authUser.id, blockedUserIds));
+          if (!result.success) throw new Error(result.reason);
+          return result.data;
+        }));
+        const readByConversation = new Map(readReceipts.map(receipt => [receipt.conversationId, receipt]));
         const messagePreviews = conversationRows
           .map((row) => {
             const stable = row.stable_id ? stableById[row.stable_id] : undefined;
@@ -5393,12 +5585,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               id: row.id,
               title,
               subtitle,
-              description: lastMessage?.text ?? 'Inga meddelanden ännu',
+              description: lastMessage?.text ?? 'Ingen meddelandehistorik har laddats',
               timeAgo: sortTime ? formatTimeAgo(sortTime) : '',
-              unreadCount: 0,
+              unreadCount: readByConversation.get(row.id)?.unreadMessageIds.length ?? 0,
+              readMessageIds: readByConversation.get(row.id)?.readMessageIds ?? [],
+              unreadMessageIds: readByConversation.get(row.id)?.unreadMessageIds ?? [],
               group: row.is_group ?? false,
               stableId: row.stable_id ?? undefined,
               avatar,
+              participantUserIds: row.is_group ? undefined : membersByConversation[row.id] ?? [],
             };
             return { preview, sortMs };
           })
@@ -5442,6 +5637,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           name: row.name,
           stableId: row.stable_id,
           horseNames: row.horse_names ?? [],
+          horseIds: Array.isArray(row.paddock_horses)
+            ? row.paddock_horses.filter((link: { horse_id?: unknown } | null) => typeof link?.horse_id === 'string')
+              .map((link: { horse_id: string }) => link.horse_id) : [],
+          revision: Number.isSafeInteger(row.revision) && row.revision > 0 ? row.revision : 0,
+          linksReady: paddocksResult.linksReady && Number.isSafeInteger(row.revision) && row.revision > 0
+            && Array.isArray(row.paddock_horses)
+            && row.paddock_horses.every((link: { horse_id?: unknown } | null) => typeof link?.horse_id === 'string'),
+          lastSaveRequestId: row.last_save_request_id ?? undefined,
           updatedAt: row.updated_at ?? row.created_at ?? new Date().toISOString(),
           season: row.season ?? 'yearRound',
           image: row.image_url ? { uri: row.image_url } : undefined,
@@ -5449,6 +5652,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
           id: row.id,
+          seriesId: row.series_id ?? undefined,
           stableId: row.stable_id,
           date: row.date,
           label: row.label,
@@ -5657,6 +5861,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             stables: formattedStables,
             horses: formattedHorses,
             paddocks: formattedPaddocks,
+            paddockLinksReady: paddocksResult.linksReady,
             assignments: formattedAssignments,
             assignmentHistory: formattedAssignmentHistory,
             dayEvents: formattedDayEvents,
@@ -5692,8 +5897,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         setRefreshError(null);
         return { success: true };
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Ett okänt fel inträffade.';
-        return fail(message);
+        console.warn('[stable refresh] Kunde inte uppdatera stalldata', error instanceof Error ? error.name : 'Unknown');
+        return fail('Kunde inte uppdatera stalldata. Försök igen.');
       } finally {
         if (requestId === refreshRequestId.current) {
           setHydrating(false);
@@ -5775,12 +5980,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   React.useEffect(() => {
     if (!user || isQaDemoMode) return;
 
+    const userId = user.id;
+    let active = true;
     const channel = supabase
       .channel('messages-realtime')
       .on<{
         id: string;
         conversation_id: string;
-        author_id: string;
+        author_id: string | null;
         text: string;
         created_at: string;
         status: string | null;
@@ -5790,18 +5997,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         (payload) => {
           const row = payload.new;
           // Skip messages we sent ourselves (already in state)
-          if (row.author_id === user.id) return;
+          if (row.author_id === userId) return;
 
           const message: ConversationMessage = {
             id: row.id,
             conversationId: row.conversation_id,
-            authorId: row.author_id,
+            authorId: row.author_id ?? '',
             text: row.text,
             timestamp: row.created_at,
             status: (row.status as ConversationMessage['status']) ?? undefined,
           };
 
           const current = stateRef.current;
+          if (!active || current.sessionUserId !== userId || current.currentUserId !== userId) return;
           const existingPreview = current.messages.find((msg) => msg.id === row.conversation_id);
           if (!existingPreview) return; // Unknown conversation
 
@@ -5822,6 +6030,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       .subscribe();
 
     return () => {
+      active = false;
       supabase.removeChannel(channel);
     };
   }, [user]);
@@ -6330,8 +6539,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!isValidTime(startTime)) {
         return { success: false, reason: 'Ange en giltig starttid i formatet HH:MM.' };
       }
-      if (!input.weekdays.length) {
+      if (!Array.isArray(input.weekdays) || !input.weekdays.length) {
         return { success: false, reason: 'Välj minst en veckodag.' };
+      }
+      if (input.weekdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+        return { success: false, reason: 'Välj giltiga veckodagar.' };
+      }
+      const slotCount = input.slotsCount ?? 1;
+      if (!Number.isFinite(slotCount) || !Number.isInteger(slotCount) || slotCount < 1
+        || slotCount > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+        return { success: false, reason: `Ange ett helt antal pass mellan 1 och ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH}.` };
       }
 
       const startDate = new Date(`${input.dateFrom}T00:00:00`);
@@ -6343,7 +6560,6 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return { success: false, reason: 'Startdatum måste vara före slutdatum.' };
       }
 
-      const slotCount = Math.max(1, Math.floor(input.slotsCount ?? 1));
       const weekdays = new Set(input.weekdays);
       const existingKeys = new Set<string>();
       current.assignments
@@ -6366,7 +6582,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           );
         });
 
-      const generatedAssignments: Assignment[] = [];
+      const plannedAssignments: Omit<Assignment, 'id'>[] = [];
       let skippedCount = 0;
       const status: AssignmentStatus = input.assignToCurrentUser ? 'assigned' : 'open';
       const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
@@ -6391,9 +6607,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             skippedCount += 1;
             continue;
           }
+          if (plannedAssignments.length === MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+            return { success: false, reason: `Högst ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH} nya pass per omgång. Minska antal pass eller välj kortare datumintervall.` };
+          }
           existingKeys.add(key);
-          generatedAssignments.push({
-            id: generateId(),
+          plannedAssignments.push({
             date: isoDate,
             stableId,
             label,
@@ -6409,11 +6627,17 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       }
 
       const batchKey = JSON.stringify([stableId, current.currentUserId, input]);
-      const assignmentsToCreate = pendingRecurringBatches.current.get(batchKey) ?? generatedAssignments;
+      const assignmentsToCreate = pendingRecurringBatches.current.get(batchKey)
+        ?? plannedAssignments.map((assignment) => ({ ...assignment, id: generateId() }));
       if (!assignmentsToCreate.length) {
         return { success: true, data: { createdCount: 0, skippedCount } };
       }
 
+      // The first generated pass UUID is also the durable batch identity. Retries
+      // retain the same rows and series UUID; legacy rows are never inferred.
+      if (!pendingRecurringBatches.current.has(batchKey)) {
+        assignmentsToCreate.forEach(assignment => { assignment.seriesId = assignmentsToCreate[0].id; });
+      }
       pendingRecurringBatches.current.set(batchKey, assignmentsToCreate);
       const { error } = await persistAssignmentBatchInsert(assignmentsToCreate);
       if (error) return { success: false, reason: 'Kunde inte skapa återkommande pass. Försök igen eller uppdatera schemat.' };
@@ -6434,6 +6658,60 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       };
     },
     [ensurePermission, persistAssignmentBatchInsert, persistAssignmentHistory],
+  );
+
+  const updateRecurringAssignmentSeries = React.useCallback(
+    async (input: RecurringSeriesEdit): Promise<RecurringSeriesResult> => {
+      const current = stateRef.current;
+      const scope = recurringScopeRef.current;
+      const userId = user?.id;
+      if (!scope || !userId || scope.userId !== userId || current.sessionUserId !== userId
+        || current.currentUserId !== userId || scope.stableId !== current.currentStableId) {
+        return { success: false, reason: 'Kontot eller stallet har ändrats. Öppna serien igen.' };
+      }
+      const access = ensurePermission(current.currentStableId, permissions => permissions.canManageAssignments);
+      if (!access.success) return access;
+      const invalid = validateRecurringSeriesEdit(input);
+      if (invalid) return { success: false, reason: invalid };
+      const key = `assignment-series:${userId}:${current.currentStableId}:${input.seriesId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Serien sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key); dataWriteVersion.current += 1;
+      try {
+        const eligible = current.assignments.filter(assignment => assignment.stableId === current.currentStableId
+          && assignment.seriesId === input.seriesId && isFutureOpenSeriesAssignment(assignment));
+        let result: RecurringSeriesResult;
+        if (isQaDemoMode) {
+          if (eligible.length > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+            return { success: false, reason: `Högst ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH} pass per ändring. Välj en mindre serie.` };
+          }
+          const updates = eligible.map(assignment => ({ ...assignment, label: input.label.trim(),
+            time: input.startTime.trim(), slot: resolveSlotFromTime(input.startTime.trim()),
+            icon: slotIcons[resolveSlotFromTime(input.startTime.trim())],
+            note: assignment.note && ASSIGNMENT_NOTE_METADATA_REGEX.test(assignment.note)
+              ? assignment.note.replace(ASSIGNMENT_NOTE_METADATA_REGEX, `Slut: ${input.endTime.trim()}`)
+              : `${assignment.note ? assignment.note + '\n' : ''}Slut: ${input.endTime.trim()}`,
+          }));
+          if (updates.some(assignment => !isFutureOpenSeriesAssignment(assignment))) {
+            return { success: false, reason: 'Den nya starttiden måste ligga i framtiden för alla berörda pass.' };
+          }
+          result = { success: true, data: updates };
+        } else result = await updateRecurringSeries(supabase, userId, current.currentStableId, input);
+        if (recurringScopeRef.current !== scope || stateRef.current.currentStableId !== scope.stableId
+          || stateRef.current.sessionUserId !== userId || stateRef.current.currentUserId !== userId) {
+          return { success: false, reason: 'Kontot eller stallet har ändrats. Öppna serien igen.' };
+        }
+        if (result.success) for (const assignment of result.data) {
+          const latest = stateRef.current.assignments.find(value => value.id === assignment.id);
+          // A claim/completion received after the server commit remains authoritative.
+          if (latest && latest.status === 'open' && !latest.assigneeId && !latest.completedAt) {
+            dispatch({ type: 'ASSIGNMENT_UPDATE', payload: { id: assignment.id,
+              updates: { label: assignment.label, time: assignment.time, slot: assignment.slot,
+                icon: assignment.icon, note: assignment.note }, silent: true } });
+          }
+        }
+        return result;
+      } finally { pendingDataWrites.current.delete(key); }
+    }, [ensurePermission, user],
   );
 
   const updateAssignment = React.useCallback(
@@ -6723,9 +7001,42 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [persistDefaultPassToggle],
   );
 
-  const markConversationRead = React.useCallback((conversationId: string) => {
-    dispatch({ type: 'MESSAGE_MARK_READ', payload: { id: conversationId } });
-  }, []);
+  const markConversationRead = React.useCallback(
+    async (conversationId: string, messageIds: readonly string[]): Promise<ActionResult<ChatReadReceipt>> => {
+      const current = stateRef.current;
+      const userId = user?.id;
+      const epoch = chatReadScope.current.epoch;
+      if (!userId || current.sessionUserId !== userId || current.currentUserId !== userId
+        || chatReadScope.current.userId !== userId) return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
+      const preview = current.messages.find(message => message.id === conversationId);
+      const eligible = new Set(peerMessageIds(current.conversations[conversationId] ?? [], userId, current.blockedUserIds));
+      if (!preview || !messageIds.length || messageIds.some(id => !eligible.has(id))) {
+        return { success: false, reason: 'Meddelandena kunde inte verifieras i den här chatten.' };
+      }
+      const key = `chat-read:${userId}:${epoch}:${conversationId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Läskvittensen sparas redan.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const result = isQaDemoMode
+          ? { success: true as const, data: { userId, conversationId, readMessageIds: [...messageIds],
+            unreadMessageIds: chatUnreadIds(preview, current.conversations[conversationId] ?? [], userId, current.blockedUserIds).filter(id => !messageIds.includes(id)) } }
+          : await requestChatReadReceipt(supabase, 'mark', userId, conversationId, messageIds);
+        if (chatReadScope.current.epoch !== epoch || chatReadScope.current.userId !== userId
+          || stateRef.current.sessionUserId !== userId || stateRef.current.currentUserId !== userId) {
+          return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
+        }
+        if (result.success) {
+          dataWriteVersion.current += 1;
+          dispatch({ type: 'MESSAGE_MARK_READ', payload: result.data });
+        }
+        return result;
+      } finally {
+        pendingDataWrites.current.delete(key);
+      }
+    },
+    [user],
+  );
 
   const sendConversationMessage = React.useCallback(
     async (conversationId: string, text: string, requestId?: string): Promise<ActionResult<ConversationMessage>> => {
@@ -6748,7 +7059,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (!result.data) return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
         const preview: MessagePreview = {
           ...existingPreview, description: result.data.text,
-          timeAgo: formatTimeAgo(result.data.timestamp), unreadCount: 0,
+          timeAgo: formatTimeAgo(result.data.timestamp),
         };
         dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, message: result.data, preview } });
         return result;
@@ -6770,71 +7081,109 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         };
       }
 
-      // Look through conversations for an existing private chat with this user
+      const key = `private-conversation:${current.currentUserId}:${otherUserId}`;
+      // A private chat can be empty or contain only our messages. Use membership,
+      // falling back to message authors for older local/demo previews.
       for (const preview of current.messages) {
         if (preview.group) continue;
         const msgs = current.conversations[preview.id] ?? [];
-        const participants = new Set<string>();
-        participants.add(current.currentUserId);
-        msgs.forEach((m) => participants.add(m.authorId));
-        if (participants.has(otherUserId)) {
+        const participants = preview.participantUserIds ?? [current.currentUserId, ...msgs.map((m) => m.authorId)];
+        if (participants.includes(current.currentUserId) && participants.includes(otherUserId)) {
+          privateConversationAttempts.current.delete(key);
           return { success: true, data: preview.id };
         }
       }
 
-      // Create new conversation. qaDemo is backend-free, so fabricate a local id and
-      // skip the Supabase round-trip (which would otherwise fail and block the chat).
-      let conversationId: string;
-      if (isQaDemoMode) {
-        conversationId = generateId();
-      } else {
-        const { data: conversationData, error: convError } = await supabase
-          .from('conversations')
-          .insert({
-            is_group: false,
-            created_by_user_id: current.currentUserId,
-          })
-          .select('id')
-          .single();
-
-        if (convError || !conversationData) {
-          return { success: false, reason: 'Kunde inte skapa konversation.' };
-        }
-
-        conversationId = conversationData.id;
-
-        // Add both users as conversation members
-        const { error: memberError } = await supabase
-          .from('conversation_members')
-          .insert([
-            { conversation_id: conversationId, user_id: current.currentUserId },
-            { conversation_id: conversationId, user_id: otherUserId },
-          ]);
-
-        if (memberError) {
-          console.warn('Kunde inte lägga till konversationsmedlemmar', memberError);
-        }
+      if (pendingDataWrites.current.has(key)) {
+        return { success: false, reason: 'Chatten öppnas redan. Vänta ett ögonblick.' };
       }
-
-      // Add preview to local state
-      const otherUser = current.users[otherUserId];
-      const preview: MessagePreview = {
-        id: conversationId,
-        title: otherUser?.name ?? 'Okänd',
-        subtitle: 'Privat chatt',
-        description: 'Inga meddelanden ännu',
-        timeAgo: '',
-        unreadCount: 0,
-        group: false,
-        avatar: otherUser?.avatar,
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15_000);
+      const aborted = new Promise<never>((_, reject) => controller.signal.addEventListener('abort',
+        () => reject(new Error('Chattstarten kunde inte bekräftas.')), { once: true }));
+      const contextChanged = () => stateRef.current.currentUserId !== current.currentUserId
+        || stateRef.current.sessionUserId !== current.sessionUserId
+        || stateRef.current.currentStableId !== current.currentStableId;
+      const changedContextResult: ActionResult<string> = {
+        success: false, reason: 'Stall eller användare ändrades. Öppna medlemmen igen för att starta chatten.',
       };
 
-      dispatch({
-        type: 'CONVERSATION_APPEND',
-        payload: { conversationId, preview },
-      });
+      try {
+        // Keep this ID across lost receipts, including the render after success.
+        const conversationId = privateConversationAttempts.current.get(key) ?? generateId();
+        privateConversationAttempts.current.set(key, conversationId);
+        if (!isQaDemoMode) {
+          let { data: conversationData, error: convError } = await Promise.race([
+            supabase.from('conversations').insert({
+              id: conversationId,
+              stable_id: null,
+              is_group: false,
+              created_by_user_id: current.currentUserId,
+            }).select('id,created_by_user_id,is_group,stable_id').abortSignal(controller.signal).single(),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (convError?.code === '23505') {
+            ({ data: conversationData, error: convError } = await Promise.race([
+              supabase.from('conversations').select('id,created_by_user_id,is_group,stable_id')
+                .eq('id', conversationId).eq('created_by_user_id', current.currentUserId)
+                .eq('is_group', false).is('stable_id', null).abortSignal(controller.signal).single(),
+              aborted,
+            ]));
+          }
+          if (contextChanged()) return changedContextResult;
+          if (convError || conversationData?.id !== conversationId
+            || conversationData.created_by_user_id !== current.currentUserId
+            || conversationData.is_group !== false || conversationData.stable_id !== null) {
+            throw convError ?? new Error('Servern bekräftade inte konversationen.');
+          }
 
-      return { success: true, data: conversationId };
+          const { error: memberError } = await Promise.race([
+            supabase.from('conversation_members').insert([
+              { conversation_id: conversationId, user_id: current.currentUserId },
+              { conversation_id: conversationId, user_id: otherUserId },
+            ]).abortSignal(controller.signal),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (memberError && memberError.code !== '23505') throw memberError;
+          // SELECT runs in a separate statement so membership RLS sees the insert.
+          const { data: memberData, error: receiptError } = await Promise.race([
+            supabase.from('conversation_members').select('conversation_id,user_id')
+              .eq('conversation_id', conversationId).abortSignal(controller.signal),
+            aborted,
+          ]);
+          if (contextChanged()) return changedContextResult;
+          if (receiptError || ![current.currentUserId, otherUserId].every((userId) =>
+            memberData?.some((row) => row.conversation_id === conversationId && row.user_id === userId))) {
+            throw receiptError ?? new Error('Servern bekräftade inte chattmedlemmarna.');
+          }
+        }
+        if (contextChanged()) return changedContextResult;
+
+        const otherUser = current.users[otherUserId];
+        const preview: MessagePreview = {
+          id: conversationId,
+          title: otherUser?.name ?? 'Okänd',
+          subtitle: 'Privat chatt',
+          description: 'Historiken behöver uppdateras',
+          timeAgo: '',
+          unreadCount: undefined,
+          group: false,
+          avatar: otherUser?.avatar,
+          participantUserIds: [current.currentUserId, otherUserId],
+        };
+        dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, preview } });
+        return { success: true, data: conversationId };
+      } catch (error) {
+        console.warn('[chat create] Kunde inte starta privat chatt', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: 'Chatten kunde inte startas. Försök igen.' };
+      } finally {
+        clearTimeout(timeout);
+        pendingDataWrites.current.delete(key);
+      }
     },
     [],
   );
@@ -6859,10 +7208,20 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         : undefined;
 
       if (existing && existing.stableId !== stableId) return { success: false, reason: 'Hagen tillhör ett annat stall.' };
+      if (!current.paddockLinksReady || existing?.linksReady === false) {
+        return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan spara. Kontakta stalladministratören.' };
+      }
+      if (!Array.isArray(input.horseIds) || new Set(input.horseIds).size !== input.horseIds.length
+        || input.horseIds.some((id) => !(current.horses ?? []).some((horse) => horse.id === id && horse.stableId === stableId))) {
+        return { success: false, reason: 'Välj hästar från detta stall. Varje häst ska väljas en gång.' };
+      }
+      if (input.expectedRevision !== null && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision <= 0)) {
+        return { success: false, reason: 'Öppna hagen igen innan du sparar. Uppdateringsversion saknas.' };
+      }
 
       const id = existing?.id ?? input.id ?? generateId();
       const updatedAt = new Date().toISOString();
-      const horseNames = normalizeHorseNames(input.horseNames);
+      const horseIds = [...input.horseIds].sort();
       const image =
         input.image === null ? undefined : input.image ?? existing?.image;
       const season = input.season ?? existing?.season ?? 'yearRound';
@@ -6871,7 +7230,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         id,
         name,
         stableId,
-        horseNames,
+        horseNames: existing?.horseNames ?? [],
+        horseIds,
+        revision: input.expectedRevision ?? 0,
+        linksReady: true,
         image,
         updatedAt,
         season,
@@ -6882,9 +7244,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       pendingDataWrites.current.add(writeKey);
       dataWriteVersion.current += 1;
       try {
-        const result = await persistPaddockUpsert(paddock, input.image, Boolean(existing));
+        const signature = JSON.stringify([current.currentUserId, id, stableId, name, horseIds, season, input.expectedRevision, image ?? null]);
+        let attempt = paddockSaveAttempts.current.get(id);
+        if (!attempt || attempt.signature !== signature) {
+          attempt = { signature, requestId: generateId() };
+          paddockSaveAttempts.current.set(id, attempt);
+        }
+        const result = await persistPaddockUpsert(paddock, input.image, input.expectedRevision, attempt);
         if (!result.success) return result;
         if (!result.data) return { success: false, reason: 'Servern bekräftade inte hagen. Försök igen.' };
+        paddockSaveAttempts.current.delete(id);
         dispatch({ type: 'PADDOCK_UPSERT', payload: result.data });
         return result;
       } finally { pendingDataWrites.current.delete(writeKey); }
@@ -6893,7 +7262,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [ensurePermission, persistPaddockUpsert],
   );
 
-  const deletePaddock = React.useCallback(async (paddockId: string): Promise<ActionResult> => {
+  const deletePaddock = React.useCallback(async (paddockId: string, expectedRevision: number): Promise<ActionResult> => {
     const current = stateRef.current;
     const existing = current.paddocks.find((paddock) => paddock.id === paddockId);
     if (!existing) {
@@ -6903,14 +7272,18 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     if (!accessCheck.success) {
       return accessCheck;
     }
+    if (!current.paddockLinksReady || !existing.linksReady || !Number.isSafeInteger(expectedRevision) || expectedRevision <= 0) {
+      return { success: false, reason: 'Hagkopplingen behöver uppdateras innan du kan ta bort hagen. Kontakta stalladministratören.' };
+    }
 
     const writeKey = `paddock:${paddockId}`;
     if (pendingDataWrites.current.has(writeKey)) return { success: false, reason: 'Hagen sparas redan. Vänta och försök igen.' };
     pendingDataWrites.current.add(writeKey);
     dataWriteVersion.current += 1;
     try {
-      const result = await persistPaddockDelete(existing);
+      const result = await persistPaddockDelete(existing, expectedRevision);
       if (!result.success) return result;
+      paddockSaveAttempts.current.delete(paddockId);
       dispatch({ type: 'PADDOCK_DELETE', payload: { id: paddockId } });
       return result;
     } finally { pendingDataWrites.current.delete(writeKey); }
@@ -8366,7 +8739,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           return {
             id: post.id,
             authorId: post.user_id,
-            author: authorProfile?.name ?? 'Okänd',
+            author: post.user_id == null && !post.content && !post.caption && !post.image_url
+              ? 'Innehåll borttaget'
+              : authorProfile?.name ?? 'Okänd',
             avatar: authorProfile?.avatar ?? require('@/assets/images/dummy-avatar.png'),
             timeAgo: 'Nu',
             createdAt: post.created_at,
@@ -9118,8 +9493,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const { data, error } = await supabase.rpc('accept_join_code', { p_code: trimmed });
       const stableId = extractStableId(data);
       if (error || !stableId) {
-        console.warn('Kunde inte använda inbjudningskod', error);
-        return { success: false, reason: 'Inbjudningskoden är ogiltig.' };
+        console.warn('[invite join] Kunde inte använda inbjudningskod', error);
+        const reason = error?.message?.includes('Invalid join code')
+          ? 'Inbjudningskoden är ogiltig eller har gått ut. Kontrollera koden eller be om en ny kod.'
+          : 'Kunde inte gå med i stallet. Din kod finns kvar. Kontrollera anslutningen och försök igen.';
+        return { success: false, reason };
       }
       return { success: true, data: { stableId } };
     },
@@ -9130,12 +9508,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     async (): Promise<ActionResult<{ count: number }>> => {
       const { data, error } = await supabase.rpc('accept_pending_invites');
       if (error) {
-        console.warn('Kunde inte acceptera inbjudningar', error);
-        return { success: false, reason: 'Kunde inte acceptera inbjudningar.' };
+        console.warn('[invite accept] Kunde inte acceptera inbjudningar', error);
+        return { success: false, reason: 'Kunde inte acceptera inbjudningar. Kontrollera anslutningen och försök igen.' };
       }
       const count = typeof data === 'number' ? data : 0;
       if (count <= 0) {
-        return { success: false, reason: 'Ingen inbjudan hittades.' };
+        return { success: false, reason: 'Ingen giltig inbjudan hittades. Den kan redan vara accepterad eller ha gått ut. Uppdatera eller be om en ny inbjudan.' };
       }
       return { success: true, data: { count } };
     },
@@ -9158,6 +9536,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         completeAssignment,
         createAssignment,
         createRecurringAssignments,
+        updateRecurringAssignmentSeries,
         updateAssignment,
         deleteAssignment,
         addEvent,
@@ -9240,6 +9619,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       completeAssignment,
       createAssignment,
       createRecurringAssignments,
+      updateRecurringAssignmentSeries,
       updateAssignment,
       deleteAssignment,
       addEvent,

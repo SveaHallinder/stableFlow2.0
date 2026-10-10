@@ -16,9 +16,7 @@ import {
   type ExternalContact,
   type FeedPlanItem,
   type FeedSlot,
-  type Horse,
   type HorseDayStatus,
-  type Paddock,
   type PlannedRide,
   type RideLogEntry,
   type Stable,
@@ -29,39 +27,37 @@ import { toISODate } from '@/lib/schedule';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
 import { feedSlotLabels } from '@/lib/today';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { DateTimeField } from '@/components/DateTimeField';
+import { CareReminder } from '@/components/CareReminder';
+import { useAuth } from '@/context/AuthContext';
 
 const FEED_SLOTS: FeedSlot[] = ['morning', 'lunch', 'evening'];
 
 const palette = theme.colors;
 
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function getHorsePaddock(horse: Horse, paddocks: Paddock[]) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
-
 export default function HorseProfileScreen() {
   const router = useRouter();
   const isDesktopWeb = useIsDesktopWeb();
   const { state, derived, actions } = useAppData();
+  const { user: authUser } = useAuth();
   const toast = useToast();
   const { id: rawId } = useLocalSearchParams<{ id?: string }>();
   const horseId = Array.isArray(rawId) ? rawId[0] : rawId;
   const horse = horseId ? state.horses.find((item) => item.id === horseId) : undefined;
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
+  const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId, stableId, horseId]);
   const stable = state.stables.find((item) => item.id === stableId);
-  const paddock = horse
-    ? getHorsePaddock(
-        horse,
-        state.paddocks.filter((item) => item.stableId === stableId),
-      )
-    : undefined;
+  const stablePaddocks = state.paddocks.filter((item) => item.stableId === stableId);
+  const horsePaddocks = horse ? getHorsePaddocks(horse, stablePaddocks) : [];
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, state.horses);
+  const paddockLabel = horsePaddocks.length
+    ? horsePaddocks.map((paddock) => paddock.name).join(', ')
+    : paddockLinksUnconfirmed ? 'Hage ej bekräftad' : 'Ingen hage satt';
   const status = horse
     ? state.horseDayStatuses.find(
         (item) => item.stableId === stableId && item.horseId === horse.id && item.date === todayIso,
@@ -160,7 +156,7 @@ export default function HorseProfileScreen() {
               <View style={styles.heroText}>
                 <Text style={styles.heroTitle}>{horse.name}</Text>
                 <Text style={styles.heroMeta}>
-                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddock?.name ?? 'Ingen hage satt']
+                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel]
                     .filter(Boolean)
                     .join(' · ')}
                 </Text>
@@ -262,6 +258,7 @@ export default function HorseProfileScreen() {
           <SectionCard title="Ridning/träning" icon="calendar">
             {horse ? (
               <PlannedRidesEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
                 stable={stable}
@@ -324,8 +321,10 @@ export default function HorseProfileScreen() {
           <SectionCard title="Vård" icon="heart">
             {horse ? (
               <CareEventsEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
+                horseName={horse.name}
                 events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
                 contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
                 canEdit={derived.permissions.canManageCareEvents}
@@ -938,6 +937,7 @@ function FeedPlanForm({
 }
 
 type PlannedRidesEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
   stable?: Stable;
@@ -952,6 +952,7 @@ type PlannedRidesEditorProps = {
 };
 
 function PlannedRidesEditor({
+  scopeKey,
   stableId,
   horseId,
   stable,
@@ -1154,7 +1155,10 @@ function PlannedRidesEditor({
         creating ? (
           <View style={styles.feedFormBlock}>
             <Text style={styles.feedFormLabel}>Nytt ridpass</Text>
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Planerat ridpass: datum"
+              scopeKey={scopeKey}
               value={draft.date}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1162,7 +1166,11 @@ function PlannedRidesEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Planerat ridpass: tid"
+              scopeKey={scopeKey}
+              allowClear
               value={draft.time}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
@@ -1286,8 +1294,10 @@ const careEventTypeOrder: CareEventType[] = [
 ];
 
 type CareEventsEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
+  horseName: string;
   events: CareEvent[];
   contacts: ExternalContact[];
   canEdit: boolean;
@@ -1298,8 +1308,10 @@ type CareEventsEditorProps = {
 };
 
 function CareEventsEditor({
+  scopeKey,
   stableId,
   horseId,
+  horseName,
   events,
   contacts,
   canEdit,
@@ -1419,6 +1431,7 @@ function CareEventsEditor({
             </TouchableOpacity>
           </View>
         ) : null}
+        <CareReminder event={event} horseId={horseId} horseName={horseName} />
         {saving?.id === event.id ? (
           <Text>{saving.deleting ? 'Tar bort vårdhändelse…' : 'Sparar vårdhändelse…'}</Text>
         ) : null}
@@ -1532,7 +1545,10 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Vårdhändelse: datum"
+              scopeKey={scopeKey}
               editable={saving === null}
               value={draft.date}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1540,7 +1556,11 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Vårdhändelse: tid"
+              scopeKey={scopeKey}
+              allowClear
               editable={saving === null}
               value={draft.time}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}

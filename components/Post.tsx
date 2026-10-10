@@ -12,6 +12,7 @@ import {
 import { Feather } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { theme } from '@/components/theme';
+import { Avatar } from '@/components/Avatar';
 import { color, space, radius } from '@/design/tokens';
 import type { ActionResult, PostComment } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
@@ -116,7 +117,7 @@ export const PostCard = React.memo(function PostCard({
     <View style={styles.card}>
       <View style={styles.header}>
         <View style={styles.avatarWrapper}>
-          <Image source={data.avatar} style={styles.avatar} />
+          <Avatar source={data.avatar} style={styles.avatar} />
         </View>
         <View style={styles.authorBlock}>
           <Text style={styles.author}>{data.author}</Text>

@@ -1,6 +1,6 @@
 import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import Logo from '@/assets/images/logo-blue.svg';
@@ -96,6 +96,10 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
             return (
               <TouchableOpacity
                 key={item.route}
+                accessibilityRole="button"
+                accessibilityLabel={item.label}
+                accessibilityState={{ selected: isActive }}
+                {...(Platform.OS === 'web' ? { 'aria-current': isActive ? 'page' : undefined } : {})}
                 onPress={() => router.push(item.route as Href)}
                 activeOpacity={0.85}
                 style={[styles.item, isActive && styles.itemActive]}
@@ -133,6 +137,9 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
                   return (
                     <TouchableOpacity
                       key={stable.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Byt till ${stable.name}`}
+                      accessibilityState={{ selected: active }}
                       style={[styles.stableChip, active && styles.stableChipActive]}
                       onPress={() => actions.setCurrentStable(stable.id)}
                       activeOpacity={0.85}
@@ -166,6 +173,10 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
                 return (
                   <TouchableOpacity
                     key={item.route}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label}
+                    accessibilityState={{ selected: isActive }}
+                    {...(Platform.OS === 'web' ? { 'aria-current': isActive ? 'page' : undefined } : {})}
                     onPress={() => router.push(item.route as Href)}
                     activeOpacity={0.7}
                     style={[
@@ -175,7 +186,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
                   >
                     <Feather
                       name={item.icon}
-                      size={16}
+                      size={19}
                       color={isActive ? palette.primary : palette.secondaryText}
                     />
                     <Text
@@ -197,6 +208,8 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
       {showSidebarHeader ? (
         <TouchableOpacity
           style={styles.profileRow}
+          accessibilityRole="button"
+          accessibilityLabel="Öppna profil"
           onPress={() => router.push('/profile')}
           activeOpacity={0.85}
         >
@@ -260,7 +273,7 @@ const styles = StyleSheet.create({
     paddingBottom: 16,
     marginBottom: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(27, 30, 47, 0.06)',
+    borderBottomColor: palette.border,
   },
   brandRow: {
     flexDirection: 'row',
@@ -272,13 +285,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   brandTitle: {
-    fontSize: 15,
+    fontSize: 19,
     fontWeight: '700',
     color: palette.primaryText,
     letterSpacing: -0.3,
   },
   brandMeta: {
-    fontSize: 11,
+    fontSize: 12,
     color: palette.secondaryText,
     marginTop: 1,
   },
@@ -300,8 +313,10 @@ const styles = StyleSheet.create({
   },
   stableChip: {
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderRadius: 12,
     backgroundColor: palette.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
@@ -311,7 +326,7 @@ const styles = StyleSheet.create({
     borderColor: palette.primary,
   },
   stableChipText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -326,21 +341,22 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   navGroup: {
-    gap: 2,
+    gap: 4,
   },
   navItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingVertical: 10,
+    minHeight: 44,
+    borderRadius: 12,
   },
   navItemActive: {
-    backgroundColor: 'rgba(62, 155, 95, 0.10)',
+    backgroundColor: palette.surfaceTint,
   },
   navLabel: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '500',
     color: palette.secondaryText,
     letterSpacing: -0.1,
@@ -358,11 +374,11 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     marginTop: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: 'rgba(27, 30, 47, 0.06)',
+    borderTopColor: palette.border,
   },
   profileAvatar: {
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
     borderRadius: radius.full,
   },
   profileText: {

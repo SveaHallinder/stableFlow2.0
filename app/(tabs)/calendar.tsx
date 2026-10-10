@@ -41,6 +41,7 @@ import type {
   WeekdayIndex,
 } from '@/context/AppDataContext';
 import {
+  MAX_RECURRING_ASSIGNMENTS_PER_BATCH,
   groupAssignmentsByDay,
   fillWeekDays,
   formatShortWeekday,
@@ -51,8 +52,12 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { NewAssignmentModal } from '@/components/NewAssignmentModal';
+import { RecurringSeriesModal } from '@/components/RecurringSeriesModal';
+import { isValidTime } from '@/lib/dateValidation';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { DateTimeField } from '@/components/DateTimeField';
+import { useAuth } from '@/context/AuthContext';
 
 const palette = theme.colors;
 const statusColors = theme.status;
@@ -263,6 +268,8 @@ function calculateDurationMinutes(startTime: string, endTime: string) {
 
 export default function CalendarScreen() {
   const { state, actions, derived, hydrating } = useAppData();
+  const { user: authUser } = useAuth();
+  const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId]);
   const router = useRouter();
   const {
     assignments,
@@ -329,7 +336,9 @@ export default function CalendarScreen() {
   const [savingAssignmentIds, setSavingAssignmentIds] = React.useState<Set<string>>(() => new Set());
   const [assignmentSaveErrors, setAssignmentSaveErrors] = React.useState<Record<string, string>>({});
   const [recurringModalVisible, setRecurringModalVisible] = React.useState(false);
+  const [seriesEditor, setSeriesEditor] = React.useState<{ initialSeriesId?: string } | null>(null);
   const [recurringForm, setRecurringForm] = React.useState(buildRecurringDefaults);
+  const [recurringSaveError, setRecurringSaveError] = React.useState<string | null>(null);
   const toast = useToast();
   const focusDate = React.useMemo(() => {
     const raw = Array.isArray(date) ? date[0] : date;
@@ -346,6 +355,7 @@ export default function CalendarScreen() {
   const resolvedFilter = React.useMemo(() => resolveFilterFromSection(section), [section]);
   const [activeFilter, setActiveFilter] = React.useState<Filter>(resolvedFilter ?? 'Pass');
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
+  const [legendExpanded, setLegendExpanded] = React.useState(false);
   const [categoryIndex, setCategoryIndex] = React.useState(0);
   const [monthCursor, setMonthCursor] = React.useState(() => startOfMonth(new Date()));
   const [arenaModalVisible, setArenaModalVisible] = React.useState(false);
@@ -735,8 +745,22 @@ export default function CalendarScreen() {
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
 
   const upcomingDayGroups = React.useMemo(
-    () => groupedDays.filter((day) => day.isoDate >= todayIso).slice(0, 7),
-    [groupedDays, todayIso],
+    () =>
+      groupedDays
+        .filter((day) => {
+          if (day.isoDate < todayIso) return false;
+          if (passView === 'mine') {
+            return day.assignments.some(
+              (assignment) => assignment.assigneeId === currentUserId && assignment.status !== 'open',
+            );
+          }
+          if (passView === 'open') {
+            return day.assignments.some((assignment) => assignment.status === 'open');
+          }
+          return true;
+        })
+        .slice(0, 7),
+    [groupedDays, todayIso, passView, currentUserId],
   );
 
   const visiblePassDays = React.useMemo(
@@ -925,6 +949,7 @@ export default function CalendarScreen() {
 
   const openRecurringModal = React.useCallback(() => {
     setRecurringForm(buildRecurringDefaults());
+    setRecurringSaveError(null);
     setRecurringModalVisible(true);
   }, [buildRecurringDefaults]);
 
@@ -940,17 +965,34 @@ export default function CalendarScreen() {
 
   const handleCreateRecurringAssignments = React.useCallback(() => {
     const submittedForm = recurringForm;
-    const slotsCountValue = Number.parseInt(recurringForm.slotsCount, 10);
-    const slotsCount =
-      Number.isFinite(slotsCountValue) && slotsCountValue > 0 ? slotsCountValue : undefined;
-    const durationMinutes = recurringForm.endTime
-      ? calculateDurationMinutes(recurringForm.startTime, recurringForm.endTime)
+    setRecurringSaveError(null);
+    const startTime = recurringForm.startTime.trim();
+    const endTime = recurringForm.endTime.trim();
+    if (endTime && !isValidTime(endTime)) {
+      setRecurringSaveError('Ange en giltig sluttid i formatet HH:MM (00:00–23:59).');
+      return;
+    }
+    const enteredCount = recurringForm.slotsCount.trim();
+    const slotsCount = enteredCount ? Number(enteredCount) : 1;
+    if ((enteredCount && !/^\d+$/.test(enteredCount)) || !Number.isFinite(slotsCount)
+      || !Number.isInteger(slotsCount) || slotsCount < 1 || slotsCount > MAX_RECURRING_ASSIGNMENTS_PER_BATCH) {
+      setRecurringSaveError(`Ange ett helt antal pass mellan 1 och ${MAX_RECURRING_ASSIGNMENTS_PER_BATCH}.`);
+      return;
+    }
+    const durationMinutes = endTime
+      ? calculateDurationMinutes(startTime, endTime)
       : null;
+    if (endTime && durationMinutes === null) {
+      setRecurringSaveError(isValidTime(startTime)
+        ? 'Sluttiden måste vara efter starttiden.'
+        : 'Ange en giltig starttid i formatet HH:MM.');
+      return;
+    }
     const payload: CreateRecurringAssignmentsInput = {
       dateFrom: recurringForm.dateFrom,
       dateTo: recurringForm.dateTo,
       weekdays: recurringForm.weekdays,
-      startTime: recurringForm.startTime,
+      startTime,
       durationMinutes: durationMinutes ?? undefined,
       title: recurringForm.title,
       slotsCount,
@@ -966,6 +1008,7 @@ export default function CalendarScreen() {
         return;
       }
       setRecurringForm(submittedForm);
+      setRecurringSaveError(result.reason);
       setRecurringModalVisible(true);
       toast.showToast(result.reason, 'error');
     });
@@ -1027,6 +1070,7 @@ export default function CalendarScreen() {
         return;
       }
 
+      if (assignment.seriesId) { setSeriesEditor({ initialSeriesId: assignment.seriesId }); return; }
       setAssignmentModal({
         visible: true,
         mode: 'edit',
@@ -1410,7 +1454,14 @@ export default function CalendarScreen() {
             {filters.map((label) => {
               const active = label === activeFilter;
               return (
-                <TouchableOpacity key={label} onPress={() => setActiveFilter(label)} accessibilityRole="button" accessibilityLabel={filterLabels[label]} accessibilityState={{ selected: active }}>
+                <TouchableOpacity
+                  key={label}
+                  onPress={() => setActiveFilter(label)}
+                  accessibilityRole="button"
+                  accessibilityLabel={filterLabels[label]}
+                  accessibilityState={{ selected: active }}
+                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
+                >
                   <Pill active={active} style={[styles.filterChip, isDesktopWeb && styles.filterChipDesktop]}>
                     <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
                       {filterLabels[label]}
@@ -1426,7 +1477,14 @@ export default function CalendarScreen() {
               {passViewOptions.map((option) => {
                 const active = option.id === passView;
                 return (
-                  <TouchableOpacity key={option.id} onPress={() => setPassView(option.id)}>
+                  <TouchableOpacity
+                    key={option.id}
+                    onPress={() => setPassView(option.id)}
+                    accessibilityRole="button"
+                    accessibilityLabel={option.label}
+                    accessibilityState={{ selected: active }}
+                    {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
+                  >
                     <Pill active={active} style={[styles.subFilterChip, isDesktopWeb && styles.subFilterChipDesktop]}>
                       <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
                         {option.label}
@@ -1438,7 +1496,7 @@ export default function CalendarScreen() {
             </Card>
           )}
 
-          {activeFilter === 'Pass' && (
+          {activeFilter === 'Pass' && (isDesktopWeb || legendExpanded) && (
             <Card tone="muted" style={[styles.legendCard, isDesktopWeb && styles.legendCardDesktop]}>
               {legendItems.map((item) => (
                 <View key={item.label} style={styles.legendItem}>
@@ -1448,18 +1506,46 @@ export default function CalendarScreen() {
               ))}
             </Card>
           )}
-          {activeFilter === 'Pass' && canManageAssignments ? (
+          {activeFilter === 'Pass' ? (
             <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
-              <TouchableOpacity
-                style={styles.recurringButton}
-                onPress={openRecurringModal}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Skapa återkommande pass"
-              >
-                <Feather name="repeat" size={14} color={palette.primary} />
-                <Text style={styles.recurringButtonText}>Skapa återkommande pass</Text>
-              </TouchableOpacity>
+              {!isDesktopWeb ? (
+                <TouchableOpacity
+                  style={styles.legendToggle}
+                  onPress={() => setLegendExpanded((expanded) => !expanded)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Färgförklaring"
+                  accessibilityState={{ expanded: legendExpanded }}
+                  aria-expanded={legendExpanded}
+                >
+                  <Feather name="info" size={15} color={palette.secondaryText} />
+                  <Text style={styles.legendToggleText}>Färgförklaring</Text>
+                  <Feather name={legendExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={palette.secondaryText} />
+                </TouchableOpacity>
+              ) : null}
+              {canManageAssignments ? (
+                <TouchableOpacity
+                  style={styles.recurringButton}
+                  onPress={openRecurringModal}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Skapa återkommande pass"
+                >
+                  <Feather name="repeat" size={14} color={palette.primary} />
+                  <Text style={styles.recurringButtonText}>Återkommande pass</Text>
+                </TouchableOpacity>
+              ) : null}
+              {canManageAssignments ? (
+                <TouchableOpacity
+                  style={styles.recurringButton}
+                  onPress={() => setSeriesEditor({})}
+                  accessibilityRole="button"
+                  accessibilityLabel="Redigera återkommande pass"
+                >
+                  <Feather name="edit-3" size={14} color={palette.primary} />
+                  <Text style={styles.recurringButtonText}>Redigera serier</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
 
@@ -1470,6 +1556,8 @@ export default function CalendarScreen() {
                   style={styles.monthNavButton}
                   onPress={handlePrevMonth}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Föregående månad"
                 >
                   <Feather name="chevron-left" size={18} color={palette.icon} />
                 </TouchableOpacity>
@@ -1478,6 +1566,8 @@ export default function CalendarScreen() {
                   style={styles.monthNavButton}
                   onPress={handleNextMonth}
                   activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Nästa månad"
                 >
                   <Feather name="chevron-right" size={18} color={palette.icon} />
                 </TouchableOpacity>
@@ -1561,7 +1651,7 @@ export default function CalendarScreen() {
                                     ]}
                                   />
                                   <Text
-                                    numberOfLines={1}
+                                    numberOfLines={2}
                                     style={[
                                       styles.monthAssignmentText,
                                       assignment.status === 'open' && styles.monthAssignmentOpen,
@@ -1590,6 +1680,9 @@ export default function CalendarScreen() {
                 style={[styles.weekButton, !canGoPreviousWeek && styles.weekButtonDisabled]}
                 onPress={handlePrevWeek}
                 disabled={!canGoPreviousWeek}
+                accessibilityRole="button"
+                accessibilityLabel="Föregående vecka"
+                accessibilityState={{ disabled: !canGoPreviousWeek }}
               >
                 <Feather
                   name="chevron-left"
@@ -1607,6 +1700,9 @@ export default function CalendarScreen() {
                 style={[styles.weekButton, !canGoNextWeek && styles.weekButtonDisabled]}
                 onPress={handleNextWeek}
                 disabled={!canGoNextWeek}
+                accessibilityRole="button"
+                accessibilityLabel="Nästa vecka"
+                accessibilityState={{ disabled: !canGoNextWeek }}
               >
                 <Feather
                   name="chevron-right"
@@ -2177,7 +2273,11 @@ export default function CalendarScreen() {
               {arenaSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{arenaSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridhusbokning: datum"
+                  scopeKey={dateTimeScope}
+                  active={arenaModalVisible}
                   editable={!arenaSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2191,7 +2291,11 @@ export default function CalendarScreen() {
               <View style={styles.modalRow}>
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Start</Text>
-                  <TextInput
+                  <DateTimeField
+                    mode="time"
+                    label="Ridhusbokning: starttid"
+                    scopeKey={dateTimeScope}
+                    active={arenaModalVisible}
                   editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="17:00"
@@ -2204,7 +2308,11 @@ export default function CalendarScreen() {
                 </View>
                 <View style={styles.modalFieldFlex}>
                   <Text style={styles.modalLabel}>Slut</Text>
-                  <TextInput
+                  <DateTimeField
+                    mode="time"
+                    label="Ridhusbokning: sluttid"
+                    scopeKey={dateTimeScope}
+                    active={arenaModalVisible}
                   editable={!arenaSaving}
                     style={styles.modalInput}
                     placeholder="18:00"
@@ -2273,7 +2381,11 @@ export default function CalendarScreen() {
               {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Dagshändelse: datum"
+                  scopeKey={dateTimeScope}
+                  active={dayEventModalVisible}
                   editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2357,7 +2469,11 @@ export default function CalendarScreen() {
               {noticeSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridhusstatus: datum"
+                  scopeKey={dateTimeScope}
+                  active={arenaStatusModalVisible}
                   editable={!noticeSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2414,7 +2530,11 @@ export default function CalendarScreen() {
               {rideLogSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{rideLogSaveError}</Text>}
               <View style={styles.modalField}>
                 <Text style={styles.modalLabel}>Datum</Text>
-                <TextInput
+                <DateTimeField
+                  mode="date"
+                  label="Ridlogg: datum"
+                  scopeKey={JSON.stringify([dateTimeScope, rideLogForm.horseId])}
+                  active={rideLogModalVisible}
                   editable={!rideLogSaving}
                   style={styles.modalInput}
                   placeholder="ÅÅÅÅ-MM-DD"
@@ -2534,10 +2654,16 @@ export default function CalendarScreen() {
             >
               <Card tone="muted" style={styles.modalCard}>
                 <Text style={styles.modalTitle}>Skapa återkommande pass</Text>
+                <Text style={styles.modalLabel}>Högst {MAX_RECURRING_ASSIGNMENTS_PER_BATCH} nya pass per omgång. Befintliga pass hoppas över.</Text>
+                {recurringSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{recurringSaveError}</Text>}
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Startdatum</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="date"
+                      label="Återkommande pass: startdatum"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="ÅÅÅÅ-MM-DD"
                       placeholderTextColor={palette.secondaryText}
@@ -2551,7 +2677,11 @@ export default function CalendarScreen() {
                   </View>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Slutdatum</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="date"
+                      label="Återkommande pass: slutdatum"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="ÅÅÅÅ-MM-DD"
                       placeholderTextColor={palette.secondaryText}
@@ -2591,7 +2721,11 @@ export default function CalendarScreen() {
                 <View style={styles.modalRow}>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Start</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="time"
+                      label="Återkommande pass: starttid"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
                       style={styles.modalInput}
                       placeholder="07:00"
                       placeholderTextColor={palette.secondaryText}
@@ -2605,7 +2739,12 @@ export default function CalendarScreen() {
                   </View>
                   <View style={styles.modalFieldFlex}>
                     <Text style={styles.modalLabel}>Slut</Text>
-                    <TextInput
+                    <DateTimeField
+                      mode="time"
+                      label="Återkommande pass: sluttid"
+                      scopeKey={dateTimeScope}
+                      active={recurringModalVisible}
+                      allowClear
                       style={styles.modalInput}
                       placeholder="08:00"
                       placeholderTextColor={palette.secondaryText}
@@ -2681,7 +2820,17 @@ export default function CalendarScreen() {
         </Modal>
       ) : null}
 
+      {seriesEditor && canManageAssignments ? <RecurringSeriesModal
+        key={dateTimeScope}
+        scopeKey={dateTimeScope}
+        assignments={activeAssignments}
+        initialSeriesId={seriesEditor.initialSeriesId}
+        onClose={() => setSeriesEditor(null)}
+        onSave={actions.updateRecurringAssignmentSeries}
+      /> : null}
+
       <NewAssignmentModal
+        scopeKey={JSON.stringify([dateTimeScope, assignmentModal.mode, assignmentModal.assignmentId])}
         visible={assignmentModal.visible}
         mode={assignmentModal.mode}
         onClose={() => setAssignmentModal({ visible: false, mode: 'create' })}
@@ -2749,7 +2898,6 @@ const RegularDayCard = React.memo(function RegularDayCard({
   slots,
   openSlots,
   mineSlots,
-  openAssignments,
   claimingAssignmentIds,
   savingAssignmentIds,
   assignmentSaveErrors,
@@ -2787,22 +2935,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
         ? slots.filter((slot) => slot.status === 'open')
         : slots;
 
-  const footerAssignmentId = openAssignments[0]?.id;
-  const isFooterClaiming = footerAssignmentId
-    ? claimingAssignmentIds.has(footerAssignmentId)
-    : false;
-
   const handleActionPress = () => {
-    if (openSlots > 0) {
-      if (!onClaimOpenAssignment || isFooterClaiming) {
-        return;
-      }
-      void onClaimOpenAssignment(footerAssignmentId, {
-        date: isoDate,
-        slot: openAssignments[0]?.slot,
-      });
-      return;
-    }
     if (!onCreateAssignment) {
       return;
     }
@@ -2812,11 +2945,10 @@ const RegularDayCard = React.memo(function RegularDayCard({
     });
   };
 
-  const showActionButton = openSlots > 0 ? Boolean(onClaimOpenAssignment) : Boolean(onCreateAssignment);
-  const showFooter = mode !== 'mine';
+  const showFooter = mode !== 'mine' && openSlots === 0 && Boolean(onCreateAssignment);
 
   return (
-    <Card tone="muted" elevated style={styles.dayCard}>
+    <Card tone="muted" elevated style={[styles.dayCard, slots.length === 0 && styles.dayCardEmpty]}>
       <View style={styles.dayHeader}>
         <View style={[styles.dayBadge, selected ? styles.dayBadgeActive : styles.dayBadgeInactive]}>
           <Text style={[styles.dayBadgeText, selected ? styles.dayBadgeTextActive : undefined]}>
@@ -2839,6 +2971,17 @@ const RegularDayCard = React.memo(function RegularDayCard({
           ) : (
             <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
           )}
+          {slots.length === 0 && showFooter ? (
+            <TouchableOpacity
+              style={styles.dayActionButton}
+              activeOpacity={0.85}
+              onPress={handleActionPress}
+              accessibilityRole="button"
+              accessibilityLabel={`Nytt pass ${day} ${date}`}
+            >
+              <Text style={styles.dayActionLabel}>Nytt pass</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
       {events.length ? (
@@ -2851,7 +2994,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
           ))}
         </View>
       ) : null}
-      <View style={styles.daySlots}>
+      {visibleSlots.length > 0 ? <View style={styles.daySlots}>
         {visibleSlots.map((slot, index) => (
           <ScheduleIcon
             key={slot.id}
@@ -2871,7 +3014,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isSaving={savingAssignmentIds.has(slot.id)}
             saveError={assignmentSaveErrors[slot.id]}
             onTake={
-              slot.status === 'open'
+              slot.status === 'open' && onClaimOpenAssignment
                 ? () =>
                     onClaimOpenAssignment?.(slot.id, {
                       date: isoDate,
@@ -2879,54 +3022,31 @@ const RegularDayCard = React.memo(function RegularDayCard({
                     })
                 : undefined
             }
-            onManage={slot.status !== 'open' ? () => onEditAssignment?.(slot.id) : undefined}
+            onManage={slot.status !== 'open' && onEditAssignment ? () => onEditAssignment(slot.id) : undefined}
             onDecline={
-              slot.isMine && slot.status === 'assigned'
+              slot.isMine && slot.status === 'assigned' && onDeclineAssignment
                 ? () => onDeclineAssignment?.(slot.id)
                 : undefined
             }
             onComplete={
-              slot.isMine && slot.status === 'assigned'
+              slot.isMine && slot.status === 'assigned' && onCompleteAssignment
                 ? () => onCompleteAssignment?.(slot.id)
                 : undefined
             }
           />
         ))}
-      </View>
-      {showFooter ? (
+      </View> : null}
+      {showFooter && slots.length > 0 ? (
         <View style={styles.dayFooterRow}>
-          {openSlots > 0 ? (
-            <View style={styles.dayStatusBadge}>
-              <Feather name="alert-triangle" size={12} color={palette.warning} />
-              <Text style={styles.dayStatusBadgeText}>{openSlots} lediga pass</Text>
-            </View>
-          ) : slots.length === 0 ? (
-            <Text style={styles.dayStatusLabel}>Inga pass</Text>
-          ) : (
-            <Text style={styles.dayStatusLabel}>Alla pass täckta</Text>
-          )}
-          {showActionButton ? (
-            <TouchableOpacity
-              style={[
-                styles.dayActionButton,
-                openSlots > 0 && styles.dayActionButtonPrimary,
-              ]}
-              activeOpacity={0.85}
-              onPress={handleActionPress}
-              disabled={isFooterClaiming}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: isFooterClaiming, busy: isFooterClaiming }}
-            >
-              <Text
-                style={[
-                  styles.dayActionLabel,
-                  openSlots > 0 && styles.dayActionLabelPrimary,
-                ]}
-              >
-                {isFooterClaiming ? 'Tar pass...' : openSlots > 0 ? 'Ta pass' : 'Nytt pass'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
+          <TouchableOpacity
+            style={styles.dayActionButton}
+            activeOpacity={0.85}
+            onPress={handleActionPress}
+            accessibilityRole="button"
+            accessibilityLabel={`Nytt pass ${day} ${date}`}
+          >
+            <Text style={styles.dayActionLabel}>Nytt pass</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
     </Card>
@@ -3465,14 +3585,14 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 20,
     paddingBottom: 120,
-    gap: 24,
+    gap: 14,
     paddingTop: 10,
   },
   contentDesktop: {
     maxWidth: 1400,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
+    paddingHorizontal: 36,
     paddingBottom: 40,
   },
   pageHeader: {
@@ -3482,7 +3602,7 @@ const styles = StyleSheet.create({
     maxWidth: 1400,
     width: '100%',
     alignSelf: 'center',
-    paddingHorizontal: 48,
+    paddingHorizontal: 36,
     marginBottom: 12,
   },
   onboardingBackButton: {
@@ -3501,10 +3621,13 @@ const styles = StyleSheet.create({
   },
   filterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     padding: space.xs,
     width: '100%',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
+    gap: 4,
+    backgroundColor: palette.surface,
   },
   filterRowDesktop: {
     justifyContent: 'flex-start',
@@ -3528,7 +3651,8 @@ const styles = StyleSheet.create({
     width: 'auto',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 26,
+    paddingHorizontal: 12,
+    minHeight: 44,
   },
   filterChipDesktop: {
     flex: 0,
@@ -3538,6 +3662,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
   },
   subFilterChipDesktop: {
     paddingHorizontal: 16,
@@ -3570,8 +3695,22 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-start',
   },
   recurringRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'flex-start',
     paddingHorizontal: 4,
+    gap: 6,
+  },
+  legendToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 44,
+    paddingHorizontal: 8,
+    gap: 6,
+  },
+  legendToggleText: {
+    fontSize: 13,
+    color: palette.secondaryText,
   },
   recurringRowDesktop: {
     paddingHorizontal: 6,
@@ -3582,6 +3721,7 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
+    minHeight: 44,
     borderRadius: radius.full,
     backgroundColor: palette.surfaceTint,
     borderWidth: StyleSheet.hairlineWidth,
@@ -3622,8 +3762,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   monthNavButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -3678,9 +3818,9 @@ const styles = StyleSheet.create({
     minHeight: 120,
     paddingHorizontal: 10,
     paddingVertical: 10,
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: palette.border,
     gap: 6,
   },
@@ -3747,7 +3887,9 @@ const styles = StyleSheet.create({
   },
   monthAssignmentText: {
     flex: 1,
-    fontSize: 11,
+    minWidth: 0,
+    fontSize: 12,
+    lineHeight: 17,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -3793,8 +3935,8 @@ const styles = StyleSheet.create({
     color: palette.primary,
   },
   weekButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     backgroundColor: palette.surfaceTint,
     alignItems: 'center',
     justifyContent: 'center',
@@ -3878,6 +4020,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     paddingVertical: 16,
     gap: 14,
+  },
+  dayCardEmpty: {
+    paddingVertical: 12,
   },
   dayHeader: {
     flexDirection: 'row',
@@ -3977,20 +4122,25 @@ const styles = StyleSheet.create({
   },
   scheduleHeaderRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: 12,
   },
   scheduleTitleGroup: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 160,
+    minWidth: 0,
     gap: 8,
   },
   scheduleActionColumn: {
     alignItems: 'flex-end',
+    maxWidth: '100%',
     gap: 10,
   },
   scheduleTime: {
-    fontSize: 11,
+    fontSize: 13,
     fontWeight: '500',
     color: color.textMuted,
     letterSpacing: -0.1,
@@ -4003,8 +4153,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scheduleLabel: {
-    fontSize: 14,
-    fontWeight: '400',
+    fontSize: 15,
+    fontWeight: '600',
     color: color.text,
     letterSpacing: -0.2,
   },
@@ -4061,10 +4211,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(10,132,255,0.08)',
+    backgroundColor: palette.surfaceTint,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   scheduleMineActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 10,
   },
@@ -4076,6 +4229,8 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: radius.full,
     backgroundColor: 'rgba(15,22,34,0.06)',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   scheduleCantLabel: {
     fontSize: 12,
@@ -4102,7 +4257,7 @@ const styles = StyleSheet.create({
   dayFooterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     marginTop: 6,
   },
   dayStatusBadge: {
@@ -4124,6 +4279,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radius.full,
     backgroundColor: palette.surfaceTint,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   dayActionButtonPrimary: {
     backgroundColor: palette.primary,

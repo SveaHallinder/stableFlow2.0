@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
-import { supabase } from '@/lib/supabase';
+import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUnsupportedError, supabase, withPrimarySessionMutation } from '@/lib/supabase';
 import { radius } from '@/design/tokens';
 
 const palette = theme.colors;
@@ -35,14 +35,6 @@ function parseParamsFromUrl(url: string) {
   return params;
 }
 
-function decodeParam(value: string) {
-  try {
-    return decodeURIComponent(value.replace(/\+/g, '%20'));
-  } catch {
-    return value;
-  }
-}
-
 export default function ConfirmEmailScreen() {
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
@@ -51,32 +43,46 @@ export default function ConfirmEmailScreen() {
   const applyUrl = React.useCallback(
     async (url: string | null) => {
       if (!url) {
+        setError('Öppna bekräftelselänken i mejlet. Om du redan har bekräftat din e-post kan du logga in.');
+        setVerifying(false);
         return;
       }
       const params = parseParamsFromUrl(url);
       const errDesc = params.get('error_description') ?? params.get('error');
       if (errDesc) {
-        setError(decodeParam(errDesc));
+        setError('Länken är ogiltig eller har gått ut. Gå till inloggning och begär ett nytt bekräftelsemejl.');
         setVerifying(false);
         return;
       }
       const access = params.get('access_token');
       const refresh = params.get('refresh_token');
       if (access && refresh) {
-        const { error: sessionError } = await supabase.auth.setSession({
-          access_token: access,
-          refresh_token: refresh,
-        });
-        if (sessionError) {
-          setError('Länken är ogiltig eller har gått ut.');
+        try {
+          const { error: sessionError } = await withPrimarySessionMutation(() => supabase.auth.setSession({
+            access_token: access,
+            refresh_token: refresh,
+          }));
+          if (sessionError) {
+            console.warn('[auth confirm] Kunde inte verifiera sessionen', { code: sessionError.code, status: sessionError.status });
+            setError(sessionError.status === 0 || (sessionError.status ?? 0) >= 500
+              ? 'Kunde inte bekräfta din e-post. Kontrollera anslutningen och öppna länken igen.'
+              : 'Länken är ogiltig eller har gått ut.');
+            return;
+          }
+          router.replace('/');
+        } catch (error) {
+          console.warn('[auth confirm] Sessionskontrollen misslyckades.');
+          setError(error instanceof PrimarySessionMutationUnsupportedError
+            ? PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE
+            : 'Kunde inte bekräfta din e-post. Kontrollera anslutningen och öppna länken igen.');
+        } finally {
           setVerifying(false);
-          return;
         }
-        router.replace('/');
         return;
       }
-      // No tokens in the URL: on web detectSessionInUrl may already have set the
-      // session, otherwise the address is confirmed and the user can just log in.
+      // A bare route is not proof that an address has been confirmed. On web an
+      // already detected session is handled by AuthGate.
+      setError('Öppna bekräftelselänken i mejlet. Om du redan har bekräftat din e-post kan du logga in.');
       setVerifying(false);
     },
     [router],
@@ -85,9 +91,17 @@ export default function ConfirmEmailScreen() {
   React.useEffect(() => {
     let active = true;
     const readInitialUrl = async () => {
-      const initialUrl = await Linking.getInitialURL();
-      if (active) {
-        await applyUrl(initialUrl);
+      try {
+        const initialUrl = await Linking.getInitialURL();
+        if (active) {
+          await applyUrl(initialUrl);
+        }
+      } catch {
+        if (active) {
+          console.warn('[auth confirm] Kunde inte läsa bekräftelselänken.');
+          setError('Kunde inte läsa bekräftelselänken. Öppna länken i mejlet igen.');
+          setVerifying(false);
+        }
       }
     };
     void readInitialUrl();

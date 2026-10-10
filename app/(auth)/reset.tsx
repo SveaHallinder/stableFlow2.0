@@ -16,7 +16,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
-import { supabase, supabaseConfig } from '@/lib/supabase';
+import { hasPasswordRecoverySession, subscribePasswordRecovery, supabase, supabaseConfig, updateRecoveryPassword, verifyRecoverySession } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/components/ToastProvider';
 import { radius } from '@/design/tokens';
 
@@ -38,17 +39,16 @@ function parseParamsFromUrl(url: string) {
   return params;
 }
 
-function decodeParam(value: string) {
-  try {
-    return decodeURIComponent(value.replace(/\+/g, '%20'));
-  } catch {
-    return value;
-  }
-}
-
 export default function ResetPasswordScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { session } = useAuth();
+  const activeSessionRef = React.useRef(session);
+  activeSessionRef.current = session;
+  const verifiedSessionRef = React.useRef<typeof session>(null);
+  const verifiedOriginRef = React.useRef<'web' | 'link' | null>(null);
+  const linkVersionRef = React.useRef(0);
+  const [recoveryVersion, setRecoveryVersion] = React.useState(0);
 
   const [accessToken, setAccessToken] = React.useState('');
   const [refreshToken, setRefreshToken] = React.useState('');
@@ -61,64 +61,111 @@ export default function ResetPasswordScreen() {
   const [formError, setFormError] = React.useState<string | null>(null);
   const [submitting, setSubmitting] = React.useState(false);
 
+  React.useEffect(() => subscribePasswordRecovery(() => setRecoveryVersion(value => value + 1)), []);
+  React.useEffect(() => {
+    if (Platform.OS === 'web' && !accessToken && !refreshToken && hasPasswordRecoverySession(session)) {
+      verifiedSessionRef.current = session;
+      verifiedOriginRef.current = 'web';
+      setSessionReady(true);
+      setLinkError(null);
+    } else if (verifiedOriginRef.current === 'web' && verifiedSessionRef.current && !hasPasswordRecoverySession(session)) {
+      verifiedSessionRef.current = null;
+      verifiedOriginRef.current = null;
+      setSessionReady(false);
+      setAccessToken('');
+      setRefreshToken('');
+      setLinkError('Länken är ogiltig eller har gått ut.');
+    }
+  }, [session, recoveryVersion, accessToken, refreshToken]);
+
   const applyUrl = React.useCallback((url: string | null) => {
+    linkVersionRef.current += 1;
     if (!url) {
+      setLinkError('Öppna återställningslänken i mejlet eller välj Skicka ny länk.');
       return;
     }
     const params = parseParamsFromUrl(url);
     const error = params.get('error_description') ?? params.get('error');
     if (error) {
-      setLinkError(decodeParam(error));
+      verifiedSessionRef.current = null;
+      verifiedOriginRef.current = null;
+      setSessionReady(false);
+      setAccessToken('');
+      setRefreshToken('');
+      setLinkError('Länken är ogiltig eller har gått ut.');
+      return;
     }
     const access = params.get('access_token');
     const refresh = params.get('refresh_token');
     if (access && refresh) {
+      verifiedSessionRef.current = null;
+      verifiedOriginRef.current = null;
+      setSessionReady(false);
       setAccessToken(access);
       setRefreshToken(refresh);
       setLinkError(null);
       return;
     }
-    if (!access || !refresh) {
-      setLinkError('Länken är ogiltig eller har gått ut.');
+    if (Platform.OS === 'web' && hasPasswordRecoverySession(activeSessionRef.current)) {
+      verifiedSessionRef.current = activeSessionRef.current;
+      verifiedOriginRef.current = 'web';
+      setSessionReady(true);
+      setLinkError(null);
+      return;
     }
+    verifiedSessionRef.current = null;
+    verifiedOriginRef.current = null;
+    setSessionReady(false);
+    setAccessToken('');
+    setRefreshToken('');
+    setLinkError('Länken är ogiltig eller har gått ut.');
   }, []);
 
   React.useEffect(() => {
     let active = true;
     const readInitialUrl = async () => {
-      const initialUrl = await Linking.getInitialURL();
-      if (active) {
-        applyUrl(initialUrl);
+      try {
+        const initialUrl = await Linking.getInitialURL();
+        if (active) applyUrl(initialUrl);
+      } catch (error) {
+        console.warn('[auth reset] Kunde inte läsa återställningslänken', { name: error instanceof Error ? error.name : 'Unknown' });
+        if (active) setLinkError('Kunde inte läsa återställningslänken. Öppna länken igen eller välj Skicka ny länk.');
       }
     };
     void readInitialUrl();
     const subscription = Linking.addEventListener('url', ({ url }) => applyUrl(url));
     return () => {
       active = false;
+      linkVersionRef.current += 1;
       subscription.remove();
     };
   }, [applyUrl]);
 
   React.useEffect(() => {
-    if (!accessToken || !refreshToken || sessionReady || settingSession) {
+    if (!accessToken || !refreshToken || sessionReady || settingSession || linkError) {
       return;
     }
     const setSession = async () => {
+      const linkVersion = linkVersionRef.current;
       setSettingSession(true);
-      const { error } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-      });
-      if (error) {
-        setLinkError('Länken är ogiltig eller har gått ut.');
+      try {
+        const verifiedSession = await verifyRecoverySession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (linkVersionRef.current !== linkVersion) return;
+        verifiedSessionRef.current = verifiedSession;
+        verifiedOriginRef.current = 'link';
+        setSessionReady(true);
+      } catch (error) {
+        console.warn('[auth reset] Kunde inte verifiera återställningslänken', { name: error instanceof Error ? error.name : 'Unknown' });
+        if (linkVersionRef.current === linkVersion) setLinkError('Kunde inte verifiera länken. Öppna återställningslänken igen eller välj Skicka ny länk.');
+      } finally {
         setSettingSession(false);
-        return;
       }
-      setSessionReady(true);
-      setSettingSession(false);
     };
     void setSession();
-  }, [accessToken, refreshToken, sessionReady, settingSession]);
+  }, [accessToken, refreshToken, sessionReady, settingSession, linkError]);
 
   const handleUpdatePassword = React.useCallback(async () => {
     if (submitting || settingSession) {
@@ -146,15 +193,40 @@ export default function ResetPasswordScreen() {
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) {
-      setFormError('Kunde inte uppdatera lösenordet. Försök igen.');
+    try {
+      const verifiedSession = verifiedSessionRef.current;
+      const verifiedOrigin = verifiedOriginRef.current;
+      if (!verifiedSession) {
+        setSessionReady(false);
+        setLinkError('Länken är ogiltig eller har gått ut.');
+        return;
+      }
+      if (verifiedOrigin === 'web') {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+        if (data.session?.user.id !== verifiedSession.user.id || !hasPasswordRecoverySession(data.session)) {
+          setSessionReady(false);
+          setLinkError('Länken är ogiltig eller har gått ut.');
+          return;
+        }
+      }
+      await updateRecoveryPassword(verifiedSession, password);
+      let primarySession = activeSessionRef.current;
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        primarySession = error ? null : data.session;
+      } catch (error) {
+        primarySession = null;
+        console.warn('[auth reset] Kunde inte kontrollera den aktiva sessionen efter lösenordsändringen', { name: error instanceof Error ? error.name : 'Unknown' });
+      }
+      toast.showToast('Lösenordet är uppdaterat.', 'success');
+      router.replace(primarySession?.user.id === verifiedSession.user.id ? '/(tabs)' : '/(auth)');
+    } catch (error) {
+      console.warn('[auth reset] Lösenordsändringen kunde inte bekräftas', { name: error instanceof Error ? error.name : 'Unknown' });
+      setFormError('Lösenordsändringen kunde inte bekräftas. Dina lösenord finns kvar. Försök igen.');
+    } finally {
       setSubmitting(false);
-      return;
     }
-    toast.showToast('Lösenordet är uppdaterat.', 'success');
-    setSubmitting(false);
-    router.replace('/(tabs)');
   }, [confirmPassword, password, router, sessionReady, settingSession, submitting, toast]);
 
   return (
@@ -177,7 +249,7 @@ export default function ResetPasswordScreen() {
                 </Text>
               </View>
 
-              {linkError ? <Text style={styles.errorText}>{linkError}</Text> : null}
+              {linkError ? <Text accessibilityRole="alert" style={styles.errorText}>{linkError}</Text> : null}
               {settingSession ? (
                 <View style={styles.inlineRow}>
                   <ActivityIndicator color={palette.primary} />
@@ -209,9 +281,11 @@ export default function ResetPasswordScreen() {
                 />
               </View>
 
-              {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+              {formError ? <Text accessibilityRole="alert" style={styles.errorText}>{formError}</Text> : null}
 
               <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Uppdatera lösenord"
                 style={[
                   styles.primaryButton,
                   (submitting || settingSession || !sessionReady) && styles.primaryButtonDisabled,

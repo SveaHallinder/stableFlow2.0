@@ -18,6 +18,7 @@ import { useAppData } from '@/context/AppDataContext';
 import { radius } from '@/design/tokens';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { roleLabels } from '@/lib/roleLabels';
+import { getPaddockHorses, getPaddockHorseNames, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 
 const palette = theme.colors;
 const MAX_RESULTS = 5;
@@ -50,7 +51,7 @@ type PaddockResult = {
   name: string;
   stableId: string;
   stableName: string;
-  horseCount: number;
+  horseCount?: number;
 };
 
 type StableResult = {
@@ -440,7 +441,7 @@ export default function SearchScreen() {
       .filter((paddock) => hasStableAccess(paddock.stableId, 'view'))
       .filter((paddock) => {
         const stableName = stableNameById[paddock.stableId];
-        const searchText = [paddock.name, stableName, ...(paddock.horseNames ?? [])]
+        const searchText = [paddock.name, stableName, ...getPaddockHorseNames(paddock, state.horses)]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
@@ -451,7 +452,9 @@ export default function SearchScreen() {
         name: paddock.name,
         stableId: paddock.stableId,
         stableName: stableNameById[paddock.stableId] ?? 'Stall',
-        horseCount: paddock.horseNames.length,
+        horseCount: state.paddockLinksReady === true && !hasUnconfirmedPaddockLinks([paddock], state.horses)
+          ? getPaddockHorses(paddock, state.horses).length
+          : undefined,
       }));
 
     items.sort((a, b) => a.name.localeCompare(b.name));
@@ -462,6 +465,8 @@ export default function SearchScreen() {
     normalizedQuery,
     stableNameById,
     state.paddocks,
+    state.horses,
+    state.paddockLinksReady,
     hasStableAccess,
   ]);
 
@@ -1187,7 +1192,7 @@ export default function SearchScreen() {
                             key={paddock.id}
                             icon={<Feather name="map" size={16} color={palette.primary} />}
                             title={paddock.name}
-                            subtitle={`${paddock.stableName} · ${paddock.horseCount} hästar`}
+                            subtitle={`${paddock.stableName} · ${paddock.horseCount === undefined ? 'Hästkopplingar ej bekräftade' : `${paddock.horseCount} hästar`}`}
                             onPress={() => handleOpenPaddock(paddock)}
                           />
                         ))}

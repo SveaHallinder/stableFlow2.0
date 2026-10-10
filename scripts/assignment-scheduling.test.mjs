@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { URL } from 'node:url';
 import ts from 'typescript';
 
 const root = new URL('../', import.meta.url);
@@ -80,6 +82,38 @@ test('calendar week selection prefers today, then future, then latest history', 
   assert.equal(findInitialWeekIndex(weeks, new Date('2026-08-06T12:00:00')), 1);
   assert.equal(findInitialWeekIndex([weeks[0], weeks[2]], new Date('2026-08-06T12:00:00')), 1);
   assert.equal(findInitialWeekIndex([weeks[0]], new Date('2026-08-06T12:00:00')), 0);
+});
+
+test('calendar week selection includes the whole Sunday when week end is a calendar date', async () => {
+  const { findInitialWeekIndex } = await loadScheduleModule();
+  const weeks = [
+    { start: new Date('2026-10-05T00:00:00'), end: new Date('2026-10-11T00:00:00') },
+    { start: new Date('2026-10-12T00:00:00'), end: new Date('2026-10-18T00:00:00') },
+  ];
+
+  for (const time of ['00:00:00', '12:00:00', '23:59:59']) {
+    const referenceDate = new Date(`2026-10-11T${time}`);
+    const originalTime = referenceDate.getTime();
+    assert.equal(findInitialWeekIndex(weeks, referenceDate), 0, time);
+    assert.equal(referenceDate.getTime(), originalTime, 'Week selection must not mutate its reference date');
+  }
+  assert.equal(findInitialWeekIndex(weeks, new Date('2026-10-12T12:00:00')), 1);
+});
+
+test('calendar week selection keeps Sundays across daylight saving and year boundaries', async () => {
+  const { findInitialWeekIndex } = await loadScheduleModule();
+  for (const [monday, sunday, nextMonday, nextSunday] of [
+    ['2026-03-23', '2026-03-29', '2026-03-30', '2026-04-05'],
+    ['2026-10-19', '2026-10-25', '2026-10-26', '2026-11-01'],
+    ['2026-12-28', '2027-01-03', '2027-01-04', '2027-01-10'],
+  ]) {
+    const weeks = [
+      { start: new Date(`${monday}T00:00:00`), end: new Date(`${sunday}T00:00:00`) },
+      { start: new Date(`${nextMonday}T00:00:00`), end: new Date(`${nextSunday}T00:00:00`) },
+    ];
+    assert.equal(findInitialWeekIndex(weeks, new Date(`${sunday}T23:59:59`)), 0, sunday);
+    assert.equal(findInitialWeekIndex(weeks, new Date(`${nextMonday}T00:00:00`)), 1, nextMonday);
+  }
 });
 
 test('calendar synthesizes the current week and claim is server-conditional before local success', async () => {

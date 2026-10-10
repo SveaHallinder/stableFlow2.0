@@ -16,14 +16,13 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import HeartIcon from '@/assets/images/Heart.svg';
 import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
 import CloudSun from '@/assets/images/cloud-sun.svg';
 import UserGroupsIcon from '@/assets/images/User Groups.svg';
 import { theme } from '@/components/theme';
-import { quickActionVariants, systemPalette } from '@/design/system';
+import { systemPalette } from '@/design/system';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -38,6 +37,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { deriveFeedFocus, deriveTodayOverview, getCurrentFeedSlot } from '@/lib/today';
+import { getPaddockHorses, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useWeather } from '@/hooks/useWeather';
@@ -66,24 +66,13 @@ const tourSteps = [
   },
   {
     title: 'Schema & standardpass',
-    text: 'Kolla dina rid-/stallpass, markera “kan inte” eller “klart”, och välj standarddagar så schemat fylls automatiskt.',
+    text: 'Kolla dina rid-/stallpass och markera “kan inte” eller “klart”. Välj standarddagar för automatisk tilldelning av passen som admin skapar.',
   },
   {
     title: 'Hagar & kartor',
     text: 'Lägg till hagar med bild/karta och skriv ut listor så alla ser var hästarna går – sommar, vinter eller året runt.',
   },
 ];
-
-const quickActionStyles: Record<
-  QuickActionTint,
-  { gradient: [string, string]; icon: string; accentBorder: string; shadow: string }
-> = {
-  primary: quickActionVariants.primary,
-  accent: quickActionVariants.accent,
-  warning: quickActionVariants.warning,
-};
-
-
 
 export default function OverviewScreen() {
   const router = useRouter();
@@ -227,6 +216,11 @@ export default function OverviewScreen() {
     setTourStep((prev) => Math.min(tourSteps.length - 1, prev + 1));
   }, [closeTour, tourStep]);
   const todayIso = toISODate(new Date());
+  const todayDateLabel = new Date().toLocaleDateString('sv-SE', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
   const groupedDays = React.useMemo(
     () => groupAssignmentsByDay(activeAssignments),
     [activeAssignments],
@@ -245,7 +239,7 @@ export default function OverviewScreen() {
   );
 
   const myAssignedUpcoming = React.useMemo(() => {
-    return assignments
+    return activeAssignments
       .filter(
         (assignment) =>
           assignment.assigneeId === currentUserId &&
@@ -256,7 +250,7 @@ export default function OverviewScreen() {
         (a, b) =>
           new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
       );
-  }, [assignments, currentUserId, todayIso]);
+  }, [activeAssignments, currentUserId, todayIso]);
 
   const myNextAssignment = myAssignedUpcoming[0];
   const myNextAssignmentTimeLabel = React.useMemo(() => {
@@ -284,9 +278,13 @@ export default function OverviewScreen() {
 
   const paddockSummary = React.useMemo(() => {
     const paddockCount = activePaddocks.length;
-    const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
-    return { paddockCount, horseCount };
-  }, [activePaddocks]);
+    const horseCount = new Set(activePaddocks.flatMap((paddock) =>
+      getPaddockHorses(paddock, state.horses).map((horse) => horse.id),
+    )).size;
+    const linksUnconfirmed = state.paddockLinksReady !== true ||
+      hasUnconfirmedPaddockLinks(activePaddocks, state.horses);
+    return { paddockCount, horseCount, linksUnconfirmed };
+  }, [activePaddocks, state.horses, state.paddockLinksReady]);
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
       {
@@ -303,7 +301,7 @@ export default function OverviewScreen() {
         id: 'open-passes',
         label: 'Lediga pass',
         caption: openUpcomingCount
-          ? `${openUpcomingCount} lediga pass`
+          ? `${openUpcomingCount} ${openUpcomingCount === 1 ? 'ledigt' : 'lediga'} pass`
           : 'Alla pass är bemannade\nÖppna schema',
         icon: 'users',
         tint: 'accent',
@@ -324,9 +322,11 @@ export default function OverviewScreen() {
       {
         id: 'paddocks',
         label: 'Hagar',
-        caption: paddockSummary.paddockCount
-          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
-          : 'Lägg in hagar\nSkriv ut haglista',
+        caption: paddockSummary.linksUnconfirmed
+          ? 'Hästkopplingar ej bekräftade\nÖppna hagar'
+          : paddockSummary.paddockCount
+            ? `${paddockSummary.paddockCount} ${paddockSummary.paddockCount === 1 ? 'hage' : 'hagar'} · ${paddockSummary.horseCount} ${paddockSummary.horseCount === 1 ? 'häst' : 'hästar'}`
+            : 'Lägg in hagar\nSkriv ut haglista',
         icon: 'map',
         tint: 'primary',
         highlight: paddockSummary.paddockCount === 0,
@@ -581,7 +581,6 @@ export default function OverviewScreen() {
   const startHereSection = showOnboardingEntry ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.startHereCard, !isDesktopWeb && styles.startHereCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.startHereHeader}>
@@ -621,14 +620,13 @@ export default function OverviewScreen() {
   const prioritySection = (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.priorityHeader}>
         <View style={styles.priorityTitleBlock}>
           <Text style={styles.priorityEyebrow}>Idag</Text>
           <Text style={[styles.priorityTitle, !isDesktopWeb && styles.priorityTitleMobile]}>
-            {todayOverview.headline}
+            {todayOverview.mode === 'admin' ? 'Läget i stallet' : todayOverview.headline}
           </Text>
           <Text style={styles.prioritySubtitle}>{todayOverview.subheadline}</Text>
         </View>
@@ -652,7 +650,10 @@ export default function OverviewScreen() {
       ) : null}
 
       <View style={[styles.priorityGrid, isDesktopWeb && styles.priorityGridDesktop]}>
-        {(isDesktopWeb ? todayOverview.insights : todayOverview.insights.slice(0, 3)).map((item) => (
+        {todayOverview.insights.filter((item) =>
+          todayOverview.mode !== 'admin' || !hasTodayAssignments ||
+          (item.id !== 'stable-status' && item.id !== 'open'),
+        ).map((item) => (
           <View
             key={item.id}
             style={[
@@ -664,9 +665,9 @@ export default function OverviewScreen() {
           >
             <Text style={[styles.priorityValue, !isDesktopWeb && styles.priorityValueMobile]}>{item.value}</Text>
             <Text style={styles.priorityLabel}>{item.label}</Text>
-            {isDesktopWeb ? <Text style={styles.priorityMeta} numberOfLines={2}>
+            <Text style={styles.priorityMeta}>
               {item.meta}
-            </Text> : null}
+            </Text>
           </View>
         ))}
       </View>
@@ -679,6 +680,9 @@ export default function OverviewScreen() {
           <Feather name="activity" size={15} color={palette.primary} />
           <Text style={styles.priorityHorseButtonText}>
             Öppna {todayOverview.myHorseSummaries[0].horse.name}
+            {todayOverview.myHorseSummaries[0].paddocks.length
+              ? ` · ${todayOverview.myHorseSummaries[0].paddocks.map((paddock) => paddock.name).join(', ')}`
+              : todayOverview.myHorseSummaries[0].paddockLinksUnconfirmed ? ' · Hage ej bekräftad' : ' · Ingen hage satt'}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -688,7 +692,6 @@ export default function OverviewScreen() {
   const feedSection = currentStableId && feedFocus.totalCount > 0 ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.priorityHeader}>
@@ -840,7 +843,6 @@ export default function OverviewScreen() {
   const stableAlertsSection = activeStableAlerts.length ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.eventsHeader}>
@@ -896,7 +898,6 @@ export default function OverviewScreen() {
   const eventsSection = recentEvents.length ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.eventsHeader}>
@@ -934,7 +935,6 @@ export default function OverviewScreen() {
   const missedSection = (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.missedCard, !isDesktopWeb && styles.missedCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.missedHeader}>
@@ -975,15 +975,18 @@ export default function OverviewScreen() {
   );
 
   const quickActionsSection = (
-    <View style={styles.quickActionGrid}>
-      {quickActions.map((action) => (
-        <QuickActionCard
-          key={action.id}
-          action={action}
-          isDesktop={isDesktopWeb}
-          onPress={handleQuickActionPress}
-        />
-      ))}
+    <View style={styles.quickActionsSection}>
+      <Text style={styles.sectionTitle}>Snabbval</Text>
+      <View style={styles.quickActionGrid}>
+        {quickActions.map((action) => (
+          <QuickActionCard
+            key={action.id}
+            action={action}
+            isDesktop={isDesktopWeb}
+            onPress={handleQuickActionPress}
+          />
+        ))}
+      </View>
     </View>
   );
 
@@ -992,7 +995,7 @@ export default function OverviewScreen() {
       <View style={styles.summaryHeader}>
         <View>
           <Text style={[styles.summaryTitle, !isDesktopWeb && styles.summaryTitleMobile]}>
-            Idag
+            Dagens pass
           </Text>
           <Text style={[styles.summarySubtitle, !isDesktopWeb && styles.summarySubtitleMobile]}>
             {hasTodayAssignments ? 'Status för dagens pass' : 'Inga pass idag'}
@@ -1046,7 +1049,7 @@ export default function OverviewScreen() {
   );
 
   const summarySection = isDesktopWeb ? (
-    <Card tone="default" elevated style={[styles.summaryCard, styles.desktopCardVisible]}>
+    <Card tone="default" style={[styles.summaryCard, styles.desktopCardVisible]}>
       {summaryContent}
     </Card>
   ) : (
@@ -1056,6 +1059,9 @@ export default function OverviewScreen() {
   const messagesSection = (
     <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
       <SectionHeader title="Nya meddelanden" count={activeMessages.length} />
+      {activeMessages.length === 0 ? (
+        <Text style={styles.actionEmptyText}>Inga meddelanden i det här stallet ännu.</Text>
+      ) : null}
       {visibleMessages.map((message, index) => {
         const isPrimaryCard = index === 0;
         const stacked = isPrimaryCard && !messagesExpanded;
@@ -1111,6 +1117,9 @@ export default function OverviewScreen() {
   const postsSection = (
     <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
       <SectionHeader title="Senaste inlägg" count={activePosts.length} />
+      {activePosts.length === 0 ? (
+        <Text style={styles.actionEmptyText}>Inga inlägg i det här stallet ännu.</Text>
+      ) : null}
       {visiblePosts.map((post, index) => {
         const isPrimaryCard = index === 0;
         const stacked = isPrimaryCard && !postsExpanded;
@@ -1157,7 +1166,7 @@ export default function OverviewScreen() {
   );
 
   return (
-    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+    <View style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
@@ -1179,30 +1188,26 @@ export default function OverviewScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <DataSyncStatus />
+          <View style={styles.todayHeading}>
+            <Text style={styles.todayContext}>{todayDateLabel} · {stableName}</Text>
+            <Text accessibilityRole="header" style={styles.todayTitle}>Dagens arbete</Text>
+            <Text style={styles.todaySubtitle}>Foder, viktiga notiser och dina nästa pass.</Text>
+          </View>
           {isDesktopWeb ? (
             <>
               {startHereSection}
-              {prioritySection}
+              {stableAlertsSection}
               {feedSection}
-              {/* Row 1: Events + Messages side by side */}
-              <View style={styles.desktopRow}>
-                <View style={styles.desktopRowMain}>
-                  {stableAlertsSection}
-                  {eventsSection}
-                </View>
-                <View style={styles.desktopRowSide}>
-                  {messagesSection}
-                </View>
-              </View>
-              {/* Row 2: Quick actions full width */}
               {quickActionsSection}
-              {/* Row 3: Today summary + Posts + Weather */}
               <View style={styles.desktopRow}>
                 <View style={styles.desktopRowMain}>
+                  {prioritySection}
                   {summarySection}
                   {missedSection}
                 </View>
                 <View style={styles.desktopRowSide}>
+                  {messagesSection}
+                  {eventsSection}
                   {postsSection}
                   <WeatherPanel stableLocation={stableLocation} />
                 </View>
@@ -1211,16 +1216,16 @@ export default function OverviewScreen() {
           ) : (
             <>
               {startHereSection}
-              {prioritySection}
               {stableAlertsSection}
               {feedSection}
               {quickActionsSection}
-              {eventsSection}
+              {prioritySection}
               {summarySection}
               {missedSection}
-              <WeatherPanel stableLocation={stableLocation} />
               {messagesSection}
+              {eventsSection}
               {postsSection}
+              <WeatherPanel stableLocation={stableLocation} />
             </>
           )}
       </ScrollView>
@@ -1300,7 +1305,7 @@ export default function OverviewScreen() {
         </View>
       </Modal>
 
-    </LinearGradient>
+    </View>
   );
 }
 
@@ -1315,24 +1320,14 @@ function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
 
   if (!weather) {
     return (
-      <LinearGradient
-        colors={['#3A73FF', '#5F96FF']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.weatherPanel}
-      >
+      <Card style={styles.weatherPanel}>
         <Text style={styles.weatherSummary}>Laddar väder...</Text>
-      </LinearGradient>
+      </Card>
     );
   }
 
   return (
-    <LinearGradient
-      colors={['#3A73FF', '#5F96FF']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.weatherPanel}
-    >
+    <Card style={styles.weatherPanel}>
       <View style={styles.weatherTopRow}>
         <View style={styles.weatherLocationBlock}>
           <Text style={styles.weatherMetaLabel}>Plats</Text>
@@ -1368,7 +1363,7 @@ function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
           <Text style={styles.weatherMetricValue}>{weather.wind} m/s</Text>
         </View>
       </View>
-    </LinearGradient>
+    </Card>
   );
 }
 
@@ -1381,8 +1376,7 @@ const QuickActionCard = React.memo(function QuickActionCard({
   onPress?: (action: QuickAction) => void;
   isDesktop?: boolean;
 }) {
-  const themeStyles = quickActionStyles[action.tint];
-  const badgeColor = themeStyles.icon;
+  const iconColor = action.tint === 'warning' ? palette.warning : palette.primary;
 
   return (
     <Pressable
@@ -1397,32 +1391,21 @@ const QuickActionCard = React.memo(function QuickActionCard({
           action.disabled && styles.quickActionCardDisabled,
         ]}
       >
-      <LinearGradient
-        colors={themeStyles.gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+      <View
         style={[
           styles.quickActionInner,
           !isDesktop && styles.quickActionInnerMobile,
-          {
-            borderColor: themeStyles.accentBorder,
-            shadowColor: themeStyles.shadow,
-            shadowOpacity: isDesktop ? 0.2 : 0.12,
-            shadowRadius: isDesktop ? 14 : 10,
-            shadowOffset: { width: 0, height: isDesktop ? 8 : 5 },
-            elevation: 2,
-          },
           action.disabled && styles.quickActionInnerDisabled,
         ]}
       >
         {action.highlight && !action.disabled ? (
-          <View style={[styles.quickActionBadge, { backgroundColor: badgeColor }]} />
+          <View style={[styles.quickActionBadge, { backgroundColor: iconColor }]} />
         ) : null}
-        <View style={[styles.quickActionIcon, { backgroundColor: `${themeStyles.icon}10` }]}>
+        <View style={styles.quickActionIcon}>
           <Feather
             name={action.icon}
             size={18}
-            color={action.disabled ? `${themeStyles.icon}60` : themeStyles.icon}
+            color={action.disabled ? palette.secondaryText : iconColor}
           />
         </View>
         <View style={styles.quickActionText}>
@@ -1439,7 +1422,7 @@ const QuickActionCard = React.memo(function QuickActionCard({
             {action.caption}
           </Text>
         </View>
-      </LinearGradient>
+      </View>
     </Pressable>
   );
 });
@@ -1543,7 +1526,7 @@ const SectionHeader = React.memo(function SectionHeader({ title, count }: { titl
         <View style={styles.sectionDot} />
         <Text style={styles.sectionCount}>{count}</Text>
       </View>
-      <Text style={styles.sectionAction}>Visa mer ↓</Text>
+      {count > 0 ? <Text style={styles.sectionAction}>Visa mer ↓</Text> : null}
     </View>
   );
 });
@@ -1619,6 +1602,7 @@ function formatEventTime(value: string) {
 const styles = StyleSheet.create({
   background: {
     flex: 1,
+    backgroundColor: color.bg,
   },
   safeArea: {
     flex: 1,
@@ -1641,6 +1625,27 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 40,
     gap: 20,
+  },
+  todayHeading: {
+    gap: 5,
+    paddingBottom: 2,
+  },
+  todayContext: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.secondaryText,
+  },
+  todayTitle: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: '700',
+    letterSpacing: -0.7,
+    color: palette.primaryText,
+  },
+  todaySubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.secondaryText,
   },
   desktopRow: {
     flexDirection: 'row',
@@ -1701,16 +1706,20 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
   },
+  quickActionsSection: {
+    gap: 12,
+  },
   eventsCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
-    gap: 16,
-    borderRadius: radius.xl,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    gap: 12,
+    borderRadius: radius.lg,
   },
   eventsCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
   },
   eventsHeader: {
@@ -1725,8 +1734,8 @@ const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   eventsTitleMobile: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
   },
   eventsMeta: {
     fontSize: 13,
@@ -1734,7 +1743,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   eventsMetaMobile: {
-    fontSize: 11,
+    fontSize: 12,
   },
   eventsList: {
     gap: 10,
@@ -1760,8 +1769,8 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   eventMessageMobile: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 21,
   },
   eventTime: {
     fontSize: 13,
@@ -1789,15 +1798,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   missedCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     gap: 16,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
   },
   missedCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
   },
   missedHeader: {
@@ -1869,10 +1879,10 @@ const styles = StyleSheet.create({
     color: palette.primary,
   },
   quickActionCard: {
-    flexGrow: 0,
-    flexBasis: '48%',
-    minWidth: '48%',
-    borderRadius: radii.xl,
+    flexGrow: 1,
+    flexBasis: '47%',
+    minWidth: 0,
+    borderRadius: radius.lg,
     overflow: 'hidden',
   },
   quickActionCardDesktop: {
@@ -1881,21 +1891,23 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   quickActionCardPressed: {
-    transform: [{ scale: 0.98 }],
+    opacity: 0.8,
   },
   quickActionCardDisabled: {
     opacity: 0.7,
   },
   quickActionInner: {
-    borderRadius: radii.xl,
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    gap: 12,
+    flex: 1,
+    borderRadius: radius.lg,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    gap: 10,
     borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     backgroundColor: systemPalette.surface,
   },
   quickActionInnerMobile: {
-    borderColor: 'rgba(15,22,34,0.08)',
+    paddingHorizontal: 14,
   },
   quickActionInnerDisabled: {
     opacity: 0.7,
@@ -1912,9 +1924,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   quickActionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.md,
+    width: 34,
+    height: 34,
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceTint,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1928,7 +1941,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   quickActionLabelMobile: {
-    fontSize: 14,
+    fontSize: 15,
     letterSpacing: -0.2,
     fontWeight: '700',
   },
@@ -1938,9 +1951,9 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   quickActionCaptionMobile: {
-    fontSize: 11,
-    lineHeight: 15,
-    color: palette.mutedText,
+    fontSize: 12,
+    lineHeight: 18,
+    color: palette.secondaryText,
   },
   startHereCard: {
     paddingHorizontal: 28,
@@ -2055,17 +2068,18 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   priorityCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     gap: 16,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
   },
   priorityCardMobile: {
     paddingHorizontal: 18,
     paddingVertical: 18,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
   },
   priorityHeader: {
@@ -2080,7 +2094,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   priorityEyebrow: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '800',
     color: palette.primary,
     textTransform: 'uppercase',
@@ -2091,7 +2105,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   priorityTitleMobile: {
-    fontSize: 18,
+    fontSize: 21,
   },
   prioritySubtitle: {
     fontSize: 14,
@@ -2122,9 +2136,9 @@ const styles = StyleSheet.create({
   },
   priorityNoticeText: {
     flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-    color: palette.secondaryText,
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.primaryText,
   },
   priorityGrid: {
     flexDirection: 'row',
@@ -2132,7 +2146,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   priorityGridDesktop: {
-    flexWrap: 'nowrap',
+    flexWrap: 'wrap',
   },
   priorityItem: {
     flexGrow: 1,
@@ -2151,10 +2165,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 246, 230, 0.82)',
   },
   priorityItemMobile: {
-    flexBasis: 0,
+    flexBasis: '45%',
     minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   priorityValueMobile: { fontSize: 20 },
   priorityItemSuccess: {
@@ -2199,11 +2213,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   summaryCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     gap: 16,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -2252,7 +2267,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'nowrap',
     gap: 10,
-    marginTop: 10,
+    marginTop: 0,
   },
   summaryTilesDesktop: {
     gap: 16,
@@ -2265,57 +2280,41 @@ const styles = StyleSheet.create({
   summaryTile: {
     flex: 1,
     minWidth: 0,
-    borderRadius: radius.xl,
-    paddingVertical: 22,
-    paddingHorizontal: 22,
-    backgroundColor: color.card,
-    gap: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.04)',
-    shadowColor: 'rgba(15,22,34,0.06)',
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 1,
+    paddingVertical: 8,
+    gap: 5,
   },
   summaryTileMobile: {
-    borderColor: 'rgba(15,22,34,0.08)',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    paddingHorizontal: 2,
   },
   summaryValue: {
-    fontSize: 32,
+    fontSize: 24,
     fontWeight: '700',
-    color: '#1B1E2F',
+    color: palette.primaryText,
     letterSpacing: -0.5,
   },
   summaryLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#8B8F9E',
+    color: palette.primaryText,
   },
   summaryLabelMobile: {
     letterSpacing: 0.4,
   },
   summaryMeta: {
     fontSize: 12,
-    color: palette.mutedText,
+    lineHeight: 17,
+    color: palette.secondaryText,
   },
   summaryMetaMobile: {
-    fontSize: 11,
+    fontSize: 12,
   },
   activityColumn: {
     gap: 8,
   },
   activityTitle: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#8B8F9E',
+    color: palette.primaryText,
   },
   activityRow: {
     flexDirection: 'row',
@@ -2324,7 +2323,7 @@ const styles = StyleSheet.create({
   },
   activityChip: {
     borderRadius: radius.full,
-    backgroundColor: 'rgba(10,132,255,0.08)',
+    backgroundColor: palette.surfaceTint,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
@@ -2517,7 +2516,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     gap: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: palette.border,
   },
   weatherTopRow: {
     flexDirection: 'row',
@@ -2529,14 +2528,14 @@ const styles = StyleSheet.create({
   },
   weatherMetaLabel: {
     fontSize: 11,
-    color: 'rgba(255,255,255,0.7)',
+    color: palette.secondaryText,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   weatherLocation: {
     fontSize: 18,
     fontWeight: '600',
-    color: 'white',
+    color: palette.primaryText,
   },
   weatherMetaRight: {
     alignItems: 'flex-end',
@@ -2545,7 +2544,7 @@ const styles = StyleSheet.create({
   weatherMetaValue: {
     fontSize: 12,
     fontWeight: '500',
-    color: 'white',
+    color: palette.secondaryText,
   },
   weatherContentRow: {
     flexDirection: 'row',
@@ -2558,12 +2557,12 @@ const styles = StyleSheet.create({
   weatherTemperatureLarge: {
     fontSize: 36,
     fontWeight: '700',
-    color: 'white',
+    color: palette.primaryText,
     letterSpacing: -1,
   },
   weatherSummary: {
     fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
+    color: palette.secondaryText,
     letterSpacing: 0.2,
   },
   weatherIconLarge: {
@@ -2575,7 +2574,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: palette.surfaceTint,
     borderRadius: radius.full,
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -2587,19 +2586,19 @@ const styles = StyleSheet.create({
   },
   weatherMetricLabel: {
     fontSize: 9,
-    color: 'rgba(255,255,255,0.7)',
+    color: palette.secondaryText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   weatherMetricValue: {
     fontSize: 12,
     fontWeight: '600',
-    color: 'white',
+    color: palette.primaryText,
   },
   weatherMetricDivider: {
     width: 1,
     height: 16,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: palette.border,
   },
   scheduleCard: {
     flex: 1,
@@ -2692,22 +2691,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.06)',
-    shadowColor: 'rgba(15,22,38,0.08)',
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    borderColor: palette.border,
   },
   desktopCardVisible: {
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.06)',
-    shadowColor: 'rgba(15,22,38,0.08)',
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    borderColor: palette.border,
   },
   sectionHeader: {
     flexDirection: 'row',

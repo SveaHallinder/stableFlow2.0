@@ -45,37 +45,38 @@ export function StableSwitcher({
     <View style={[styles.wrap, variant === 'inline' && styles.wrapInline, style]}>
       <View style={styles.headerRow}>
         <Text style={styles.label}>Stall</Text>
+        <ScrollView
+          horizontal
+          style={styles.chipScroll}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.chipRow}
+        >
+          {stablesToShow.map((stable) => {
+            const active = stable.id === currentStableId;
+            return (
+              <TouchableOpacity
+                key={stable.id}
+                style={[styles.chip, active && styles.chipActive]}
+                disabled={disabled}
+                onPress={() => { if (!disabled) actions.setCurrentStable(stable.id); }}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={`Byt till ${stable.name}`}
+                accessibilityState={{ selected: active, disabled }}
+              >
+                <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                  {stable.name}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
         {showAccess ? (
           <View style={styles.accessPill}>
             <Text style={styles.accessPillText}>{rolePillLabel}</Text>
           </View>
         ) : null}
       </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chipRow}
-      >
-        {stablesToShow.map((stable) => {
-          const active = stable.id === currentStableId;
-          return (
-            <TouchableOpacity
-              key={stable.id}
-              style={[styles.chip, active && styles.chipActive]}
-              disabled={disabled}
-              onPress={() => { if (!disabled) actions.setCurrentStable(stable.id); }}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel={`Byt till ${stable.name}`}
-              accessibilityState={{ selected: active, disabled }}
-            >
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                {stable.name}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
       {showLocation && currentStable?.location ? (
         <Text style={styles.location}>{currentStable.location}</Text>
       ) : null}
@@ -88,7 +89,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 4,
     paddingBottom: 8,
-    gap: 6,
+    gap: 4,
   },
   wrapInline: {
     paddingHorizontal: 0,
@@ -98,6 +99,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   label: {
     fontSize: 13,
@@ -109,17 +111,23 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingRight: 8,
   },
+  chipScroll: {
+    flex: 1,
+    minWidth: 0,
+  },
   chip: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    minHeight: 44,
+    justifyContent: 'center',
     borderRadius: radius.full,
     backgroundColor: palette.surfaceTint,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
   },
   chipActive: {
-    backgroundColor: 'rgba(62,155,95,0.12)',
-    borderColor: 'rgba(62,155,95,0.32)',
+    backgroundColor: palette.surfaceTint,
+    borderColor: '#C8D9C7',
   },
   chipText: {
     fontSize: 13,

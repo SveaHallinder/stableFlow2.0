@@ -1,7 +1,9 @@
 # StableFlow 2.0 — Roadmap till färdig produkt
 
-> Genererad 2026-06-13 från en full plattformsaudit (11 agenter, hela kodbasen läst per subsystem).
-> Status idag: **visuellt färdig, funktionsbred MVP — ~57% mot kommersiell launch.**
+> Status 2026-10-10: **pilotkandidat, ännu inte slutaccepterad**. Produktcommit `b0e62122760fa70415a15e99fb9c4517867d25b7` är pushad med grön [push-CI](https://github.com/SveaHallinder/stableFlow2.0/actions/runs/38039440209) och [PR-CI](https://github.com/SveaHallinder/stableFlow2.0/actions/runs/38039441639): 786 kodprov, 112 offline UI-prov samt lint, typkontroll och webbbygge. Idag, Hästar och Schema har tydligare innehåll och gemensam navigation på mobil och dator.
+> [Aktuell nulägesmatris och QA](docs/checkpoints/2026-10-10-release/README.md) skiljer verifierad kod, installerad backend och återstående slutprov. Det uttryckligen godkända paketet för vårdpåminnelser, framtida passserier, privata bilder och säker kontoradering är integrerat och installerat i befintligt Supabase-projekt. Sex migrationer, två serverfunktioner och påminnelsejobbet är kvitterade. Jobbets första körning lyckades utan planer eller utskick; detta bekräftar inte telefonleverans.
+> Verklig inbjudnings-/återställningskedja, fysisk iPhone-inloggning och push återstår att slutprova. Extern publicering **väntar enligt användarens beslut**.
+> Resten av detta dokument är historiskt auditunderlag från 2026-06-13. Procentsiffror, checklistor och kvar-text nedan är inte aktuell releasestatus.
 
 ## Produktvision (målet)
 En multi-tenant SaaS (iOS/Android/Web) för stallhantering i Sverige/EU. En stallägare kan
@@ -13,7 +15,7 @@ ridpass + ridloggar, vårdhändelser (hovslagare/veterinär) med påminnelser. P
 socialt flöde med grupp-privacy & moderering, realtidschatt, viktiga-alerts med push,
 sök, och full kontohantering under GDPR. Säljs som prenumeration till stall & ridskolor.
 
-## Var vi står (completeness per subsystem)
+## Historiskt auditresultat 2026-06-13 (completeness per subsystem)
 | % | Subsystem |
 |---|---|
 | 68 | Today / "Idag"-dashboard |

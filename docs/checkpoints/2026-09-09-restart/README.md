@@ -1,5 +1,8 @@
 # Återuppta efter omstart — 2026-09-09
 
+Nyare status och QA: [pilotkontroll 2026-10-05](../2026-10-05-pilot/README.md).
+Texten nedan beskriver läget den 9 september, före installationen av databasskyddet.
+
 Gren: `balanced-mvp-1.1.0`. Målet är en användbar StableFlow-app för höststart.
 Den här Git-sparningen innehåller hela arbetskopians förbättringar, även ändringar
 som fanns före granskningen. Ingen ny dependency. Frontend är inte publicerad.
