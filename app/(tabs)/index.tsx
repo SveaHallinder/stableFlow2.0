@@ -3,6 +3,7 @@ import React from 'react';
 import {
   KeyboardAvoidingView,
   ActivityIndicator,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -1390,21 +1391,40 @@ export default function OverviewScreen() {
 }
 
 function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
-  const { data: weather, status } = useWeather(stableLocation);
+  const { data: weather, status, error } = useWeather(stableLocation);
+  const symbol = weather?.symbol;
+  const icon = !weather ? 'cloud-off'
+    : symbol === 1 || symbol === 2 ? 'sun'
+      : symbol === 7 ? 'wind'
+        : symbol === 11 || symbol === 21 ? 'cloud-lightning'
+          : symbol && ((symbol >= 12 && symbol <= 17) || symbol >= 22) ? 'cloud-snow'
+            : symbol && symbol >= 8 ? 'cloud-rain' : 'cloud';
   return (
+    <TouchableOpacity
+      disabled={!weather}
+      accessibilityRole={weather ? 'link' : undefined}
+      accessibilityLabel={weather ? `Prognos för ${weather.location}: cirka ${weather.temperature} grader, ${weather.summary}. Kommande 24 timmar högst ${weather.high} och lägst ${weather.low} grader. Källa SMHI, uppdaterad ${weather.updatedAt}, avrundade värden. Öppna SMHI.` : undefined}
+      activeOpacity={0.85}
+      onPress={() => { void Linking.openURL('https://www.smhi.se/vader').catch(() => console.warn('[weather] Could not open SMHI.')); }}
+    >
     <LinearGradient colors={theme.gradients.weather} style={styles.weatherTile}>
       <View>
         <Text numberOfLines={1} style={styles.weatherTileLocation}>{weather?.location ?? stableLocation ?? 'Väder'}</Text>
-        <Text style={styles.weatherTileTemperature}>{weather ? `${weather.temperature}°` : '—'}</Text>
+        <Text style={styles.weatherTileTemperature}>{weather ? '≈' : ''}{weather ? `${weather.temperature}°` : '—'}</Text>
       </View>
       <View style={styles.weatherTileIcon}>
-        {status === 'loading' ? <ActivityIndicator size="small" color="#FFFFFF" /> : <CloudSun />}
+        {status === 'loading' ? <ActivityIndicator size="small" color="#FFFFFF" />
+          : symbol === 3 || symbol === 4 ? <CloudSun /> : <Feather name={icon} size={28} color="#FFFFFF" />}
       </View>
       <View>
-        <Text numberOfLines={2} style={styles.weatherTileCaption}>{weather?.summary ?? (status === 'loading' ? 'Hämtar väder' : 'Ej tillgängligt')}</Text>
-        {weather ? <Text style={styles.weatherTileCaption}>H:{weather.high}° L:{weather.low}°</Text> : null}
+        <Text numberOfLines={2} style={styles.weatherTileCaption}>{weather?.summary ?? (status === 'loading' ? 'Hämtar väder' : error ?? 'Ej tillgängligt')}</Text>
+        {weather ? <>
+          <Text style={styles.weatherTileSource}>24h H:{weather.high}° L:{weather.low}°</Text>
+          <Text style={styles.weatherTileSource}>SMHI · {weather.updatedAt}</Text>
+        </> : null}
       </View>
     </LinearGradient>
+    </TouchableOpacity>
   );
 }
 
@@ -1692,6 +1712,7 @@ const styles = StyleSheet.create({
   weatherTileLocation: { fontFamily: theme.fonts.medium, fontSize: 12, lineHeight: 15, color: '#FFFFFF', maxWidth: 80 },
   weatherTileTemperature: { fontFamily: theme.fonts.semibold, fontSize: 17, lineHeight: 22, color: '#FFFFFF' },
   weatherTileCaption: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 15, color: '#FFFFFF' },
+  weatherTileSource: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: '#FFFFFF' },
   weatherTileIcon: { position: 'absolute', right: 12, top: 36, width: 30, height: 30 },
   background: {
     flex: 1,

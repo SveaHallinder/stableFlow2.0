@@ -63,6 +63,7 @@ export default {
     '**/pilot-member-layout.spec.mjs',
     '**/stable-usability.spec.mjs',
     '**/stable-invite-list.spec.mjs',
+    '**/weather-quality.spec.mjs',
   ],
   use: { ...config.use, proxy, serviceWorkers: 'block' },
   projects: config.projects.map(project => ({

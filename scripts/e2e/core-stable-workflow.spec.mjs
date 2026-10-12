@@ -22,6 +22,12 @@ test.beforeEach(async ({ context, page, baseURL }) => {
   await context.route('**/*', route => {
     const request = route.request();
     const url = new URL(request.url());
+    // Weather is optional and answered locally; never contact SMHI from this offline workflow.
+    if (request.method() === 'GET' && url.hostname === 'opendata-download-metfcst.smhi.se'
+      && url.pathname.startsWith('/api/category/snow1g/version/1/geotype/point/')) {
+      return route.fulfill({ status: 503, contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' }, body: '{}' });
+    }
     if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
       || /\/(auth|rest|functions|storage|realtime)\/v1(?:\/|$)/.test(url.pathname)) {
       attempts.push({ method: request.method(), path: url.pathname });
