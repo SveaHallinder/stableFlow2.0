@@ -8,6 +8,8 @@ import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/cha
 import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
+import { fetchAllAssignments, mapSeasonAssignment } from '@/lib/seasonSchedule';
+import { readDemoSchedule, recordDemoSeasonUpdate } from '@/lib/seasonScheduleDemo';
 import { isFutureOpenSeriesAssignment, updateRecurringSeries, validateRecurringSeriesEdit,
   type RecurringSeriesEdit, type RecurringSeriesResult } from '@/lib/recurringSeries';
 import { supabase } from '@/lib/supabase';
@@ -347,6 +349,10 @@ export type AssignmentAssignedVia = 'default' | 'manual';
 export type Assignment = {
   id: string;
   seriesId?: string;
+  templateId?: string;
+  originalDate?: string;
+  isScheduleOverride?: boolean;
+  updatedAt?: string;
   date: string; // ISO date string e.g. 2025-03-10
   stableId: string;
   label: string;
@@ -1292,6 +1298,7 @@ type AppDataContextValue = {
     createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
     setCurrentStable: (stableId: string) => void;
     refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
+    syncSeasonAssignments: (demoAssignments?: Assignment[], hideTemplateIds?: string[]) => Promise<ActionResult>;
     setOnboardingDismissed: (dismissed: boolean) => ActionResult<UserProfile>;
     updateProfile: (input: UpdateProfileInput) => Promise<ActionResult<UserProfile>>;
     upsertFarm: (input: UpsertFarmInput, options?: PersistOptions) => Promise<ActionResult<Farm>>;
@@ -3261,7 +3268,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
   const persistAssignmentUpdate = React.useCallback(
     async (assignmentId: string, updates: Partial<Assignment>, overrides?: Record<string, unknown>, reportFailure = true) => {
-      if (isQaDemoMode) return { error: null };
+      if (isQaDemoMode) {
+        if (stateRef.current.assignments.some(row => row.id === assignmentId && row.templateId)) {
+          recordDemoSeasonUpdate({ userId: stateRef.current.currentUserId, stableId: stateRef.current.currentStableId }, assignmentId, updates);
+        }
+        return { error: null };
+      }
       const writeKey = `assignment:${assignmentId}`;
       if (pendingDataWrites.current.has(writeKey)) {
         return { error: new Error('Passet sparas redan.') };
@@ -3304,8 +3316,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
   );
 
   const persistAssignmentClaim = React.useCallback(
-    async (assignmentId: string, updates: Partial<Assignment>) => {
-      if (isQaDemoMode) return { claimed: true, error: null };
+    async (assignmentId: string, updates: Partial<Assignment>): Promise<{ claimed: boolean; error: unknown; assignment?: Assignment }> => {
+      const existing = stateRef.current.assignments.find(row => row.id === assignmentId);
+      if (isQaDemoMode) {
+        const fresh = existing?.templateId ? recordDemoSeasonUpdate({ userId: stateRef.current.currentUserId,
+          stableId: existing.stableId }, assignmentId, updates) : undefined;
+        return { claimed: true, error: null, ...(fresh ? { assignment: fresh } : {}) };
+      }
       if (!user) {
         const error = new Error('Missing session');
         reportPersistError('[assignment claim] Session saknas', error);
@@ -3318,18 +3335,26 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         .eq('id', assignmentId)
         .eq('status', 'open')
         .is('assignee_id', null)
-        .select('id');
+        .select(existing?.templateId ? '*' : 'id');
       if (error) {
         reportPersistError('[assignment claim] Kunde inte ta pass', error);
       }
-      return { claimed: Boolean(data?.length), error };
+      const receipt = existing?.templateId && data?.find(row => row.id === existing.id
+        && row.stable_id === existing.stableId && row.template_id === existing.templateId && row.original_date === existing.originalDate
+        && row.status === 'assigned' && row.assignee_id === user.id && row.is_schedule_override === true);
+      return { claimed: existing?.templateId ? Boolean(receipt) : Boolean(data?.length), error,
+        ...(receipt ? { assignment: mapSeasonAssignment(receipt) } : {}) };
     },
     [user, reportPersistError],
   );
 
   const persistOwnAssignmentUpdate = React.useCallback(
-    async (assignment: Assignment, updates: Partial<Assignment>): Promise<ActionResult> => {
-      if (isQaDemoMode) return { success: true };
+    async (assignment: Assignment, updates: Partial<Assignment>): Promise<ActionResult<Assignment>> => {
+      if (isQaDemoMode) {
+        const fresh = assignment.templateId ? recordDemoSeasonUpdate({ userId: stateRef.current.currentUserId,
+          stableId: assignment.stableId }, assignment.id, updates) : undefined;
+        return { success: true, ...(fresh ? { data: fresh } : {}) };
+      }
       const writeKey = `assignment:${assignment.id}`;
       if (pendingDataWrites.current.has(writeKey)) {
         return { success: false, reason: 'Passet sparas redan. Vänta ett ögonblick.' };
@@ -3346,11 +3371,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           .eq('stable_id', assignment.stableId)
           .eq('status', 'assigned')
           .eq('assignee_id', user.id)
-          .select('id')
+          .select(assignment.templateId ? '*' : 'id')
           .abortSignal(controller.signal);
         if (error) throw error;
         if (!data?.some((row) => row.id === assignment.id)) {
           return { success: false, reason: 'Passet har ändrats av någon annan. Uppdatera schemat och försök igen.' };
+        }
+        if (assignment.templateId) {
+          const receipt = data?.find(row => row.id === assignment.id && row.stable_id === assignment.stableId
+            && row.template_id === assignment.templateId && row.original_date === assignment.originalDate
+            && row.status === updates.status && (row.assignee_id ?? null) === (updates.status === 'open' ? null : user.id)
+            && row.is_schedule_override === true && typeof row.updated_at === 'string');
+          if (!receipt) return { success: false, reason: 'Passändringen kunde inte verifieras. Uppdatera schemat.' };
+          return { success: true, data: mapSeasonAssignment(receipt) };
         }
         return { success: true };
       } catch (error) {
@@ -5005,7 +5038,11 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       try {
         if (isQaDemoMode) {
           if (requestId === refreshRequestId.current) {
-            dispatch({ type: 'STATE_HYDRATE', payload: createQaDemoState() });
+            const seed = createQaDemoState();
+            const demo = readDemoSchedule({ userId: seed.currentUserId, stableId: seed.currentStableId });
+            const active = demo.assignments.filter(row => demo.templates.some(template => template.id === row.templateId
+              && demo.periods.some(period => period.id === template.periodId && period.status === 'ready')));
+            dispatch({ type: 'STATE_HYDRATE', payload: { ...seed, assignments: [...seed.assignments, ...active] } });
             setLastRefreshedAt(new Date().toISOString());
             setRefreshError(null);
           }
@@ -5211,7 +5248,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           supabase.from('farms').select('*'),
           supabase.from('horses').select('*').in('stable_id', stableIds),
           fetchPaddocks(stableIds),
-          supabase.from('assignments').select('*').in('stable_id', stableIds),
+          fetchAllAssignments(supabase, stableIds),
           supabase.from('assignment_history').select('*').in('stable_id', stableIds),
           supabase.from('day_events').select('*').in('stable_id', stableIds),
           supabase.from('arena_bookings').select('*').in('stable_id', stableIds),
@@ -5666,22 +5703,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           image: row.image_url ? { uri: row.image_url } : undefined,
         }));
 
-        const formattedAssignments: Assignment[] = assignmentRows.map((row) => ({
-          id: row.id,
-          seriesId: row.series_id ?? undefined,
-          stableId: row.stable_id,
-          date: row.date,
-          label: row.label,
-          slot: row.slot,
-          icon: row.icon,
-          time: row.time,
-          note: row.note ?? undefined,
-          status: row.status,
-          assigneeId: row.assignee_id ?? undefined,
-          completedAt: row.completed_at ?? undefined,
-          assignedVia: row.assigned_via ?? undefined,
-          declinedByUserIds: row.declined_by_user_ids ?? [],
-        }));
+        const formattedAssignments: Assignment[] = assignmentRows.map(mapSeasonAssignment);
 
         const formattedAssignmentHistory = assignmentHistoryRows
           .map((row) => ({
@@ -6114,7 +6136,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     const users = Object.values(state.users).sort((a, b) => a.id.localeCompare(b.id));
 
     state.assignments.forEach((assignment) => {
-      if (assignment.stableId !== current.currentStableId || assignment.status === 'completed' || assignment.date < todayIso) return;
+      if (assignment.templateId || assignment.stableId !== current.currentStableId || assignment.status === 'completed' || assignment.date < todayIso) return;
       if (pendingDataWrites.current.has(`assignment:${assignment.id}`)) return;
       const weekday = getWeekdayIndex(assignment.date);
       const candidates = users.filter((user) =>
@@ -6251,6 +6273,41 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     };
   }, [state]);
 
+  const syncSeasonAssignments = React.useCallback(async (demoAssignments?: Assignment[], hideTemplateIds: string[] = []): Promise<ActionResult> => {
+    const current = stateRef.current;
+    const syncScope = recurringScopeRef.current;
+    const stableId = syncScope?.stableId ?? current.currentStableId;
+    const viewerId = syncScope?.viewerId ?? current.currentUserId;
+    if (!stableId || !viewerId) return { success: false, reason: 'Välj ett stall först.' };
+    // This read follows an acknowledged schedule write. Invalidate older full
+    // refreshes and reject reads overtaken by another write or newer sync.
+    const writeVersion = ++dataWriteVersion.current;
+    const hadPendingWrites = pendingDataWrites.current.size > 0;
+    // An acknowledged definition edit is known to be unpublished even if the
+    // subsequent read fails. Hide those occurrences before requesting the server.
+    if (hideTemplateIds.length) dispatch({ type: 'STATE_HYDRATE', payload: {
+      assignments: current.assignments.filter(row => row.stableId !== stableId || !row.templateId || !hideTemplateIds.includes(row.templateId)),
+    } });
+    // Production always re-reads RLS-filtered server rows. The existing offline demo
+    // uses local fixtures and never sends its synthetic assignments to Supabase.
+    const result = isQaDemoMode
+      ? { data: demoAssignments ?? [], error: null }
+      : await fetchAllAssignments(supabase, [stableId]);
+    if (recurringScopeRef.current !== syncScope || stateRef.current.currentStableId !== stableId || stateRef.current.currentUserId !== viewerId) {
+      return { success: false, reason: 'Stallet eller kontot ändrades. Öppna schemat igen.' };
+    }
+    if (writeVersion !== dataWriteVersion.current || hadPendingWrites || pendingDataWrites.current.size) {
+      return { success: false, reason: 'Passlistan ändrades medan den laddades. Uppdatera schemat för senaste läget.' };
+    }
+    if (result.error || !result.data) return { success: false, reason: 'Passen sparades, men kunde inte laddas. Uppdatera schemat.' };
+    const fresh = isQaDemoMode ? result.data as Assignment[] : result.data.map(mapSeasonAssignment);
+    if (fresh.some(row => row.stableId !== stableId)) return { success: false, reason: 'Passlistan kunde inte verifieras.' };
+    const previous = stateRef.current.assignments;
+    const keep = previous.filter(row => row.stableId !== stableId || (isQaDemoMode && !row.templateId));
+    dispatch({ type: 'STATE_HYDRATE', payload: { assignments: [...keep, ...fresh] } });
+    return { success: true };
+  }, []);
+
   const logNextAssignment = React.useCallback((): ActionResult<Assignment> => {
     const current = stateRef.current;
     const assignment = findNextAssignedAssignment(current, current.currentUserId);
@@ -6347,13 +6404,13 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
         dispatch({
           type: 'ASSIGNMENT_UPDATE',
-          payload: { id: assignment.id, updates },
+          payload: { id: assignment.id, updates: persisted.assignment ?? updates },
         });
         void persistAssignmentHistory(updated, 'assigned');
 
         return {
           success: true,
-          data: updated,
+          data: persisted.assignment ?? updated,
         };
       } finally {
         pendingAssignmentClaimIdsRef.current.delete(assignmentId);
@@ -6402,7 +6459,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'ASSIGNMENT_UPDATE',
         payload: {
           id: assignment.id,
-          updates: {
+          updates: saved.data ?? {
             status: 'open',
             assigneeId: undefined,
             assignedVia: undefined,
@@ -6422,7 +6479,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       return {
         success: true,
-        data: updated,
+        data: saved.data ?? updated,
       };
     },
     [ensurePermission, persistAssignmentHistory, persistOwnAssignmentUpdate],
@@ -6453,7 +6510,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         type: 'ASSIGNMENT_UPDATE',
         payload: {
           id: assignment.id,
-          updates: {
+          updates: saved.data ?? {
             status: 'completed',
             completedAt,
           },
@@ -6469,7 +6526,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
 
       return {
         success: true,
-        data: updated,
+        data: saved.data ?? updated,
       };
     },
     [ensurePermission, persistAssignmentHistory, persistOwnAssignmentUpdate],
@@ -9603,6 +9660,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         createPrivateConversation,
         setCurrentStable,
         refreshData,
+        syncSeasonAssignments,
         setOnboardingDismissed,
         updateProfile,
         upsertFarm,
@@ -9686,6 +9744,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       createPrivateConversation,
       setCurrentStable,
       refreshData,
+      syncSeasonAssignments,
       setOnboardingDismissed,
       updateProfile,
       upsertFarm,

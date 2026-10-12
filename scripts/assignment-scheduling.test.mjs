@@ -128,7 +128,7 @@ test('calendar synthesizes the current week and claim is server-conditional befo
   assert.match(profile, /await actions\.claimAssignment\(assignmentId\)/);
   assert.match(context, /\.eq\('status', 'open'\)/);
   assert.match(context, /\.is\('assignee_id', null\)/);
-  assert.match(context, /claimed: Boolean\(data\?\.length\)/);
+  assert.match(context, /claimed: existing\?\.templateId \? Boolean\(receipt\) : Boolean\(data\?\.length\)/);
   const claimPersistStart = context.indexOf('const persistAssignmentClaim =');
   const claimPersistEnd = context.indexOf('const persistOwnAssignmentUpdate =', claimPersistStart);
   assert.doesNotMatch(context.slice(claimPersistStart, claimPersistEnd), /\.maybeSingle\(\)/);

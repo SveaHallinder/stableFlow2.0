@@ -120,6 +120,7 @@ type RegularSlotIcon = 'sun' | 'clock' | 'moon';
 
 type RegularSlot = {
   id: string;
+  templateId?: string;
   label: string;
   icon: RegularSlotIcon;
   color: string;
@@ -825,6 +826,7 @@ export default function CalendarScreen() {
         const timeLabel = endTime ? `${assignment.time}–${endTime}` : assignment.time;
         return {
           id: assignment.id,
+          templateId: assignment.templateId,
           label: assignment.label,
           icon: slotIconMap[assignment.slot],
           color: slotColorMap[assignment.slot],
@@ -836,7 +838,9 @@ export default function CalendarScreen() {
             : undefined,
           isMine,
           isDefault: isMine
-            ? isDefaultForUser(defaultPasses, weekdayIndex, assignment.slot)
+            ? assignment.templateId
+              ? assignment.assignedVia === 'default'
+              : isDefaultForUser(defaultPasses, weekdayIndex, assignment.slot)
             : false,
           assignedVia: assignment.assignedVia,
           time: timeLabel,
@@ -1081,6 +1085,7 @@ export default function CalendarScreen() {
         return;
       }
 
+      if (assignment.templateId) { router.push({ pathname: '/season-schedule', params: { assignmentId } }); return; }
       if (assignment.seriesId) { setSeriesEditor({ initialSeriesId: assignment.seriesId }); return; }
       setAssignmentModal({
         visible: true,
@@ -1094,7 +1099,7 @@ export default function CalendarScreen() {
         assignToMe: assignment.assigneeId === currentUserId && assignment.status === 'assigned',
       });
     },
-    [assignments, currentUserId, toast],
+    [assignments, currentUserId, router, toast],
   );
 
   const handleRegisterRide = React.useCallback(() => {
@@ -1461,6 +1466,18 @@ export default function CalendarScreen() {
           <DataSyncStatus />
           {noticeSaveError && !dayEventModalVisible && !arenaStatusModalVisible && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
           {noticeSaving && !dayEventModalVisible && !arenaStatusModalVisible && <Text style={styles.modalHint}>Sparar…</Text>}
+          {activeFilter === 'Pass' ? (
+            <TouchableOpacity
+              style={[styles.recurringButton, { alignSelf: 'flex-start' }]}
+              onPress={() => router.push('/season-schedule')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Fasta pass"
+            >
+              <Feather name="calendar" size={14} color={palette.primary} />
+              <Text style={styles.recurringButtonText}>Fasta pass</Text>
+            </TouchableOpacity>
+          ) : null}
           <Card tone="muted" style={[styles.filterRow, isDesktopWeb && styles.filterRowDesktop]}>
             {filters.slice(0, 3).map((label) => {
               const active = label === activeFilter;
@@ -1747,6 +1764,7 @@ export default function CalendarScreen() {
                       : undefined
                   }
                   onEditAssignment={canManageAssignments ? handleEditAssignment : undefined}
+                  onOpenSeasonAssignment={handleEditAssignment}
                   onDeclineAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'decline') : undefined}
                   onCompleteAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'complete') : undefined}
                 />
@@ -2933,6 +2951,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   onClaimOpenAssignment,
   onCreateAssignment,
   onEditAssignment,
+  onOpenSeasonAssignment,
   onDeclineAssignment,
   onCompleteAssignment,
 }: {
@@ -2952,6 +2971,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   onClaimOpenAssignment?: (assignmentId?: string, fallback?: { date: string; slot?: AssignmentSlot }) => void;
   onCreateAssignment?: (defaults: { date: string; slot?: AssignmentSlot }) => void;
   onEditAssignment?: (assignmentId: string) => void;
+  onOpenSeasonAssignment?: (assignmentId: string) => void;
   onDeclineAssignment?: (assignmentId: string) => void;
   onCompleteAssignment?: (assignmentId: string) => void;
 }) {
@@ -3039,6 +3059,8 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isClaiming={claimingAssignmentIds.has(slot.id)}
             isSaving={savingAssignmentIds.has(slot.id)}
             saveError={assignmentSaveErrors[slot.id]}
+            onOpen={slot.templateId && onOpenSeasonAssignment ? () => onOpenSeasonAssignment(slot.id) : undefined}
+            openLabel={`Öppna ${slot.label} ${isoDate}`}
             onTake={
               slot.status === 'open' && onClaimOpenAssignment
                 ? () =>
@@ -3095,6 +3117,8 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isSaving,
   saveError,
   onTake,
+  onOpen,
+  openLabel,
   onManage,
   onDecline,
   onComplete,
@@ -3114,6 +3138,8 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   isSaving: boolean;
   saveError?: string;
   onTake?: () => void;
+  onOpen?: () => void;
+  openLabel?: string;
   onManage?: () => void;
   onDecline?: () => void;
   onComplete?: () => void;
@@ -3144,7 +3170,12 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
         <View style={styles.scheduleBody}>
           <View style={styles.scheduleHeaderRow}>
             <View style={styles.scheduleTitleGroup}>
-              <Text style={styles.scheduleLabel}>{label}</Text>
+              {onOpen ? (
+                <TouchableOpacity style={styles.scheduleTitleButton} onPress={onOpen} disabled={isSaving || isClaiming} accessibilityRole="button" accessibilityLabel={openLabel} activeOpacity={0.85}>
+                  <Text style={styles.scheduleLabel}>{label}</Text>
+                  <Feather name="chevron-right" size={16} color={palette.primary} />
+                </TouchableOpacity>
+              ) : <Text style={styles.scheduleLabel}>{label}</Text>}
               {time ? <Text style={styles.scheduleTime}>{time}</Text> : null}
               {assignedTo ? (
                 <View style={styles.scheduleAssigneeRow}>
@@ -4269,6 +4300,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
     alignItems: 'flex-end',
     gap: 4,
+  },
+  scheduleTitleButton: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
   },
   scheduleActionColumn: {
     alignItems: 'flex-end',

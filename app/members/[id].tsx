@@ -366,6 +366,15 @@ export default function MemberProfileScreen() {
   const defaultPassSection = (
     <Card tone="muted" style={styles.sectionCard}>
       <Text style={styles.sectionTitle}>Standardpass</Text>
+      <Text style={styles.sectionHint}>De tre valen nedan gäller äldre pass. Periodens egna pass hanteras i Fasta pass.</Text>
+      {(isSelf && currentMembership) || canManageMembers ? (
+        <TouchableOpacity style={[styles.adminButton, { minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }]} onPress={() => {
+          if (stableId !== state.currentStableId) actions.setCurrentStable(stableId);
+          router.push({ pathname: '/season-schedule', params: { memberId: member.id } });
+        }} disabled={memberSaving} accessibilityRole="button" accessibilityLabel={`Fasta veckopass för ${member.name}`}>
+          <Text style={styles.adminButtonText}>Fasta veckopass</Text>
+        </TouchableOpacity>
+      ) : null}
       {member.defaultPasses.length || canManageMembers ? (
         <View style={styles.defaultPassGrid}>
           {DEFAULT_SLOTS.map((slot) => (

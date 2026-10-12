@@ -360,7 +360,7 @@ export default function ProfileScreen() {
     ) : null;
 
   const defaultPassSubtitle = hasStable
-    ? 'Välj dagar du oftast kan ta pass. Dina val används för att fördela befintliga pass i stallets schema.'
+    ? 'De tre valen nedan gäller äldre pass. Säsongens egna pass och fasta veckodagar väljer du i Fasta pass.'
     : 'Välj dagar du brukar kunna ta pass. Sparas lokalt tills du går med i ett stall.';
 
   const defaultPassSection = (
@@ -375,6 +375,11 @@ export default function ProfileScreen() {
         <View style={styles.defaultPassHeader}>
           <Text style={styles.defaultPassTitle}>Standardpass</Text>
           <Text style={styles.defaultPassSubtitle}>{defaultPassSubtitle}</Text>
+          {hasStable ? (
+            <TouchableOpacity style={styles.adminAction} onPress={() => router.push('/season-schedule')} accessibilityRole="button" accessibilityLabel="Mina fasta veckopass">
+              <Text style={styles.adminActionText}>Mina fasta veckopass</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {defaultPassError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{defaultPassError}</Text>}

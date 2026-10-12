@@ -20,6 +20,14 @@ const reducerSource=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.
 const effect=provider.body.statements.find(n=>ts.isExpressionStatement(n)&&n.getText(ast).includes(".channel('messages-realtime')")).expression.arguments[0].getText(ast);
 const compile=async code=>(await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText).toString('base64')));
 const helper=await compile(await readFile(join(sourceRoot,'lib/chatReadReceipts.ts'),'utf8'));
+const scheduleSource=await readFile(join(sourceRoot,'lib/seasonSchedule.ts'),'utf8');
+const scheduleAst=ts.createSourceFile('seasonSchedule.ts',scheduleSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+const scheduleDeclarations=scheduleAst.statements.filter(node=>ts.isFunctionDeclaration(node)
+ && ['fetchAllAssignments','mapSeasonAssignment'].includes(node.name?.text));
+const uuidDeclaration=scheduleAst.statements.filter(ts.isVariableStatement)
+ .find(node=>node.declarationList.declarations.some(value=>value.name.getText(scheduleAst)==='uuid'));
+const scheduleHelpers=await compile([uuidDeclaration.getText(scheduleAst),...scheduleDeclarations.map(node=>node.getText(scheduleAst))].join('\n'));
+
 const uid=n=>`00000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
 const A=uid(101),B=uid(102),CHAT=uid(201),OTHER_CHAT=uid(202),M1=uid(301),M2=uid(302),M3=uid(303),OWN=uid(304),NULL=uid(305),UNKNOWN=uid(309);
 const messages=[{id:M1,conversationId:CHAT,authorId:B,text:'First',timestamp:'2026-10-07T12:00:00Z'}, {id:M2,conversationId:CHAT,authorId:B,text:'Latest',timestamp:'2026-10-07T12:05:00Z'}, {id:OWN,conversationId:CHAT,authorId:A,text:'Own',timestamp:'2026-10-07T12:01:00Z'}, {id:NULL,conversationId:CHAT,authorId:'',text:'Unknown author',timestamp:'2026-10-07T12:02:00Z'}];
@@ -183,7 +191,7 @@ test('SDK HTTP/storage exceptions log only feature and safe class/code, without 
 });
 async function loadFixture(){
  const f=await contextFixture();f.controls.loadMode=true;f.stateRef.current.currentStableId=uid(1);
- const deps={...f.dependencies,refreshRequestId:{current:0},setHydrating(){},setRefreshing(){},setRefreshError(){},setLastRefreshedAt(){},loadPendingOwnerStable:async()=>null,loadPendingJoinCode:async()=>null,loadDefaultPassDraft:async()=>[],fetchPaddocks:async()=>({data:[],error:null}),defaultPassesStableId:{current:''},autoAssignmentAttempts:{current:new Map()},showToast(){},POSTS_PAGE_SIZE:50,resolvePostsCursor:()=>null};
+ const deps={...f.dependencies,...scheduleHelpers,refreshRequestId:{current:0},setHydrating(){},setRefreshing(){},setRefreshError(){},setLastRefreshedAt(){},loadPendingOwnerStable:async()=>null,loadPendingJoinCode:async()=>null,loadDefaultPassDraft:async()=>[],fetchPaddocks:async()=>({data:[],error:null}),defaultPassesStableId:{current:''},autoAssignmentAttempts:{current:new Map()},showToast(){},POSTS_PAGE_SIZE:50,resolvePostsCursor:()=>null};
  const load=(await compile(`export default ({${Object.keys(deps).join(',')}})=>(${callback('loadAppData')});`)).default(deps);
  return {...f,load};
 }
