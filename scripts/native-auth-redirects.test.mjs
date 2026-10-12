@@ -62,3 +62,16 @@ test('web confirmation and reset redirects keep the HTTPS origin', async () => {
     assert.equal(redirect(path), `${origin}/${path}`);
   }
 });
+
+// Expo Go requests a signed manifest. A placeholder EAS ID makes the CLI wait
+// for an interactive login on every request instead of serving the app.
+test('Expo Go configuration never advertises a placeholder EAS project', () => {
+  const projectId = config.extra?.eas?.projectId;
+  if (projectId !== undefined) {
+    assert.match(projectId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  }
+  if (config.updates?.url?.startsWith('https://u.expo.dev/')) {
+    assert.ok(projectId, 'Expo Updates requires a configured EAS project');
+    assert.equal(config.updates.url, `https://u.expo.dev/${projectId}`);
+  }
+});
