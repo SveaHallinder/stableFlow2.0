@@ -2,14 +2,13 @@ import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
 import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
-import TabToday from '@/assets/images/figma/tab-today.svg';
-import TabTodayActive from '@/assets/images/figma/tab-today-active.svg';
+import { Feather } from '@expo/vector-icons';
 import TabCalendar from '@/assets/images/figma/tab-calendar.svg';
 import TabCalendarActive from '@/assets/images/figma/tab-calendar-active.svg';
-import TabFeed from '@/assets/images/figma/tab-feed.svg';
+import TabHome from '@/assets/images/figma/tab-feed.svg';
 import TabChat from '@/assets/images/figma/tab-chat.svg';
 import TabProfile from '@/assets/images/figma/tab-profile.svg';
-import TabsFeedActive from '@/assets/images/figma/tabs-feed.svg';
+import TabsHomeActive from '@/assets/images/figma/tabs-feed.svg';
 import TabsChatActive from '@/assets/images/figma/tabs-chat.svg';
 import TabsProfileActive from '@/assets/images/figma/tabs-profile.svg';
 import HorseIcon from '@/assets/images/figma/profile-horse.svg';
@@ -70,7 +69,9 @@ export default function TabLayout() {
         options={{
           title: 'Idag',
           tabBarAccessibilityLabel: 'Idag',
-          tabBarIcon: ({ focused }) => focused ? <TabTodayActive /> : <TabToday />,
+          tabBarIcon: ({ focused }) => focused ? (
+            <View style={styles.homeIconCrop}><View style={styles.homeIconSource}><TabsHomeActive /></View></View>
+          ) : <TabHome />,
         }}
       />
       <Tabs.Screen
@@ -94,9 +95,7 @@ export default function TabLayout() {
         options={{
           title: 'Feed',
           tabBarAccessibilityLabel: 'Feed',
-          tabBarIcon: ({ focused }) => focused ? (
-            <View style={styles.feedIconCrop}><View style={styles.feedIconSource}><TabsFeedActive /></View></View>
-          ) : <TabFeed />,
+          tabBarIcon: ({ color }) => <Feather name="file-text" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -185,8 +184,8 @@ const styles = StyleSheet.create({
   },
   horseIcon: { transform: [{ scale: 1.45 }] },
   // Preserve the original Figma exports and clip only the active icon slot.
-  feedIconCrop: { width: 24, height: 24, overflow: 'hidden' },
-  feedIconSource: { position: 'absolute', left: -179.87002563476562, top: -18 },
+  homeIconCrop: { width: 24, height: 24, overflow: 'hidden' },
+  homeIconSource: { position: 'absolute', left: -179.87002563476562, top: -18 },
   chatIconCrop: { width: 25, height: 25, overflow: 'hidden' },
   chatIconSource: { position: 'absolute', left: -257.0224304199219, top: -17.5 },
   profileIconCrop: { width: 21.539127349853516, height: 25, overflow: 'hidden' },
