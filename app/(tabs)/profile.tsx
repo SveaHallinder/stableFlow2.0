@@ -15,7 +15,7 @@ import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
-import { surfacePresets, systemPalette } from '@/design/system';
+import { surfacePresets } from '@/design/system';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card, HeaderIconButton, Pill } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
@@ -31,6 +31,9 @@ import type {
 } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { roleLabels } from '@/lib/roleLabels';
+import HorseIcon from '@/assets/images/figma/profile-horse.svg';
+import LocationIcon from '@/assets/images/figma/profile-location.svg';
+import PhoneIcon from '@/assets/images/figma/profile-phone.svg';
 
 const palette = theme.colors;
 const radii = theme.radii;
@@ -238,31 +241,21 @@ export default function ProfileScreen() {
           accessibilityLabel={`${currentUser.name} profilbild`}
         />
         <View style={styles.heroTextBlock}>
-          <Text style={styles.heroName}>{currentUser.name}</Text>
-          <Text style={styles.heroRole}>Stall: {stableLabel}</Text>
-          <DetailRow icon="user" text={`Roll: ${roleLabel}`} />
-          {accessLabel ? (
-            <DetailRow icon="shield" text={`Behörighet: ${accessLabel}`} />
-          ) : null}
+          <DetailRow icon="heart" text={currentUser.horses.join(', ') || 'Ingen häst kopplad ännu'} />
           <DetailRow icon="map-pin" text={currentUser.location} />
           <DetailRow icon="phone" text={currentUser.phone} />
         </View>
       </View>
-      <View style={styles.heroChips}>
-        {currentUser.horses.map((horse) => (
-          <View key={horse} style={styles.heroChip}>
-            <Feather name="heart" size={12} color={palette.primary} />
-            <Text style={styles.heroChipText}>{horse}</Text>
-          </View>
-        ))}
-      </View>
+      <Text style={styles.heroRole}>
+        {stableLabel} · {roleLabel}{accessLabel ? ` · ${accessLabel}` : ''}
+      </Text>
       <View style={styles.profileActionRow}>
-        <TouchableOpacity style={styles.primaryActionButton} onPress={scrollToDefaultPass}>
-          <Feather name="calendar" size={16} color={palette.inverseText} />
+        <TouchableOpacity style={styles.primaryActionButton} onPress={scrollToDefaultPass} accessibilityRole="button" activeOpacity={0.85}>
+          <Feather name="calendar" size={14} color={palette.primaryText} />
           <Text style={styles.primaryActionLabel}>Standardpass</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleOpenSettings}>
-          <Feather name="settings" size={16} color={palette.primary} />
+        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleOpenSettings} accessibilityRole="button" activeOpacity={0.85}>
+          <Feather name="settings" size={14} color={palette.primaryText} />
           <Text style={styles.secondaryActionLabel}>Kontoinställningar</Text>
         </TouchableOpacity>
       </View>
@@ -314,7 +307,7 @@ export default function ProfileScreen() {
           <View style={styles.sectionDot} />
           <Text style={styles.sectionCount}>{memberCount}</Text>
         </View>
-        <TouchableOpacity onPress={handleOpenMembers}>
+        <TouchableOpacity style={styles.sectionActionButton} onPress={handleOpenMembers} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Öppna medlemmar">
           <Text style={styles.sectionAction}>Öppna</Text>
         </TouchableOpacity>
       </View>
@@ -396,7 +389,7 @@ export default function ProfileScreen() {
                   return (
                     <TouchableOpacity
                       key={`${slot.value}-${day.value}`}
-                      style={{ width: isDesktopWeb ? '12%' : '23%' }}
+                      style={{ width: isDesktopWeb ? '12%' : '13%', minWidth: 44 }}
                       onPress={() => handleToggleDefaultPass(day.value, slot.value)}
                       disabled={defaultPassSaving || refreshing}
                       accessibilityRole="button"
@@ -433,7 +426,7 @@ export default function ProfileScreen() {
           <View style={styles.sectionDot} />
           <Text style={styles.sectionCount}>{upcomingAssignments.length}</Text>
         </View>
-        <TouchableOpacity onPress={() => router.push('/calendar?view=mine')}>
+        <TouchableOpacity style={styles.sectionActionButton} onPress={() => router.push('/calendar?view=mine')} activeOpacity={0.85} accessibilityRole="button">
           <Text style={styles.sectionAction}>Visa schema</Text>
         </TouchableOpacity>
       </View>
@@ -541,7 +534,11 @@ const DetailRow = React.memo(function DetailRow({ icon, text }: { icon: keyof ty
   }
   return (
     <View style={styles.detailRow}>
-      <Feather name={icon} size={14} color={palette.icon} />
+      <View style={styles.detailIcon}>
+        {icon === 'heart' ? <HorseIcon /> : icon === 'map-pin' ? <LocationIcon /> : icon === 'phone' ? (
+          <View style={styles.phoneIcon}><PhoneIcon /></View>
+        ) : <Feather name={icon} size={15} color={palette.primaryText} />}
+      </View>
       <Text style={styles.detailText}>{text}</Text>
     </View>
   );
@@ -646,10 +643,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 50,
-    gap: 28,
-    paddingTop: 12,
+    paddingHorizontal: 21,
+    paddingBottom: 120,
+    gap: 36,
+    paddingTop: 28,
   },
   scrollContentDesktop: {
     maxWidth: 1400,
@@ -666,11 +663,13 @@ const styles = StyleSheet.create({
   },
   loadingTitle: {
     fontSize: 18,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
   loadingSubtitle: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     textAlign: 'center',
   },
@@ -701,11 +700,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   profileHero: {
-    gap: 18,
-    paddingHorizontal: 22,
-    paddingVertical: 22,
-    borderRadius: radius.xl,
-    backgroundColor: surfacePresets.hero,
+    gap: 16,
+    paddingVertical: 6,
   },
   profileHeroDesktop: {
     paddingHorizontal: 24,
@@ -714,105 +710,101 @@ const styles = StyleSheet.create({
   profileHeroContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 10,
   },
   avatar: {
-    width: 72,
-    height: 72,
+    width: 75,
+    height: 75,
     borderRadius: radius.full,
   },
   heroTextBlock: {
     flex: 1,
-    gap: 6,
-  },
-  heroName: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: palette.primaryText,
+    gap: 5,
   },
   heroRole: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.secondaryText,
-    letterSpacing: 0.2,
-  },
-  heroChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  heroChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: surfacePresets.section,
-  },
-  heroChipText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: systemPalette.primary,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
+    color: palette.secondaryText,
   },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
+  },
+  detailIcon: {
+    width: 17,
+    alignItems: 'center',
+  },
+  phoneIcon: {
+    transform: [{ rotate: '180deg' }, { scaleY: -1 }],
   },
   detailText: {
-    fontSize: 14,
-    fontWeight: '500',
+    flexShrink: 1,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   profileActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginTop: 4,
+    flexWrap: 'wrap',
+    gap: 8,
   },
   primaryActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: palette.primary,
+    gap: 6,
+    minHeight: 44,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   primaryActionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.inverseText,
+    fontSize: 12,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   secondaryActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: surfacePresets.section,
+    gap: 6,
+    minHeight: 44,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   secondaryActionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.primary,
+    fontSize: 12,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   infoCard: {
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   infoTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   infoText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 18,
   },
@@ -823,6 +815,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   infoAction: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     backgroundColor: palette.primary,
     borderRadius: radius.full,
@@ -831,10 +825,13 @@ const styles = StyleSheet.create({
   },
   infoActionText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
   infoSecondaryAction: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     backgroundColor: surfacePresets.section,
     borderRadius: radius.full,
@@ -843,6 +840,7 @@ const styles = StyleSheet.create({
   },
   infoSecondaryActionText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primary,
   },
@@ -850,20 +848,25 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   adminTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   adminText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 18,
   },
   adminAction: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     backgroundColor: palette.primary,
     borderRadius: radius.full,
@@ -872,6 +875,7 @@ const styles = StyleSheet.create({
   },
   adminActionText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
@@ -879,11 +883,12 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   defaultPassCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     gap: 14,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   defaultPassCardHighlight: {
     borderWidth: 1,
@@ -898,12 +903,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   defaultPassTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   defaultPassSubtitle: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 17,
   },
@@ -915,15 +922,14 @@ const styles = StyleSheet.create({
   },
   defaultPassRowLabel: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
   },
   defaultPassRowChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
   },
   defaultPassChip: {
     width: '100%',
@@ -931,12 +937,13 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 10,
+    paddingHorizontal: 4,
     paddingVertical: 6,
   },
   defaultPassChipText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   defaultPassChipTextActive: {
@@ -959,8 +966,9 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: 18,
     paddingVertical: 16,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   assignmentHeader: {
     flexDirection: 'row',
@@ -973,12 +981,14 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   assignmentTitle: {
-    fontSize: 16,
+    fontSize: 15,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
   assignmentMeta: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   assignmentStatus: {
@@ -988,19 +998,24 @@ const styles = StyleSheet.create({
   },
   assignmentStatusText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     letterSpacing: 0.4,
   },
   assignmentAssignee: {
     fontSize: 13,
+    fontFamily: theme.fonts.medium,
     color: palette.secondaryText,
     fontWeight: '500',
   },
   assignmentNote: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.mutedText,
   },
   assignmentAction: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
@@ -1016,6 +1031,7 @@ const styles = StyleSheet.create({
   },
   assignmentActionLabel: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
@@ -1023,11 +1039,13 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   awayTitle: {
-    fontSize: 16,
+    fontSize: 17,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -1039,25 +1057,29 @@ const styles = StyleSheet.create({
   },
   awayRange: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
   awayNote: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   settingsCard: {
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   settingsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingVertical: 6,
+    minHeight: 44,
   },
   settingsRowLeft: {
     flexDirection: 'row',
@@ -1065,12 +1087,14 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   settingsRowText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   settingsHint: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 18,
   },
@@ -1078,11 +1102,13 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingHorizontal: 20,
     paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   membersHint: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 18,
   },
@@ -1097,8 +1123,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: '500',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   sectionDot: {
@@ -1109,14 +1136,22 @@ const styles = StyleSheet.create({
   },
   sectionCount: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.mutedText,
   },
   sectionAction: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
+  },
+  sectionActionButton: {
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingLeft: 8,
   },
   emptyHint: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
 });

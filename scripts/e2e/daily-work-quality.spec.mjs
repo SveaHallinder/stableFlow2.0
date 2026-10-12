@@ -79,7 +79,8 @@ test('Idag and Mina pass agree on the current stable', async ({ page }, testInfo
   await next.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('today-current-stable.png') });
   await page.getByText('Mina pass', { exact: true }).click();
-  await expect(page.getByText('Lunch i valt stall', { exact: true })).toBeVisible();
+  await expect(page.getByText('Lunch i valt stall', { exact: true }).filter({ visible: true })
+    .and(page.locator(':not([aria-hidden="true"] *)'))).toBeVisible();
   await expect(page.getByText('Morgon i annat stall', { exact: true })).toHaveCount(0);
 });
 
@@ -127,3 +128,41 @@ test('authorized assignment buttons still claim, complete, release and open the 
   await page.getByText('Hantera', { exact: true }).first().click();
   await expect(page.getByText('Redigera pass', { exact: true })).toBeVisible();
 });
+
+for (const width of [320, 390]) {
+  test(`home opens its messages and keeps every mobile destination usable at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto('/?qaDemo=1');
+    await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Öppna dagens stallpass', exact: true })).toBeVisible();
+    for (const name of ['Idag', 'Hästar', 'Schema', 'Feed', 'Chat', 'Profil']) {
+      const tab = page.getByRole('tab', { name, exact: true });
+      await expect(tab).toBeVisible();
+      const box = await tab.boundingBox();
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width + 1);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    await page.screenshot({ path: testInfo.outputPath(`figma-home-${width}.png`) });
+
+    const showMore = page.getByRole('button', { name: 'Visa fler nya meddelanden', exact: true });
+    await showMore.scrollIntoViewIfNeeded();
+    await showMore.click();
+    await expect(page.getByRole('button', { name: 'Visa färre nya meddelanden', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Öppna konversation med QA Stallet', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Öppna konversation med QA Medlem', exact: true }).click();
+    await expect(page).toHaveURL(/\/chat\/[^/?]+(?:\?|$)/);
+    await expect(page.getByText('Kan du ta kvällspasset imorgon?', { exact: true }).filter({ visible: true })
+      .and(page.locator(':not([aria-hidden="true"] *)'))).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Meddelande', exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`figma-chat-${width}.png`) });
+
+    await page.getByRole('button', { name: 'Tillbaka', exact: true }).click();
+    await page.getByRole('tab', { name: 'Profil', exact: true }).click();
+    await expect(page).toHaveURL(/\/profile(?:\?|$)/);
+    await expect(page.getByText('QA Admin', { exact: true }).filter({ visible: true }).first()).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath(`figma-profile-${width}.png`) });
+  });
+}

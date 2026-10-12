@@ -16,6 +16,9 @@ import { Avatar } from '@/components/Avatar';
 import { color, space, radius } from '@/design/tokens';
 import type { ActionResult, PostComment } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
+import HeartIcon from '@/assets/images/figma/heart.svg';
+import CommentIcon from '@/assets/images/figma/comment.svg';
+import MoreIcon from '@/assets/images/figma/more.svg';
 
 export type PostData = {
   id: string;
@@ -131,7 +134,7 @@ export const PostCard = React.memo(function PostCard({
             accessibilityRole="button"
             accessibilityLabel="Rapportera inlägg"
           >
-            <Feather name="flag" size={16} color={palette.secondaryText} />
+            <MoreIcon />
           </TouchableOpacity>
         ) : null}
         {canDelete && onDelete ? (
@@ -142,7 +145,7 @@ export const PostCard = React.memo(function PostCard({
             accessibilityRole="button"
             accessibilityLabel="Ta bort inlägg"
           >
-            <Feather name="more-vertical" size={18} color={palette.secondaryText} />
+            <MoreIcon />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -157,8 +160,6 @@ export const PostCard = React.memo(function PostCard({
         </View>
       ) : null}
 
-      {data.content && <Text style={styles.content}>{data.content}</Text>}
-
       {data.imageSignedUrl && !imageFailed && (
         <Image
           source={{ uri: data.imageSignedUrl }}
@@ -168,7 +169,9 @@ export const PostCard = React.memo(function PostCard({
         />
       )}
 
-      {visibleComments.length ? (
+      {data.content && <Text style={styles.content}>{data.content}</Text>}
+
+      {showComposer && visibleComments.length ? (
         <View style={styles.commentList}>
           {visibleComments.map((comment) => (
             <View key={comment.id} style={styles.commentRow}>
@@ -202,11 +205,7 @@ export const PostCard = React.memo(function PostCard({
           accessibilityLabel={isLiked ? 'Ta bort gilla' : 'Gilla inlägg'}
           accessibilityState={{ selected: isLiked, disabled: !canInteract || likePending, busy: likePending }}
         >
-          <Feather
-            name="heart"
-            size={16}
-            color={isLiked ? palette.primary : palette.secondaryText}
-          />
+          <HeartIcon />
           <Text style={[styles.actionText, isLiked && styles.actionTextActive]}>{likePending ? 'Sparar…' : data.likes}</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -217,7 +216,7 @@ export const PostCard = React.memo(function PostCard({
           accessibilityRole="button"
           accessibilityLabel="Kommentera"
         >
-          <Feather name="message-circle" size={16} color={palette.secondaryText} />
+          <CommentIcon />
           <Text style={styles.actionText}>{data.comments}</Text>
         </TouchableOpacity>
       </View>
@@ -259,18 +258,18 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: 'transparent',
     borderWidth: 0,
-    paddingVertical: space.md,
+    paddingVertical: 15,
     paddingHorizontal: 0,
-    gap: space.md,
+    gap: 15,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.md,
+    gap: 10,
   },
   avatarWrapper: {
-    width: 48,
-    height: 48,
+    width: 40,
+    height: 40,
     borderRadius: radius.full,
     overflow: 'hidden',
   },
@@ -283,32 +282,36 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   author: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: color.text,
-    letterSpacing: -0.2,
   },
   timestamp: {
-    fontSize: 13,
+    fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: color.textMuted,
     fontWeight: '400',
   },
   moreButton: {
-    padding: 8,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   content: {
     fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: color.text,
-    lineHeight: 22,
+    lineHeight: 19,
     fontWeight: '400',
-    letterSpacing: -0.1,
   },
   postImage: {
     width: '100%',
     maxWidth: 520,
     alignSelf: 'flex-start',
-    aspectRatio: 1,
-    borderRadius: radius.lg,
+    aspectRatio: 1.75,
+    borderRadius: 18,
   },
   groupRow: {
     flexDirection: 'row',
@@ -319,13 +322,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
+    backgroundColor: palette.surfaceMuted,
   },
   groupChipText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.secondaryText,
   },
   commentList: {
@@ -345,32 +347,36 @@ const styles = StyleSheet.create({
   },
   commentAuthor: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
   commentText: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     flexShrink: 1,
   },
   actions: {
     flexDirection: 'row',
-    gap: space.lg,
-    marginTop: space.sm,
+    gap: 10,
+    marginTop: -4,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: space.xs,
+    gap: 5,
+    minWidth: 44,
+    minHeight: 44,
   },
   actionButtonActive: {
-    transform: [{ scale: 1.01 }],
+    opacity: 1,
   },
   actionText: {
-    fontSize: 13,
-    color: color.textMuted,
-    fontWeight: '500',
-    letterSpacing: -0.1,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    color: color.text,
+    fontWeight: '400',
   },
   actionTextActive: {
     color: palette.primary,
@@ -389,7 +395,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    fontSize: 13,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    minHeight: 44,
     color: palette.primaryText,
   },
   commentSendButton: {
@@ -397,12 +405,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: radius.full,
     backgroundColor: palette.primary,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   commentSendButtonDisabled: {
     opacity: 0.5,
   },
   commentSendText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },

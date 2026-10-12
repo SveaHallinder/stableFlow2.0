@@ -3,7 +3,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
-import Logo from '@/assets/images/logo-blue.svg';
+import Logo from '@/assets/images/figma/logo.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
 import { Avatar } from '@/components/Avatar';
@@ -119,7 +119,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
       {showSidebarHeader ? (
         <View style={styles.sidebarHeader}>
           <View style={styles.brandRow}>
-            <Logo width={24} height={24} />
+            <Logo />
             <View style={styles.brandTextCol}>
               <Text style={styles.brandTitle}>StableFlow</Text>
               {currentFarm?.name ? (

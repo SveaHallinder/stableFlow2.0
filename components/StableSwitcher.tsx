@@ -87,8 +87,8 @@ export function StableSwitcher({
 const styles = StyleSheet.create({
   wrap: {
     paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 8,
+    paddingTop: 0,
+    paddingBottom: 0,
     gap: 4,
   },
   wrapInline: {
@@ -102,8 +102,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
     color: palette.secondaryText,
   },
   chipRow: {
@@ -116,28 +117,27 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     minHeight: 44,
     justifyContent: 'center',
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
+    backgroundColor: 'transparent',
   },
   chipActive: {
-    backgroundColor: palette.surfaceTint,
-    borderColor: '#C8D9C7',
+    backgroundColor: 'transparent',
   },
   chipText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   chipTextActive: {
     color: palette.primary,
   },
   location: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
@@ -150,8 +150,9 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   accessPillText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.secondaryText,
   },
 });

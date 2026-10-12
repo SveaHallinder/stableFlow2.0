@@ -26,6 +26,7 @@ import { toISODate } from '@/lib/schedule';
 import { deriveFeedFocus } from '@/lib/today';
 import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import HorseIcon from '@/assets/images/figma/profile-horse.svg';
 
 const palette = theme.colors;
 
@@ -245,7 +246,7 @@ export default function HorsesScreen() {
                   <Card key={horse.id} tone="default" style={styles.horseCard}>
                     <View style={styles.horseTopRow}>
                       <View style={styles.horseAvatar}>
-                        <Feather name="activity" size={20} color={palette.primary} />
+                        <HorseIcon />
                       </View>
                       <View style={styles.horseTitleBlock}>
                         <View style={styles.horseNameRow}>
@@ -327,7 +328,7 @@ export default function HorsesScreen() {
             </View>
           ) : (
             <Card tone="default" style={styles.emptyCard}>
-              <Feather name="activity" size={22} color={palette.primary} />
+              <HorseIcon />
               <Text style={styles.emptyTitle}>
                 {stableHorses.length
                   ? normalizeName(search)
@@ -381,7 +382,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.bg,
   },
   pageHeader: {
-    marginBottom: 8,
+    marginBottom: 0,
   },
   pageHeaderDesktop: {
     maxWidth: 1100,
@@ -394,10 +395,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
+    paddingHorizontal: 21,
+    paddingTop: 24,
     paddingBottom: 120,
-    gap: 12,
+    gap: 20,
   },
   scrollContentDesktop: {
     maxWidth: 1100,
@@ -409,9 +410,11 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   summaryCard: {
-    padding: 16,
+    padding: 0,
     gap: 12,
-    borderRadius: radius.lg,
+    borderRadius: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -425,18 +428,20 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   summaryEyebrow: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: palette.primary,
-    textTransform: 'uppercase',
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
+    color: palette.secondaryText,
   },
   summaryTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   summaryText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 19,
     color: palette.secondaryText,
   },
@@ -451,7 +456,8 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
   },
   notice: {
@@ -462,12 +468,15 @@ const styles = StyleSheet.create({
   },
   noticeText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   filterRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
   },
   searchRow: {
     flexDirection: 'row',
@@ -483,31 +492,32 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     minWidth: 0,
-    minHeight: 52,
-    fontSize: 16,
+    minHeight: 44,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
   },
   filterChip: {
+    flex: 1,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radius.full,
-    backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
   },
   filterChipActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
   },
   filterChipText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   filterChipTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   horseList: {
     gap: 12,
@@ -515,7 +525,8 @@ const styles = StyleSheet.create({
   horseCard: {
     padding: 14,
     gap: 12,
-    borderRadius: radius.lg,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   horseTopRow: {
     flexDirection: 'row',
@@ -543,14 +554,16 @@ const styles = StyleSheet.create({
   },
   horseName: {
     flexShrink: 1,
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.medium,
+    lineHeight: 23,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   horseMeta: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 12,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 18,
     color: palette.secondaryText,
   },
   minePill: {
@@ -561,8 +574,9 @@ const styles = StyleSheet.create({
   },
   minePillText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: palette.primary,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   statusGrid: {
     flexDirection: 'row',
@@ -587,14 +601,16 @@ const styles = StyleSheet.create({
   },
   statusLabel: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.secondaryText,
     lineHeight: 16,
   },
   statusValue: {
     marginTop: 4,
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 18,
     color: palette.primaryText,
   },
   cardActions: {
@@ -605,14 +621,13 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     minHeight: 44,
     paddingHorizontal: 14,
-    borderRadius: radius.md,
+    borderRadius: radius.full,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: palette.surfaceTint,
   },
   manageButtonPrimary: {
-    alignSelf: 'stretch',
     justifyContent: 'center',
     backgroundColor: palette.primary,
   },
@@ -638,12 +653,14 @@ const styles = StyleSheet.create({
   },
   profileButtonText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primary,
   },
   secondaryButtonText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   primaryButton: {
@@ -656,7 +673,8 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.inverseText,
   },
   emptyCard: {
@@ -674,13 +692,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
     textAlign: 'center',
   },
   emptyText: {
     fontSize: 14,
+    fontFamily: theme.fonts.regular,
     lineHeight: 20,
     color: palette.secondaryText,
     textAlign: 'center',

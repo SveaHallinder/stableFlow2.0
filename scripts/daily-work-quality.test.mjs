@@ -67,6 +67,7 @@ test('calendar passes no action handlers to guests without parent callbacks', as
   const scope = {
     React, styles: {}, palette: {}, View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator', Card: 'Card', Feather: () => null,
+    CalendarSun: 'CalendarSun', CalendarClock: 'CalendarClock', CalendarMoon: 'CalendarMoon',
   };
   const ScheduleIcon = await loadScreenCallback('app/(tabs)/calendar.tsx', 'ScheduleIcon', scope);
   const RegularDayCard = await loadScreenCallback('app/(tabs)/calendar.tsx', 'RegularDayCard', { ...scope, ScheduleIcon });

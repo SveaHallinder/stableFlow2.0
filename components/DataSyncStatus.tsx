@@ -51,8 +51,8 @@ export function DataSyncStatus() {
 const styles = StyleSheet.create({
   container: { gap: 4 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  caption: { flex: 1, fontSize: 12, color: palette.secondaryText },
+  caption: { flex: 1, fontFamily: theme.fonts.regular, fontSize: 11, color: palette.secondaryText },
   button: { minHeight: 44, paddingHorizontal: 8, flexDirection: 'row', gap: 6, alignItems: 'center' },
-  buttonText: { color: palette.primary, fontSize: 13, fontWeight: '600' },
-  error: { color: palette.error, fontSize: 13, lineHeight: 19 },
+  buttonText: { color: palette.primary, fontFamily: theme.fonts.regular, fontSize: 11, fontWeight: '400' },
+  error: { color: palette.error, fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19 },
 });

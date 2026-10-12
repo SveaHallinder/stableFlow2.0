@@ -4,81 +4,95 @@ export const systemPalette = {
   background: color.bg,
   backgroundAlt: '#FFFFFF',
   surface: '#FFFFFF',
-  surfaceAlt: '#F1F3EE',
-  surfaceTint: '#EDF3ED',
-  surfaceGlass: '#FAFAF7',
+  surfaceAlt: '#F5F5F5',
+  surfaceTint: '#F5F5F5',
+  surfaceGlass: '#FAFAFA',
   primary: color.tint,
   accent: color.tint,
   warning: '#9A631A',
   error: '#BE4444',
   success: '#28724B',
-  info: '#356EA0',
+  info: '#2196F3',
   badge: color.tint,
   textPrimary: color.text,
-  textSecondary: '#4D5D53',
+  textSecondary: '#666666',
   textMuted: color.textMuted,
-  textDisabled: '#89948B',
+  textDisabled: '#999999',
   textInverse: '#FFFFFF',
   icon: color.text,
   border: color.divider,
-  borderMuted: '#ECEFE8',
-  overlay: 'rgba(32, 44, 39, 0.28)',
+  borderMuted: '#F5F5F5',
+  overlay: 'rgba(0, 0, 0, 0.28)',
 };
 
 export const systemStatus = {
   feeding: '#A65E34',
-  cleaning: '#356EA0',
+  cleaning: '#0099FF',
   riderAway: '#9A631A',
-  farrierAway: '#356EA0',
+  farrierAway: '#FFAB00',
   vetAway: '#287C79',
-  evening: '#6C5A91',
+  evening: '#7432FF',
   neutral: '#28724B',
 };
 
 export const systemGradients = {
   background: [color.bg, color.bg] as const,
-  action: ['#326B52', color.tint] as const,
-  weather: ['#356EA0', '#477EAA'] as const,
+  action: ['#2196F3', color.tint] as const,
+  weather: ['#007AFF', '#AAD2FE'] as const,
+};
+
+export const systemFonts = {
+  regular: 'Inter',
+  medium: 'Inter-Medium',
+  semibold: 'Inter-SemiBold',
+  bold: 'Inter-Bold',
 };
 
 export const systemTypography = {
   headingXL: {
-    fontSize: 28,
-    fontWeight: '700' as const,
-    lineHeight: 34,
+    fontFamily: systemFonts.medium,
+    fontSize: 24,
+    fontWeight: '500' as const,
+    lineHeight: 30,
     color: systemPalette.textPrimary,
   },
   headingLg: {
-    fontSize: 22,
-    fontWeight: '700' as const,
-    lineHeight: 28,
+    fontFamily: systemFonts.medium,
+    fontSize: 20,
+    fontWeight: '500' as const,
+    lineHeight: 26,
     color: systemPalette.textPrimary,
   },
   headingMd: {
-    fontSize: 18,
-    fontWeight: '600' as const,
-    lineHeight: 24,
+    fontFamily: systemFonts.regular,
+    fontSize: 17,
+    fontWeight: '400' as const,
+    lineHeight: 22,
     color: systemPalette.textPrimary,
   },
   title: {
+    fontFamily: systemFonts.medium,
     fontSize: 16,
     fontWeight: '600' as const,
     lineHeight: 22,
     color: systemPalette.textPrimary,
   },
   body: {
-    fontSize: 16,
+    fontFamily: systemFonts.regular,
+    fontSize: 15,
     fontWeight: '400' as const,
     lineHeight: 24,
     color: systemPalette.textSecondary,
   },
   caption: {
-    fontSize: 13,
-    fontWeight: '500' as const,
-    lineHeight: 18,
+    fontFamily: systemFonts.regular,
+    fontSize: 12,
+    fontWeight: '400' as const,
+    lineHeight: 17,
     color: systemPalette.textMuted,
   },
   label: {
+    fontFamily: systemFonts.medium,
     fontSize: 11,
     fontWeight: '600' as const,
     letterSpacing: 0.4,
@@ -98,16 +112,16 @@ export const systemRadius = radius;
 
 export const quickActionVariants = {
   primary: {
-    gradient: ['#EDF3ED', '#EDF3ED'] as [string, string],
+    gradient: ['#0099FF', '#0099FF'] as [string, string],
     icon: color.tint,
-    accentBorder: '#DAE5D9',
-    shadow: 'rgba(36, 87, 67, 0.04)',
+    accentBorder: '#0099FF',
+    shadow: 'rgba(0, 153, 255, 0.04)',
   },
   accent: {
-    gradient: ['#EDF3ED', '#EDF3ED'] as [string, string],
+    gradient: ['#F5F5F5', '#F5F5F5'] as [string, string],
     icon: color.tint,
-    accentBorder: '#DAE5D9',
-    shadow: 'rgba(36, 87, 67, 0.04)',
+    accentBorder: '#F0F0F0',
+    shadow: 'rgba(0, 0, 0, 0.04)',
   },
   warning: {
     gradient: ['#FAF2E5', '#FAF2E5'] as [string, string],
@@ -118,8 +132,8 @@ export const quickActionVariants = {
 };
 
 export const surfacePresets = {
-  hero: '#EDF3ED',
-  section: '#FAFAF7',
+  hero: '#F5F5F5',
+  section: '#FAFAFA',
   card: systemPalette.surface,
   subtle: systemPalette.surfaceAlt,
 };

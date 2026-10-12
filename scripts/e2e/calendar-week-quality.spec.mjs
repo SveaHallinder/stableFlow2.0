@@ -76,13 +76,14 @@ async function screenshotModal(page, testInfo, anchor, filename) {
 test('mobile calendar keeps the colour explanation optional and week controls readable', async ({ page }, testInfo) => {
   await page.goto('/calendar?qaDemo=1&view=all');
   const explanation = page.getByRole('button', { name: 'Färgförklaring', exact: true });
+  await expect(explanation).toHaveAttribute('aria-expanded', 'true');
+  await expect(visibleText(page, 'Fodring saknas')).toBeVisible();
+  await explanation.click();
   await expect(explanation).toHaveAttribute('aria-expanded', 'false');
   await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
   await explanation.click();
   await expect(explanation).toHaveAttribute('aria-expanded', 'true');
   await expect(visibleText(page, 'Fodring saknas')).toBeVisible();
-  await explanation.click();
-  await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
   for (const name of ['Föregående vecka', 'Nästa vecka']) {
     const control = page.getByRole('button', { name, exact: true });
     await expect(control).toBeVisible();

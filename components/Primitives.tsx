@@ -13,7 +13,7 @@ import {
   type ViewProps,
 } from 'react-native';
 import { shadow, color, radius, space } from '../design/tokens';
-import { systemPalette } from '../design/system';
+import { systemFonts, systemPalette } from '../design/system';
 
 type CardProps = PropsWithChildren<
   ViewProps & {
@@ -94,7 +94,8 @@ export const SearchBar = ({ style, ...props }: SearchBarProps) => (
     <TextInput
       placeholderTextColor={color.textMuted}
       style={{
-        fontSize: 16,
+        fontFamily: systemFonts.regular,
+        fontSize: 15,
         color: color.text,
         padding: 0,
         margin: 0,
@@ -106,7 +107,7 @@ export const SearchBar = ({ style, ...props }: SearchBarProps) => (
 
 const headerStyles = StyleSheet.create({
   container: {
-    minHeight: 72,
+    minHeight: 64,
     paddingHorizontal: space.sm,
     flexDirection: 'row',
     alignItems: 'center',
@@ -126,12 +127,12 @@ const headerStyles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   title: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontFamily: systemFonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: color.text,
     textAlign: 'center',
-    letterSpacing: -0.6,
-    lineHeight: 30,
+    lineHeight: 22,
   },
   iconButton: {
     width: 44,
@@ -139,15 +140,14 @@ const headerStyles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: systemPalette.surface,
-    borderWidth: 1,
-    borderColor: systemPalette.border,
+    backgroundColor: 'transparent',
   },
   titleStack: {
     alignItems: 'center',
     gap: 2,
   },
   subtitle: {
+    fontFamily: systemFonts.regular,
     fontSize: 13,
     fontWeight: '500',
     color: color.textMuted,
@@ -166,6 +166,7 @@ const headerStyles = StyleSheet.create({
     borderColor: systemPalette.primary,
   },
   actionLabel: {
+    fontFamily: systemFonts.medium,
     fontSize: 14,
     fontWeight: '600',
     color: systemPalette.textInverse,

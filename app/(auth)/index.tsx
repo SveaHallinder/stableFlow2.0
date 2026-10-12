@@ -12,7 +12,7 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import Logo from '@/assets/images/logo-blue.svg';
+import Logo from '@/assets/images/figma/logo.svg';
 import { theme } from '@/components/theme';
 import { Card } from '@/components/Primitives';
 import { PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE, PrimarySessionMutationUnsupportedError, supabase, supabaseConfig, withPrimarySessionMutation } from '@/lib/supabase';
@@ -328,7 +328,7 @@ export default function AuthScreen() {
     <View style={[styles.heroCard, isDesktop && styles.heroCardDesktop]}>
       <View style={styles.heroHeader}>
         <View style={[styles.heroLogoWrap, isDesktop && styles.heroLogoWrapDesktop]}>
-          <Logo width={32} height={32} />
+          <Logo />
         </View>
         <View style={styles.heroText}>
           <Text style={[styles.heroTitle, isDesktop && styles.heroTitleDesktop]}>StableFlow</Text>

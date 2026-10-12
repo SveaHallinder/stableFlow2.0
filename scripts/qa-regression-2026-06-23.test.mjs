@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import ts from 'typescript';
 
 const root = new URL('../', import.meta.url);
 
@@ -14,7 +15,7 @@ async function readProjectFile(path) {
 
 // ISSUE-001 — On web the SMHI open-data API is always CORS-blocked, so the
 // fetch can never succeed. The hook must skip it on web and expose an error
-// status so the panel hides instead of hanging on "Laddar väder..." forever.
+// status so the panel leaves its loading state instead of hanging forever.
 test('ISSUE-001: useWeather skips the doomed fetch on web and exposes a status', async () => {
   const hook = await readProjectFile('hooks/useWeather.ts');
 
@@ -32,12 +33,43 @@ test('ISSUE-001: useWeather skips the doomed fetch on web and exposes a status',
   assert.match(hook, /\.catch\(\(\) => \{[\s\S]*?if \(!cancelled\) setStatus\('error'\)/);
 });
 
-test('ISSUE-001: WeatherPanel hides on error instead of hanging on the loader', async () => {
+test('ISSUE-001: WeatherPanel ends loading on error and shows only confirmed weather', async () => {
   const screen = await readProjectFile('app/(tabs)/index.tsx');
-
-  assert.match(screen, /const \{ data: weather, status \} = useWeather\(stableLocation\);/);
-  // Error state returns null (panel hidden) rather than the loading spinner.
-  assert.match(screen, /if \(status === 'error'\) \{\s*return null;/);
+  const parsed = ts.createSourceFile('index.tsx', screen, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const panel = parsed.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === 'WeatherPanel');
+  assert.ok(panel, 'The actual WeatherPanel component must exist');
+  const { outputText } = ts.transpileModule(`export default ${panel.getText(parsed)}`, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ES2022 },
+  });
+  for (const { status, data, caption, temperature } of [
+    { status: 'error', data: null, caption: 'Ej tillgängligt', temperature: '—' },
+    { status: 'loading', data: null, caption: 'Hämtar väder', temperature: '—' },
+    { status: 'ready', data: { location: 'Stallet', temperature: 10, summary: 'Molnigt', high: 12, low: 6 }, caption: 'Molnigt', temperature: '10°' },
+  ]) {
+    const exports = {};
+    const scope = {
+      React: { createElement: (type, props, ...children) => ({ type, props, children }) },
+      useWeather: (location) => { assert.equal(location, 'Stallet'); return { data, status }; },
+      theme: { gradients: { weather: [] } }, styles: {},
+      LinearGradient: 'LinearGradient', View: 'View', Text: 'Text', ActivityIndicator: 'ActivityIndicator', CloudSun: 'CloudSun',
+    };
+    new Function('exports', ...Object.keys(scope), outputText)(exports, ...Object.values(scope));
+    const tree = exports.default({ stableLocation: 'Stallet' });
+    const types = [];
+    const text = [];
+    const visit = (node) => {
+      if (typeof node === 'string') text.push(node);
+      else if (node && typeof node === 'object') {
+        types.push(node.type);
+        (node.children ?? []).flat().forEach(visit);
+      }
+    };
+    visit(tree);
+    assert.equal(types.includes('ActivityIndicator'), status === 'loading');
+    assert.ok(text.includes(caption), `Missing useful ${status} caption`);
+    assert.ok(text.includes(temperature), `Incorrect ${status} temperature`);
+    if (!data) assert.ok(!text.some((value) => /\d+°/.test(value)), 'No fabricated weather reading');
+  }
 });
 
 // ISSUE-002 — Every desktop screen renders the left navigation rail via

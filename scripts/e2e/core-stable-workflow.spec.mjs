@@ -123,7 +123,7 @@ async function navigateTab(page, name) {
 
 async function openHorse(page) {
   await navigateTab(page, 'Hästar');
-  await visibleText(page, 'Profil').last().click();
+  await button(page, 'Profil').last().click();
   await expect(visibleText(page, 'Foderplan')).toBeVisible();
 }
 
@@ -189,7 +189,7 @@ test('Admin feed plan → owner override → staff feed check → profile and pa
   await expect(button(page, 'Saga, dag: Ute')).toHaveAttribute('aria-pressed', 'true');
   await screenshot(page, testInfo, 'paddock-status-updated');
   await button(page, 'Tillbaka').click();
-  await visibleText(page, 'Profil').last().click();
+  await button(page, 'Profil').last().click();
   await expect(button(page, 'Dag: Ute')).toHaveAttribute('aria-pressed', 'true');
   await screenshot(page, testInfo, 'profile-reflects-paddock-status');
   const state = await qaState(page);

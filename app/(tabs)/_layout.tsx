@@ -1,8 +1,18 @@
 import React from 'react';
 import { Tabs, useGlobalSearchParams } from 'expo-router';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, Text, View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import TabToday from '@/assets/images/figma/tab-today.svg';
+import TabTodayActive from '@/assets/images/figma/tab-today-active.svg';
+import TabCalendar from '@/assets/images/figma/tab-calendar.svg';
+import TabCalendarActive from '@/assets/images/figma/tab-calendar-active.svg';
+import TabFeed from '@/assets/images/figma/tab-feed.svg';
+import TabChat from '@/assets/images/figma/tab-chat.svg';
+import TabProfile from '@/assets/images/figma/tab-profile.svg';
+import TabsFeedActive from '@/assets/images/figma/tabs-feed.svg';
+import TabsChatActive from '@/assets/images/figma/tabs-chat.svg';
+import TabsProfileActive from '@/assets/images/figma/tabs-profile.svg';
+import HorseIcon from '@/assets/images/figma/profile-horse.svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme } from '@/components/theme';
 import { DesktopNav } from '@/components/DesktopNav';
@@ -40,24 +50,27 @@ export default function TabLayout() {
           ? styles.tabBarHidden
           : isDesktopWeb
             ? [styles.tabBar, styles.tabBarHidden]
-            : [styles.tabBar, { bottom: Math.max(12, insets.bottom) }],
+            : [styles.tabBar, { bottom: Math.max(10, insets.bottom) }],
         tabBarBackground: isDesktopWeb
           ? undefined
           : () => <BlurView intensity={12.5} style={styles.blurBackground} />,
-        tabBarActiveTintColor: palette.primary,
-        tabBarActiveBackgroundColor: palette.surfaceTint,
+        tabBarActiveTintColor: palette.primaryText,
+        tabBarActiveBackgroundColor: 'transparent',
         tabBarInactiveTintColor: palette.secondaryText,
         tabBarItemStyle: styles.tabBarItem,
         tabBarShowLabel: true,
         tabBarLabelPosition: 'below-icon',
         tabBarLabelStyle: styles.tabBarLabel,
+        tabBarLabel: ({ focused, color, children }) => (
+          <Text style={[styles.tabBarLabel, { color, fontFamily: focused ? theme.fonts.medium : theme.fonts.regular }]}>{children}</Text>
+        ),
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Idag',
           tabBarAccessibilityLabel: 'Idag',
-          tabBarIcon: ({ color }) => <Feather name="grid" size={23} color={color} />,
+          tabBarIcon: ({ focused }) => focused ? <TabTodayActive /> : <TabToday />,
         }}
       />
       <Tabs.Screen
@@ -65,9 +78,7 @@ export default function TabLayout() {
         options={{
           title: 'Hästar',
           tabBarAccessibilityLabel: 'Hästar',
-          tabBarIcon: ({ color }) => (
-            <MaterialCommunityIcons name="horse-variant" size={25} color={color} />
-          ),
+          tabBarIcon: () => <View style={styles.horseIcon}><HorseIcon /></View>,
         }}
       />
       <Tabs.Screen
@@ -75,7 +86,7 @@ export default function TabLayout() {
         options={{
           title: 'Schema',
           tabBarAccessibilityLabel: 'Schema',
-          tabBarIcon: ({ color }) => <Feather name="calendar" size={23} color={color} />,
+          tabBarIcon: ({ focused }) => focused ? <TabCalendarActive /> : <TabCalendar />,
         }}
       />
       <Tabs.Screen
@@ -83,7 +94,9 @@ export default function TabLayout() {
         options={{
           title: 'Feed',
           tabBarAccessibilityLabel: 'Feed',
-          tabBarIcon: ({ color }) => <Feather name="file-text" size={23} color={color} />,
+          tabBarIcon: ({ focused }) => focused ? (
+            <View style={styles.feedIconCrop}><View style={styles.feedIconSource}><TabsFeedActive /></View></View>
+          ) : <TabFeed />,
         }}
       />
       <Tabs.Screen
@@ -91,15 +104,19 @@ export default function TabLayout() {
         options={{
           title: 'Chat',
           tabBarAccessibilityLabel: 'Chat',
-          tabBarIcon: ({ color }) => <Feather name="message-circle" size={23} color={color} />,
+          tabBarIcon: ({ focused }) => focused ? (
+            <View style={styles.chatIconCrop}><View style={styles.chatIconSource}><TabsChatActive /></View></View>
+          ) : <TabChat />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          href: null,
+          title: 'Profil',
           tabBarAccessibilityLabel: 'Profil',
-          tabBarIcon: ({ color }) => <Feather name="user" size={23} color={color} />,
+          tabBarIcon: ({ focused }) => focused ? (
+            <View style={styles.profileIconCrop}><View style={styles.profileIconSource}><TabsProfileActive /></View></View>
+          ) : <TabProfile />,
         }}
       />
     </Tabs>
@@ -123,15 +140,15 @@ const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
     bottom: 12,
-    marginLeft: 12,
-    marginRight: 12,
+    marginLeft: 6,
+    marginRight: 6,
     paddingTop: 4,
     paddingBottom: 4,
     alignItems: 'center',
-    height: 72,
-    backgroundColor: palette.surface,
+    height: 64,
+    backgroundColor: '#FAFAFA',
     borderWidth: 1,
-    borderRadius: radii.lg,
+    borderRadius: 20,
     borderColor: palette.border,
     paddingHorizontal: 4,
     flexDirection: 'row',
@@ -149,21 +166,31 @@ const styles = StyleSheet.create({
   tabBarItem: {
     paddingVertical: 4,
     paddingHorizontal: 0,
-    minHeight: 56,
+    minHeight: 54,
+    minWidth: 44,
     borderRadius: radii.md,
-    marginHorizontal: 2,
+    marginHorizontal: 0,
     justifyContent: 'center',
-    alignItems: 'center',
+    alignItems: 'stretch',
     flex: 1,
   },
   tabBarLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '400',
     marginTop: 3,
   },
   tabBarHidden: {
     display: 'none',
   },
+  horseIcon: { transform: [{ scale: 1.45 }] },
+  // Preserve the original Figma exports and clip only the active icon slot.
+  feedIconCrop: { width: 24, height: 24, overflow: 'hidden' },
+  feedIconSource: { position: 'absolute', left: -179.87002563476562, top: -18 },
+  chatIconCrop: { width: 25, height: 25, overflow: 'hidden' },
+  chatIconSource: { position: 'absolute', left: -257.0224304199219, top: -17.5 },
+  profileIconCrop: { width: 21.539127349853516, height: 25, overflow: 'hidden' },
+  profileIconSource: { position: 'absolute', left: -335.1578063964844, top: -17.5 },
   desktopShell: {
     flex: 1,
     flexDirection: 'row',

@@ -24,13 +24,15 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
-import UserGroupsIcon from '@/assets/images/User Groups.svg';
+import UserGroupsIcon from '@/assets/images/figma/group.svg';
+import ChatBackIcon from '@/assets/images/figma/chat-back.svg';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
 import { chatUnreadIds, scrollReadViewport, visibleMessageIds } from '@/lib/chatReadReceipts';
 import { useAuth } from '@/context/AuthContext';
 
 const palette = theme.colors;
+const chatAccent = '#2196F3';
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -300,7 +302,7 @@ export default function ChatScreen() {
                   onPress={() => router.back()}
                   style={styles.backButton}
                 >
-                  <Text style={styles.backIcon}>‹</Text>
+                  <ChatBackIcon />
                 </HeaderIconButton>
               }
               showLogo={false}
@@ -309,7 +311,7 @@ export default function ChatScreen() {
               <View style={styles.headerProfile}>
                 {isGroup ? (
                   <View style={styles.headerGroupAvatar}>
-                    <UserGroupsIcon width={20} height={20} />
+                    <UserGroupsIcon />
                   </View>
                 ) : (
                   <Avatar
@@ -426,18 +428,20 @@ export default function ChatScreen() {
                   onSubmitEditing={handleSend}
                   returnKeyType="send"
                 />
+                <TouchableOpacity
+                  style={[styles.sendButton, (sending || !composerText.trim()) && { opacity: 0.5 }]}
+                  onPress={handleSend}
+                  disabled={sending || !composerText.trim() || !conversationPreview}
+                  accessibilityState={{ disabled: sending || !composerText.trim() || !conversationPreview, busy: sending }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Skicka meddelande"
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.sendButtonCircle}>
+                    <Text style={styles.sendButtonIcon}>↑</Text>
+                  </View>
+                </TouchableOpacity>
               </View>
-
-              <TouchableOpacity
-                style={[styles.sendButton, (sending || !composerText.trim()) && { opacity: 0.5 }]}
-                onPress={handleSend}
-                disabled={sending || !composerText.trim() || !conversationPreview}
-                accessibilityState={{ disabled: sending || !composerText.trim() || !conversationPreview, busy: sending }}
-                accessibilityRole="button"
-                accessibilityLabel="Skicka meddelande"
-              >
-                <Text style={styles.sendButtonIcon}>↑</Text>
-              </TouchableOpacity>
             </View>
           </View>,
         )}
@@ -448,8 +452,8 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  emptyText: { color: palette.mutedText, fontSize: 14, lineHeight: 21, paddingHorizontal: 20, paddingVertical: 12 },
-  errorText: { color: palette.error, fontSize: 14, lineHeight: 21, paddingHorizontal: 20, paddingVertical: 12 },
+  emptyText: { color: palette.mutedText, fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19, paddingHorizontal: 20, paddingVertical: 12 },
+  errorText: { color: palette.error, fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19, paddingHorizontal: 20, paddingVertical: 12 },
   background: {
     flex: 1,
   },
@@ -472,12 +476,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     borderRightWidth: StyleSheet.hairlineWidth,
     borderRightColor: palette.border,
-    backgroundColor: palette.surfaceTint,
-    shadowColor: palette.overlay,
-    shadowOpacity: 0.08,
-    shadowRadius: 14,
-    shadowOffset: { width: 8, height: 0 },
-    elevation: 2,
+    backgroundColor: palette.surface,
   },
   desktopMain: { flex: 1, minWidth: 0 },
   pageHeader: {
@@ -494,37 +493,34 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: palette.surfaceTint,
-  },
-  backIcon: {
-    fontSize: 22,
-    color: palette.icon,
-    marginTop: -1,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
   },
   headerProfile: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
-    gap: 14,
+    gap: 10,
     flexShrink: 1,
     flex: 1,
     width: '100%',
   },
   headerAvatar: {
-    width: 35,
-    height: 35,
+    width: 50,
+    height: 50,
     borderRadius: radius.full,
   },
   headerGroupAvatar: {
-    width: 35,
-    height: 35,
+    width: 50,
+    height: 50,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: 'transparent',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 17,
+    fontFamily: theme.fonts.medium,
     fontWeight: '500',
     color: palette.primaryText,
     maxWidth: 220,
@@ -536,9 +532,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   messagesContent: {
-    paddingHorizontal: 20,
-    paddingTop: 24,
-    paddingBottom: 30,
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 8,
   },
   messagesContentDesktop: {
     maxWidth: 960,
@@ -548,7 +546,7 @@ const styles = StyleSheet.create({
     paddingTop: 28,
   },
   messageGroup: {
-    marginBottom: 22,
+    marginBottom: 10,
   },
   messageGroupLast: {
     marginBottom: 0,
@@ -565,38 +563,41 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   messageAvatar: {
-    width: 28,
-    height: 28,
+    width: 25,
+    height: 25,
     borderRadius: radius.full,
     alignSelf: 'flex-end',
-    marginBottom: 12,
+    marginBottom: 0,
   },
   messageBubble: {
-    maxWidth: '80%',
-    borderRadius: radius.lg,
+    maxWidth: '74%',
+    borderRadius: 20,
     borderWidth: 0,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: palette.surfaceTint,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    backgroundColor: chatAccent,
   },
   messageBubbleDesktop: {
     maxWidth: '60%',
   },
   messageBubbleMe: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.surfaceMuted,
   },
   messageText: {
     fontSize: 15,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
-    color: palette.primaryText,
+    color: palette.inverseText,
   },
   messageTextMe: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   statusText: {
     marginTop: 6,
     fontSize: 12,
+    fontFamily: theme.fonts.medium,
     color: palette.mutedText,
   },
   statusTextMe: {
@@ -608,12 +609,12 @@ const styles = StyleSheet.create({
     marginLeft: 38,
   },
   bottomSpacer: {
-    height: 12,
+    height: 4,
   },
   composerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 6,
     paddingBottom: space.md,
   },
   composerContainerDesktop: {
@@ -626,44 +627,45 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    backgroundColor: palette.surfaceTint,
+    gap: 6,
+    minHeight: 54,
+    backgroundColor: palette.surface,
     borderRadius: radius.full,
-    borderWidth: 0,
-    paddingHorizontal: 18,
-    paddingVertical: 8,
+    borderWidth: 1.5,
+    borderColor: palette.surfaceMuted,
+    paddingLeft: 15,
+    paddingRight: 4,
+    paddingVertical: 4,
   },
   composerDesktop: {
-    paddingVertical: 10,
-  },
-  composerAction: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.full,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: palette.surfaceMuted,
-  },
-  composerActionIcon: {
-    fontSize: 18,
-    color: palette.primary,
+    paddingVertical: 4,
   },
   composerInput: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 44,
     fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
   },
   sendButton: {
     width: 44,
     height: 44,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 12,
+  },
+  sendButtonCircle: {
+    width: 35,
+    height: 35,
+    borderRadius: radius.full,
+    backgroundColor: chatAccent,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sendButtonIcon: {
     fontSize: 18,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },

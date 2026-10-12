@@ -217,6 +217,8 @@ for (const width of [390, 1280]) {
     await page.evaluate(() => { globalThis.__failNextSessionRead = true; });
     await update.click();
     await expect(visibleText(page, 'Kunde inte uppdatera stalldata. Försök igen.')).toBeVisible();
+    const errorBox = await visibleText(page, 'Kunde inte uppdatera stalldata. Försök igen.').boundingBox();
+    expect(errorBox.y).toBeLessThan(250);
     await expect(update).toBeEnabled();
     await expect(visibleText(page, 'Offline Chattstall').first()).toBeVisible();
     await expect(page.locator('body')).not.toContainText('PRIVATE storage detail');

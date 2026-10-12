@@ -2,15 +2,15 @@ import React from 'react';
 import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet, Text, View } from 'react-native';
-import Logo from '@/assets/images/logo-blue.svg';
-import SearchIcon from '@/assets/images/Search-icon.svg';
+import Logo from '@/assets/images/figma/logo.svg';
+import SearchIcon from '@/assets/images/figma/search.svg';
 import {
   HeaderActionButton,
   HeaderIconButton,
   PageHeader,
   headerStyles,
 } from '@/components/Primitives';
-import { systemPalette } from '@/design/system';
+import { systemFonts, systemPalette } from '@/design/system';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 type ScreenHeaderProps = {
@@ -52,7 +52,7 @@ export const ScreenHeader = ({
   const resolvedLeft = typeof left !== 'undefined'
     ? left
     : showLogo && !isDesktopWeb
-      ? <Logo width={32} height={32} />
+      ? <View style={styles.logo}><Logo /></View>
       : null;
 
   // Resolve right content
@@ -74,7 +74,7 @@ export const ScreenHeader = ({
           : showSearch
         ? (
           <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch}>
-            <SearchIcon width={20} height={20} />
+            <SearchIcon />
           </HeaderIconButton>
         )
         : null;
@@ -108,7 +108,7 @@ export const ScreenHeader = ({
         marginBottom: 0,
         justifyContent: 'space-between',
         paddingVertical: 0,
-        paddingHorizontal: 14,
+        paddingHorizontal: 15,
       }, style]}
       title={title}
       left={resolvedLeft}
@@ -128,6 +128,12 @@ export const ScreenHeader = ({
 export default ScreenHeader;
 
 const styles = StyleSheet.create({
+  logo: {
+    width: 32.456,
+    height: 35,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   titleStack: {
     maxWidth: '100%',
     alignItems: 'center',
@@ -157,6 +163,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   titleDesktop: {
+    fontFamily: systemFonts.medium,
     fontSize: 32,
     fontWeight: '700',
     color: systemPalette.textPrimary,
@@ -164,12 +171,14 @@ const styles = StyleSheet.create({
     lineHeight: 40,
   },
   subtitleDesktop: {
+    fontFamily: systemFonts.regular,
     fontSize: 15,
     fontWeight: '400',
     color: systemPalette.textMuted,
     letterSpacing: -0.2,
   },
   metaText: {
+    fontFamily: systemFonts.regular,
     fontSize: 13,
     color: systemPalette.textMuted,
     letterSpacing: -0.1,

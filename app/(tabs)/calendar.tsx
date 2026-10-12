@@ -58,12 +58,23 @@ import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { DateTimeField } from '@/components/DateTimeField';
 import { useAuth } from '@/context/AuthContext';
+import CalendarSun from '@/assets/images/figma/calendar-sun.svg';
+import CalendarClock from '@/assets/images/figma/calendar-clock.svg';
+import CalendarMoon from '@/assets/images/figma/calendar-moon.svg';
+import CalendarPrevious from '@/assets/images/figma/calendar-previous.svg';
+import CalendarNext from '@/assets/images/figma/calendar-next.svg';
+import CalendarPlus from '@/assets/images/figma/calendar-plus.svg';
+import CalendarCategory from '@/assets/images/figma/calendar-category.svg';
+import FeedingWarning from '@/assets/images/figma/feeding-warning.svg';
+import CleaningIcon from '@/assets/images/figma/cleaning.svg';
+import RiderAwayIcon from '@/assets/images/figma/rider-away.svg';
+import FarrierAwayIcon from '@/assets/images/figma/farrier-away.svg';
 
 const palette = theme.colors;
 const statusColors = theme.status;
 const gradients = theme.gradients;
 
-const filters = ['Pass', 'Riddagar', 'Ridhus', 'Tävling', 'Vård'] as const;
+const filters = ['Pass', 'Riddagar', 'Tävling', 'Ridhus', 'Vård'] as const;
 type Filter = (typeof filters)[number];
 
 const careEventTypeLabels = {
@@ -355,7 +366,7 @@ export default function CalendarScreen() {
   const resolvedFilter = React.useMemo(() => resolveFilterFromSection(section), [section]);
   const [activeFilter, setActiveFilter] = React.useState<Filter>(resolvedFilter ?? 'Pass');
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
-  const [legendExpanded, setLegendExpanded] = React.useState(false);
+  const [legendExpanded, setLegendExpanded] = React.useState(true);
   const [categoryIndex, setCategoryIndex] = React.useState(0);
   const [monthCursor, setMonthCursor] = React.useState(() => startOfMonth(new Date()));
   const [arenaModalVisible, setArenaModalVisible] = React.useState(false);
@@ -1451,18 +1462,20 @@ export default function CalendarScreen() {
           {noticeSaveError && !dayEventModalVisible && !arenaStatusModalVisible && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
           {noticeSaving && !dayEventModalVisible && !arenaStatusModalVisible && <Text style={styles.modalHint}>Sparar…</Text>}
           <Card tone="muted" style={[styles.filterRow, isDesktopWeb && styles.filterRowDesktop]}>
-            {filters.map((label) => {
+            {filters.slice(0, 3).map((label) => {
               const active = label === activeFilter;
               return (
                 <TouchableOpacity
                   key={label}
+                  style={styles.filterButton}
                   onPress={() => setActiveFilter(label)}
+                  activeOpacity={0.7}
                   accessibilityRole="button"
                   accessibilityLabel={filterLabels[label]}
                   accessibilityState={{ selected: active }}
                   {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                 >
-                  <Pill active={active} style={[styles.filterChip, isDesktopWeb && styles.filterChipDesktop]}>
+                  <Pill style={[styles.filterChip, active && styles.filterChipActive, isDesktopWeb && styles.filterChipDesktop]}>
                     <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
                       {filterLabels[label]}
                     </Text>
@@ -1472,82 +1485,61 @@ export default function CalendarScreen() {
             })}
           </Card>
 
-          {activeFilter === 'Pass' && (
-            <Card tone="muted" style={[styles.subFilterRow, isDesktopWeb && styles.subFilterRowDesktop]}>
-              {passViewOptions.map((option) => {
-                const active = option.id === passView;
-                return (
-                  <TouchableOpacity
-                    key={option.id}
-                    onPress={() => setPassView(option.id)}
-                    accessibilityRole="button"
-                    accessibilityLabel={option.label}
-                    accessibilityState={{ selected: active }}
-                    {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
-                  >
-                    <Pill active={active} style={[styles.subFilterChip, isDesktopWeb && styles.subFilterChipDesktop]}>
-                      <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
-                        {option.label}
-                      </Text>
-                    </Pill>
-                  </TouchableOpacity>
-                );
-              })}
-            </Card>
-          )}
+          <View style={[styles.subFilterRow, isDesktopWeb && styles.subFilterRowDesktop]}>
+            {activeFilter === 'Pass' ? passViewOptions.map((option) => {
+              const active = option.id === passView;
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={styles.utilityButton}
+                  onPress={() => setPassView(option.id)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ selected: active }}
+                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
+                >
+                  <Pill style={[styles.subFilterChip, active && styles.subFilterChipActive, isDesktopWeb && styles.subFilterChipDesktop]}>
+                    <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
+                      {option.label}
+                    </Text>
+                  </Pill>
+                </TouchableOpacity>
+              );
+            }) : null}
+            {filters.slice(3).map((label) => {
+              const active = activeFilter === label;
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={styles.utilityButton}
+                  onPress={() => setActiveFilter(label)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={filterLabels[label]}
+                  accessibilityState={{ selected: active }}
+                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
+                >
+                  <Pill style={[styles.subFilterChip, active && styles.subFilterChipActive]}>
+                    <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
+                      {filterLabels[label]}
+                    </Text>
+                  </Pill>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
 
           {activeFilter === 'Pass' && (isDesktopWeb || legendExpanded) && (
-            <Card tone="muted" style={[styles.legendCard, isDesktopWeb && styles.legendCardDesktop]}>
+            <View style={[styles.legendCard, isDesktopWeb && styles.legendCardDesktop]}>
               {legendItems.map((item) => (
                 <View key={item.label} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                  <CalendarLegendIcon id={item.id} color={item.color} />
                   <Text style={styles.legendLabel}>{item.label}</Text>
                 </View>
               ))}
-            </Card>
-          )}
-          {activeFilter === 'Pass' ? (
-            <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
-              {!isDesktopWeb ? (
-                <TouchableOpacity
-                  style={styles.legendToggle}
-                  onPress={() => setLegendExpanded((expanded) => !expanded)}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Färgförklaring"
-                  accessibilityState={{ expanded: legendExpanded }}
-                  aria-expanded={legendExpanded}
-                >
-                  <Feather name="info" size={15} color={palette.secondaryText} />
-                  <Text style={styles.legendToggleText}>Färgförklaring</Text>
-                  <Feather name={legendExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={palette.secondaryText} />
-                </TouchableOpacity>
-              ) : null}
-              {canManageAssignments ? (
-                <TouchableOpacity
-                  style={styles.recurringButton}
-                  onPress={openRecurringModal}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Skapa återkommande pass"
-                >
-                  <Feather name="repeat" size={14} color={palette.primary} />
-                  <Text style={styles.recurringButtonText}>Återkommande pass</Text>
-                </TouchableOpacity>
-              ) : null}
-              {canManageAssignments ? (
-                <TouchableOpacity
-                  style={styles.recurringButton}
-                  onPress={() => setSeriesEditor({})}
-                  accessibilityRole="button"
-                  accessibilityLabel="Redigera återkommande pass"
-                >
-                  <Feather name="edit-3" size={14} color={palette.primary} />
-                  <Text style={styles.recurringButtonText}>Redigera serier</Text>
-                </TouchableOpacity>
-              ) : null}
             </View>
-          ) : null}
+          )}
 
           {activeFilter === 'Pass' && isDesktopWeb && passView === 'all' ? (
             <View style={styles.monthSection}>
@@ -1559,7 +1551,7 @@ export default function CalendarScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Föregående månad"
                 >
-                  <Feather name="chevron-left" size={18} color={palette.icon} />
+                  <CalendarPrevious />
                 </TouchableOpacity>
                 <Text style={styles.monthLabel}>{monthLabel}</Text>
                 <TouchableOpacity
@@ -1569,7 +1561,7 @@ export default function CalendarScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Nästa månad"
                 >
-                  <Feather name="chevron-right" size={18} color={palette.icon} />
+                  <CalendarNext />
                 </TouchableOpacity>
               </View>
               <View style={styles.monthWeekHeaderRow}>
@@ -1684,11 +1676,7 @@ export default function CalendarScreen() {
                 accessibilityLabel="Föregående vecka"
                 accessibilityState={{ disabled: !canGoPreviousWeek }}
               >
-                <Feather
-                  name="chevron-left"
-                  size={16}
-                  color={canGoPreviousWeek ? palette.icon : palette.secondaryText}
-                />
+                <CalendarPrevious />
               </TouchableOpacity>
               <View style={styles.weekTitleBlock}>
                 <Text style={styles.weekTitle}>
@@ -1704,11 +1692,7 @@ export default function CalendarScreen() {
                 accessibilityLabel="Nästa vecka"
                 accessibilityState={{ disabled: !canGoNextWeek }}
               >
-                <Feather
-                  name="chevron-right"
-                  size={16}
-                  color={canGoNextWeek ? palette.icon : palette.secondaryText}
-                />
+                <CalendarNext />
               </TouchableOpacity>
             </View>
           ) : activeFilter === 'Pass' ? (
@@ -1776,6 +1760,49 @@ export default function CalendarScreen() {
               ) : null}
             </View>
           )}
+
+          {activeFilter === 'Pass' ? (
+            <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
+              {!isDesktopWeb ? (
+                <TouchableOpacity
+                  style={styles.legendToggle}
+                  onPress={() => setLegendExpanded((expanded) => !expanded)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Färgförklaring"
+                  accessibilityState={{ expanded: legendExpanded }}
+                  aria-expanded={legendExpanded}
+                >
+                  <Feather name="info" size={15} color={palette.secondaryText} />
+                  <Text style={styles.legendToggleText}>Färgförklaring</Text>
+                  <Feather name={legendExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={palette.secondaryText} />
+                </TouchableOpacity>
+              ) : null}
+              {canManageAssignments ? (
+                <TouchableOpacity
+                  style={styles.recurringButton}
+                  onPress={openRecurringModal}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Skapa återkommande pass"
+                >
+                  <Feather name="repeat" size={14} color={palette.primary} />
+                  <Text style={styles.recurringButtonText}>Återkommande pass</Text>
+                </TouchableOpacity>
+              ) : null}
+              {canManageAssignments ? (
+                <TouchableOpacity
+                  style={styles.recurringButton}
+                  onPress={() => setSeriesEditor({})}
+                  accessibilityRole="button"
+                  accessibilityLabel="Redigera återkommande pass"
+                >
+                  <Feather name="edit-3" size={14} color={palette.primary} />
+                  <Text style={styles.recurringButtonText}>Redigera serier</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
 
           {activeFilter === 'Riddagar' && (
             <View style={styles.ridingSection}>
@@ -1921,7 +1948,7 @@ export default function CalendarScreen() {
                   onPress={handlePrevMonth}
                   activeOpacity={0.8}
                 >
-                  <Feather name="chevron-left" size={18} color={palette.icon} />
+                  <CalendarPrevious />
                 </TouchableOpacity>
                 <Text style={styles.monthLabel}>{monthLabel}</Text>
                 <TouchableOpacity
@@ -1929,7 +1956,7 @@ export default function CalendarScreen() {
                   onPress={handleNextMonth}
                   activeOpacity={0.8}
                 >
-                  <Feather name="chevron-right" size={18} color={palette.icon} />
+                  <CalendarNext />
                 </TouchableOpacity>
               </View>
               <View style={styles.monthWeekHeaderRow}>
@@ -2238,7 +2265,7 @@ export default function CalendarScreen() {
             <View style={styles.competitionSection}>
               <TouchableOpacity style={styles.competitionCategory} onPress={handleCategoryToggle}>
                 <Text style={styles.competitionCategoryText}>{selectedCategory}</Text>
-                <Feather name="chevron-down" size={14} color={palette.icon} />
+                <CalendarCategory />
               </TouchableOpacity>
               <View style={styles.competitionList}>
                 {competitionEvents.length > 0 ? (
@@ -2948,7 +2975,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
   const showFooter = mode !== 'mine' && openSlots === 0 && Boolean(onCreateAssignment);
 
   return (
-    <Card tone="muted" elevated style={[styles.dayCard, slots.length === 0 && styles.dayCardEmpty]}>
+    <Card style={[styles.dayCard, slots.length === 0 && styles.dayCardEmpty]}>
       <View style={styles.dayHeader}>
         <View style={[styles.dayBadge, selected ? styles.dayBadgeActive : styles.dayBadgeInactive]}>
           <Text style={[styles.dayBadgeText, selected ? styles.dayBadgeTextActive : undefined]}>
@@ -3000,7 +3027,6 @@ const RegularDayCard = React.memo(function RegularDayCard({
             key={slot.id}
             label={slot.label}
             icon={slot.icon}
-            color={slot.color}
             note={slot.note}
             assignedTo={slot.assignedTo}
             isMine={slot.isMine}
@@ -3056,7 +3082,6 @@ const RegularDayCard = React.memo(function RegularDayCard({
 const ScheduleIcon = React.memo(function ScheduleIcon({
   label,
   icon,
-  color,
   note,
   assignedTo,
   isMine,
@@ -3076,7 +3101,6 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
 }: {
   label: string;
   icon: RegularSlotIcon;
-  color: string;
   note?: string;
   assignedTo?: string;
   isMine: boolean;
@@ -3103,18 +3127,18 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
 
   const renderIcon = () => {
     if (icon === 'sun') {
-      return <Feather name="sun" size={16} color={color} />;
+      return <CalendarSun />;
     }
     if (icon === 'moon') {
-      return <Feather name="moon" size={16} color={color} />;
+      return <CalendarMoon />;
     }
-    return <Feather name="clock" size={16} color={color} />;
+    return <CalendarClock />;
   };
 
   return (
     <View style={[styles.scheduleIcon, isLast && styles.scheduleIconLast]}>
       <View style={styles.scheduleRow}>
-        <View style={[styles.scheduleIconBadge, { backgroundColor: `${color}1A` }]}>
+        <View style={styles.scheduleIconBadge}>
           {renderIcon()}
         </View>
         <View style={styles.scheduleBody}>
@@ -3237,6 +3261,21 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
   );
 });
 
+function CalendarLegendIcon({ id, color: markerColor }: { id: DayEventTone; color: string }) {
+  if (id === 'feeding') {
+    return (
+      <View style={styles.feedingLegendIcons}>
+        <View style={styles.feedingLegendMarker} />
+        <FeedingWarning />
+      </View>
+    );
+  }
+  if (id === 'cleaning') return <CleaningIcon />;
+  if (id === 'riderAway') return <RiderAwayIcon />;
+  if (id === 'farrierAway') return <FarrierAwayIcon />;
+  return <View style={[styles.legendDot, { backgroundColor: markerColor }]} />;
+}
+
 const RidingDayRow = React.memo(function RidingDayRow({
   label,
   upcoming,
@@ -3249,16 +3288,22 @@ const RidingDayRow = React.memo(function RidingDayRow({
   onRegisterRide?: () => void;
 }) {
   return (
-    <Card tone="muted" style={[styles.ridingRow, isToday && styles.ridingRowActive]}>
-      <View>
-        <Text style={[styles.ridingLabel, isToday ? styles.ridingLabelActive : undefined]}>
+    <Card style={styles.ridingRow}>
+      <View style={styles.ridingInfo}>
+        <Text style={[styles.ridingLabel, isToday && styles.ridingLabelActive]}>
           {label}
         </Text>
         {upcoming ? <Text style={styles.ridingSubtitle}>{upcoming}</Text> : null}
       </View>
       {onRegisterRide ? (
-        <TouchableOpacity style={styles.ridingRegisterButton} onPress={onRegisterRide}>
-          <Feather name="plus" size={16} color={palette.inverseText} />
+        <TouchableOpacity
+          style={styles.ridingRegisterButton}
+          onPress={onRegisterRide}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={`Registrera ridpass ${label}`}
+        >
+          <CalendarPlus />
           <Text style={styles.ridingRegisterText}>Registrera ridpass</Text>
         </TouchableOpacity>
       ) : null}
@@ -3343,20 +3388,19 @@ function CareEventsSection() {
 
 const CompetitionCard = React.memo(function CompetitionCard({ event }: { event: CompetitionEvent }) {
   const statusLabel = event.status === 'open' ? 'ÖPPEN' : 'STÄNGD';
-  const statusColor = event.status === 'open' ? palette.success : palette.error;
+  const statusColor = event.status === 'open' ? palette.primary : palette.error;
 
   return (
-    <Card tone="muted" elevated style={styles.competitionCard}>
+    <Card style={styles.competitionCard}>
       <Text style={styles.competitionDate}>
         {event.start}
-        {'\n'}
-        {event.end}
+        {event.end !== event.start ? `\n${event.end}` : ''}
       </Text>
       <View style={styles.competitionDetails}>
         <Text style={styles.competitionTitle}>{event.title}</Text>
-        <View style={[styles.competitionBadge, { backgroundColor: `${statusColor}1A` }]}>
-          <Text style={[styles.competitionBadgeText, { color: statusColor }]}>{statusLabel}</Text>
-        </View>
+      </View>
+      <View style={[styles.competitionBadge, { backgroundColor: statusColor }]}>
+        <Text style={styles.competitionBadgeText}>{statusLabel}</Text>
       </View>
     </Card>
   );
@@ -3567,6 +3611,39 @@ function resolveNoteColor(note: string) {
 }
 
 const styles = StyleSheet.create({
+  filterButton: {
+    flex: 1,
+    minWidth: 0,
+  },
+  filterChipActive: {
+    backgroundColor: palette.surface,
+  },
+  utilityButton: {
+    flex: 1,
+    maxWidth: 100,
+    minWidth: 0,
+  },
+  subFilterChipActive: {
+    backgroundColor: palette.surfaceMuted,
+  },
+  feedingLegendIcons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  feedingLegendMarker: {
+    width: 12,
+    height: 12,
+    borderRadius: 1.2,
+    borderLeftWidth: 1.2,
+    borderLeftColor: '#FF0000',
+    backgroundColor: 'rgba(255,0,0,0.1)',
+  },
+  ridingInfo: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
   background: {
     flex: 1,
   },
@@ -3583,9 +3660,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 9,
     paddingBottom: 120,
-    gap: 14,
+    gap: 20,
     paddingTop: 10,
   },
   contentDesktop: {
@@ -3616,89 +3693,111 @@ const styles = StyleSheet.create({
     borderColor: palette.primary,
   },
   onboardingBackText: {
+    fontFamily: theme.fonts.semibold,
     color: palette.inverseText,
     fontWeight: '600',
   },
   filterRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    padding: space.xs,
+    padding: 5,
     width: '100%',
+    maxWidth: 350,
+    alignSelf: 'center',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
     gap: 4,
-    backgroundColor: palette.surface,
+    backgroundColor: palette.surfaceMuted,
+    borderRadius: 12,
+    borderWidth: 0,
   },
   filterRowDesktop: {
-    justifyContent: 'flex-start',
-    gap: 12,
-    paddingHorizontal: space.md,
+    maxWidth: 520,
+    alignSelf: 'flex-start',
   },
   subFilterRow: {
     flexDirection: 'row',
-    padding: space.xs,
     width: '100%',
+    maxWidth: 350,
+    alignSelf: 'center',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: -12,
+    marginBottom: -8,
   },
   subFilterRowDesktop: {
-    justifyContent: 'flex-start',
-    paddingHorizontal: space.md,
+    maxWidth: 520,
+    alignSelf: 'flex-start',
   },
   filterChip: {
-    flex: 1,
-    width: 'auto',
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 4,
+    paddingVertical: 10,
     minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   filterChipDesktop: {
-    flex: 0,
-    paddingHorizontal: 20,
+    paddingHorizontal: 14,
   },
   subFilterChip: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   subFilterChipDesktop: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
   },
   filterChipText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: palette.secondaryText,
+    fontFamily: theme.fonts.regular,
+    fontSize: 15,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   filterChipTextActive: {
-    color: palette.inverseText,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   subFilterText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
     color: palette.secondaryText,
   },
   subFilterTextActive: {
-    color: palette.inverseText,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   legendCard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: space.md,
+    gap: 5,
+    maxWidth: 351,
+    width: '100%',
+    alignSelf: 'center',
     justifyContent: 'center',
-    paddingHorizontal: space.md,
-    paddingVertical: space.md,
   },
   legendCardDesktop: {
+    maxWidth: '100%',
+    alignSelf: 'flex-start',
     justifyContent: 'flex-start',
   },
   recurringRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    alignItems: 'flex-start',
-    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
   },
   legendToggle: {
@@ -3709,6 +3808,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   legendToggleText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
@@ -3718,24 +3818,31 @@ const styles = StyleSheet.create({
   recurringButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
+    gap: 6,
+    paddingHorizontal: 12,
     paddingVertical: 10,
     minHeight: 44,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 33,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
     borderColor: palette.border,
   },
   recurringButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.primary,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.full,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   legendDot: {
     width: 10,
@@ -3746,8 +3853,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.secondaryText,
   },
   legendLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    color: palette.secondaryText,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   monthSection: {
     gap: 16,
@@ -3764,16 +3873,13 @@ const styles = StyleSheet.create({
   monthNavButton: {
     width: 44,
     height: 44,
-    borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
   },
   monthLabel: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontSize: 15,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   monthWeekHeaderRow: {
@@ -3783,6 +3889,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   monthWeekHeaderLabel: {
+    fontFamily: theme.fonts.semibold,
     flex: 1,
     fontSize: 12,
     fontWeight: '600',
@@ -3809,6 +3916,7 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   monthWeekNumberText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 11,
     color: palette.secondaryText,
     fontWeight: '600',
@@ -3840,6 +3948,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   monthDayNumber: {
+    fontFamily: theme.fonts.bold,
     fontSize: 14,
     fontWeight: '700',
     color: palette.primaryText,
@@ -3851,12 +3960,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(62,155,95,0.12)',
+    backgroundColor: palette.primaryText,
   },
   todayPillText: {
+    fontFamily: theme.fonts.bold,
     fontSize: 10,
     fontWeight: '700',
-    color: palette.primary,
+    color: palette.inverseText,
   },
   monthEventRow: {
     flexDirection: 'row',
@@ -3869,6 +3979,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   monthEventMore: {
+    fontFamily: theme.fonts.regular,
     fontSize: 10,
     color: palette.secondaryText,
   },
@@ -3886,6 +3997,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   monthAssignmentText: {
+    fontFamily: theme.fonts.semibold,
     flex: 1,
     minWidth: 0,
     fontSize: 12,
@@ -3901,6 +4013,7 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
   },
   monthMoreText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
     color: palette.secondaryText,
   },
@@ -3909,7 +4022,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 16,
-    paddingVertical: 4,
+    paddingHorizontal: 1,
   },
   listHeaderRow: {
     flexDirection: 'row',
@@ -3930,6 +4043,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   listHeaderActionText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
     color: palette.primary,
@@ -3937,10 +4051,8 @@ const styles = StyleSheet.create({
   weekButton: {
     width: 44,
     height: 44,
-    backgroundColor: palette.surfaceTint,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.full,
   },
   weekButtonDisabled: {
     opacity: 0.6,
@@ -3951,17 +4063,19 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   weekTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontSize: 15,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   weekSubtitle: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
+    fontWeight: '400',
     color: palette.secondaryText,
-    letterSpacing: 0.3,
   },
   scheduleList: {
-    gap: 10,
+    gap: 20,
   },
   scheduleListDesktop: {
     maxWidth: 720,
@@ -3969,15 +4083,19 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   emptyStateCard: {
-    padding: space.lg,
+    padding: 20,
     gap: 10,
+    borderRadius: 12,
+    backgroundColor: palette.surface,
   },
   emptyStateTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   emptyStateBody: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
     lineHeight: 18,
@@ -3998,6 +4116,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emptyStateActionText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -4005,6 +4124,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   emptyStatePrimaryText: {
+    fontFamily: theme.fonts.bold,
     color: palette.inverseText,
     fontWeight: '700',
   },
@@ -4017,47 +4137,60 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   dayCard: {
-    paddingHorizontal: space.lg,
-    paddingVertical: 16,
-    gap: 14,
+    paddingBottom: 10,
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   dayCardEmpty: {
-    paddingVertical: 12,
+    paddingBottom: 15,
   },
   dayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingTop: 15,
+    gap: 8,
   },
   dayBadge: {
     borderRadius: radius.full,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   dayBadgeInactive: {
-    backgroundColor: palette.surfaceMuted,
+    backgroundColor: 'transparent',
+    paddingHorizontal: 0,
   },
   dayBadgeActive: {
-    backgroundColor: palette.icon,
+    backgroundColor: palette.primaryText,
   },
   dayBadgeText: {
-    fontSize: 14,
-    color: palette.primaryText,
+    fontFamily: theme.fonts.medium,
+    fontSize: 12,
     fontWeight: '500',
+    color: palette.secondaryText,
   },
   dayBadgeTextActive: {
     color: palette.inverseText,
   },
   dayStatusGroup: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    flexShrink: 1,
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 6,
   },
   dayEventRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-    marginTop: 10,
+    gap: 8,
+    paddingHorizontal: 15,
   },
   dayEventChip: {
     flexDirection: 'row',
@@ -4065,6 +4198,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   dayEventText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4075,31 +4209,32 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   dayStatusPillText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.primary,
   },
   dayStatusLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   daySlots: {
     flexDirection: 'column',
-    gap: 8,
   },
   scheduleIcon: {
     width: '100%',
-    paddingVertical: space.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: palette.border,
+    paddingHorizontal: 15,
+    paddingVertical: 15,
+    minHeight: 45,
   },
   scheduleIconLast: {
     borderBottomWidth: 0,
   },
   scheduleRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: space.md,
+    alignItems: 'center',
+    gap: 10,
     width: '100%',
   },
   scheduleContent: {
@@ -4123,40 +4258,42 @@ const styles = StyleSheet.create({
   scheduleHeaderRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'flex-start',
-    gap: 12,
+    gap: 10,
   },
   scheduleTitleGroup: {
     flexGrow: 1,
     flexShrink: 1,
     flexBasis: 160,
     minWidth: 0,
-    gap: 8,
+    alignItems: 'flex-end',
+    gap: 4,
   },
   scheduleActionColumn: {
     alignItems: 'flex-end',
     maxWidth: '100%',
-    gap: 10,
+    gap: 6,
   },
   scheduleTime: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: color.textMuted,
-    letterSpacing: -0.1,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
+    color: palette.secondaryText,
   },
   scheduleIconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.full,
+    width: 20,
+    height: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   scheduleLabel: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: color.text,
-    letterSpacing: -0.2,
+    fontFamily: theme.fonts.medium,
+    width: '100%',
+    fontSize: 12,
+    fontWeight: '500',
+    color: palette.secondaryText,
+    textAlign: 'right',
   },
   scheduleTag: {
     flexDirection: 'row',
@@ -4180,8 +4317,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,22,34,0.06)',
   },
   scheduleTagText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.secondaryText,
   },
   scheduleTagOpenText: {
@@ -4199,9 +4337,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   scheduleAssignee: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    fontWeight: '500',
-    color: color.text,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   scheduleManageButton: {
     flexDirection: 'row',
@@ -4210,8 +4349,10 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    borderRadius: 33,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.primaryText,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -4219,7 +4360,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'flex-end',
+    gap: 6,
   },
   scheduleCantButton: {
     flexDirection: 'row',
@@ -4227,29 +4369,35 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: radius.full,
-    backgroundColor: 'rgba(15,22,34,0.06)',
+    borderRadius: 33,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
   scheduleCantLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
   },
   scheduleManageLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    fontWeight: '600',
-    color: palette.primary,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   scheduleTakeButton: {
     backgroundColor: palette.primary,
+    borderColor: palette.primary,
   },
   scheduleManageButtonDisabled: {
     opacity: 0.65,
   },
   scheduleCompleteButton: {
     backgroundColor: palette.success,
+    borderColor: palette.success,
   },
   scheduleTakeLabel: {
     color: palette.inverseText,
@@ -4258,7 +4406,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: 6,
+    paddingHorizontal: 15,
+    paddingBottom: 5,
   },
   dayStatusBadge: {
     flexDirection: 'row',
@@ -4270,15 +4419,18 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   dayStatusBadgeText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.warning,
   },
   dayActionButton: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    borderRadius: 33,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -4286,10 +4438,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   dayActionLabel: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
     color: palette.primaryText,
-    letterSpacing: -0.1,
   },
   dayActionLabelPrimary: {
     color: palette.inverseText,
@@ -4304,11 +4456,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   sectionMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
@@ -4318,16 +4472,18 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: radius.full,
+    minHeight: 44,
+    borderRadius: 33,
     backgroundColor: palette.primary,
   },
   sectionActionText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.inverseText,
   },
   ridingList: {
-    gap: 14,
+    gap: 10,
   },
   bookingGroups: {
     gap: 14,
@@ -4342,6 +4498,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   bookingDate: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4354,12 +4511,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   bookingCard: {
-    padding: space.lg,
+    padding: 15,
     gap: 6,
+    backgroundColor: palette.surface,
+    borderRadius: 12,
   },
   rideLogCard: {
-    padding: space.lg,
+    padding: 15,
     gap: 6,
+    backgroundColor: palette.surface,
+    borderRadius: 12,
   },
   bookingRow: {
     flexDirection: 'row',
@@ -4382,28 +4543,34 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   bookingTime: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
   },
   rideLogHorse: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
   },
   bookingPurpose: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.primaryText,
   },
   rideLogMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   bookingMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
     color: palette.secondaryText,
   },
   bookingNote: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
     marginTop: 4,
@@ -4439,11 +4606,13 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   dayEventLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
   },
   dayEventMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
@@ -4474,6 +4643,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   statusQuickText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.primaryText,
@@ -4497,6 +4667,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   modalTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 18,
     fontWeight: '600',
     color: palette.primaryText,
@@ -4505,15 +4676,18 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   modalHint: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   modalLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
   },
   modalInput: {
+    fontFamily: theme.fonts.regular,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
     borderRadius: radius.md,
@@ -4545,6 +4719,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   weekdayText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4567,6 +4742,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   recurringAssignText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4587,6 +4763,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   modalGhostText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
     color: palette.primaryText,
@@ -4601,6 +4778,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   modalPrimaryText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
     color: palette.inverseText,
@@ -4628,6 +4806,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   selectorChipText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4651,6 +4830,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   toneLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
@@ -4667,12 +4847,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: space.lg,
-    paddingVertical: space.lg,
-    gap: space.md,
+    padding: 10,
+    gap: 10,
     flexWrap: 'wrap',
-    backgroundColor: palette.surfaceTint,
-    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderRadius: 12,
+    borderColor: palette.border,
+    borderWidth: 1.5,
   },
   ridingRowActive: {
     backgroundColor: palette.surfaceTint,
@@ -4680,14 +4861,22 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   ridingLabel: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    alignSelf: 'flex-start',
+    fontSize: 12,
+    fontWeight: '500',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.full,
+    overflow: 'hidden',
     color: palette.primaryText,
   },
   ridingLabelActive: {
-    color: palette.primaryText,
+    backgroundColor: palette.primaryText,
+    color: palette.inverseText,
   },
   ridingSubtitle: {
+    fontFamily: theme.fonts.regular,
     marginTop: 4,
     fontSize: 12,
     color: palette.secondaryText,
@@ -4695,45 +4884,59 @@ const styles = StyleSheet.create({
   ridingRegisterButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: palette.primary,
-    borderRadius: radius.full,
+    justifyContent: 'center',
+    gap: 10,
+    minHeight: 44,
+    backgroundColor: palette.surface,
+    borderColor: palette.primaryText,
+    borderWidth: 1,
+    borderRadius: 33,
     paddingVertical: 10,
-    paddingHorizontal: 18,
+    paddingHorizontal: 15,
   },
   ridingRegisterText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.inverseText,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
+    color: palette.primaryText,
   },
   competitionSection: {
     gap: 16,
   },
   competitionCategory: {
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: palette.surfaceTint,
-    borderRadius: radius.full,
-    paddingHorizontal: 16,
+    justifyContent: 'center',
+    gap: 10,
+    minHeight: 44,
+    paddingHorizontal: 15,
     paddingVertical: 10,
   },
   competitionCategoryText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontSize: 15,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   competitionList: {
-    gap: 14,
+    gap: 0,
   },
   competitionCard: {
     flexDirection: 'row',
-    gap: space.md,
-    padding: space.lg,
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 15,
+    borderRadius: 0,
+    borderWidth: 0,
+    borderBottomWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: 'transparent',
+    shadowOpacity: 0,
+    elevation: 0,
   },
   careEventSectionTitle: {
+    fontFamily: theme.fonts.bold,
     fontSize: 12,
     fontWeight: '700',
     color: palette.secondaryText,
@@ -4750,23 +4953,27 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   careEventDate: {
+    fontFamily: theme.fonts.bold,
     fontSize: 12,
     fontWeight: '700',
     color: palette.primaryText,
     textTransform: 'uppercase',
   },
   careEventStatus: {
+    fontFamily: theme.fonts.bold,
     fontSize: 11,
     fontWeight: '700',
     color: palette.primary,
     textTransform: 'uppercase',
   },
   careEventTitle: {
+    fontFamily: theme.fonts.bold,
     fontSize: 15,
     fontWeight: '700',
     color: palette.primaryText,
   },
   careEventMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
@@ -4778,36 +4985,40 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   careEventLinkText: {
+    fontFamily: theme.fonts.bold,
     fontSize: 12,
     fontWeight: '700',
     color: palette.primary,
   },
   competitionDate: {
-    width: 88,
+    fontFamily: theme.fonts.regular,
+    width: 56,
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '400',
     color: palette.primaryText,
-    lineHeight: 18,
+    lineHeight: 16,
   },
   competitionDetails: {
     flex: 1,
-    gap: 12,
-    minWidth: 180,
+    minWidth: 0,
   },
   competitionTitle: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    fontWeight: '400',
     color: palette.primaryText,
-    lineHeight: 20,
+    lineHeight: 16,
   },
   competitionBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.full,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    alignSelf: 'center',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
   },
   competitionBadgeText: {
-    fontSize: 12,
+    fontFamily: theme.fonts.bold,
+    fontSize: 10,
     fontWeight: '700',
+    color: palette.inverseText,
   },
 });

@@ -6,9 +6,24 @@ import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useFonts } from 'expo-font';
 
 export default function RootLayout() {
   useFrameworkReady();
+  const [fontsLoaded, fontError] = useFonts({
+    Inter: require('@/assets/fonts/Inter-Regular.ttf'),
+    'Inter-Medium': require('@/assets/fonts/Inter-Medium.ttf'),
+    'Inter-SemiBold': require('@/assets/fonts/Inter-SemiBold.ttf'),
+    'Inter-Bold': require('@/assets/fonts/Inter-Bold.ttf'),
+  });
+
+  React.useEffect(() => {
+    if (fontError) console.warn('[design fonts] Could not load Inter; using the system font.', fontError.message);
+  }, [fontError]);
+
+  if (!fontsLoaded && !fontError) {
+    return <View style={loadingStyles.container}><ActivityIndicator color="#0099FF" /></View>;
+  }
 
   return (
     <ErrorBoundary>
