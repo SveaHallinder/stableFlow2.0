@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { URL } from 'node:url';
@@ -322,26 +323,88 @@ test('private images: deadline ends a stalled actual SDK session read and blocks
   assert.equal(requests.length, 0); assert.deepEqual(logs, [['[private image] signing timed out']]);
 });
 
-test('private images: actual uploader keeps the stored reference and uses unique INSERT rather than overwrite', async () => {
+function nativeUploader(uriBytes) {
   const source = readFileSync(new URL('context/AppDataContext.tsx', root), 'utf8');
   const ast = ts.createSourceFile('AppDataContext.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const selected = ast.statements.filter(node => ts.isFunctionDeclaration(node)
-    && ['getExtensionFromUri', 'resolveContentType', 'resolveBlob', 'uploadImageToStorage'].includes(node.name?.text));
-  assert.equal(selected.length, 4);
-  const requests = [];
+    && ['getExtensionFromUri', 'resolveContentType', 'resolveImageBytes', 'uploadPostImage', 'uploadImageToStorage'].includes(node.name?.text));
+  assert.equal(selected.length, 5);
+  const requests = [], imageRequests = [], invalidations = [];
   const client = createClient(project, 'synthetic-anon-key', {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { fetch: async (input, options) => { requests.push({ url: new URL(String(input)), options }); return response({ Key: 'synthetic-object' }); } },
   });
-  const { outputText } = ts.transpileModule(selected.map(n => n.getText(ast)).join('\n') + '\nthis.upload=uploadImageToStorage;', {
+  // Use React Native's actual Response polyfill with its native Blob limitation.
+  class NativeBlob {
+    constructor(parts = []) {
+      if (parts.some(part => part instanceof ArrayBuffer || ArrayBuffer.isView(part))) {
+        throw new Error("Creating blobs from 'ArrayBuffer' and 'ArrayBufferView' are not supported");
+      }
+    }
+  }
+  const nativeGlobals = { Blob: NativeBlob, FileReader: function () {}, ArrayBuffer, Uint8Array, DataView,
+    URLSearchParams: globalThis.URLSearchParams, FormData: globalThis.FormData };
+  const polyfill = {};
+  const nativeRequire = createRequire(createRequire(import.meta.url).resolve('react-native/package.json'));
+  vm.runInNewContext(readFileSync(nativeRequire.resolve('whatwg-fetch/dist/fetch.umd.js'), 'utf8'), {
+    exports: polyfill, module: { exports: polyfill }, self: nativeGlobals, ...nativeGlobals,
+  });
+  const { createTimeoutFetch } = load('lib/requestTimeout.ts', {}, {
+    ...nativeGlobals, Response: polyfill.Response, Request: polyfill.Request, AbortController: globalThis.AbortController,
+  });
+  const { outputText } = ts.transpileModule(selected.map(n => n.getText(ast)).join('\n')
+    + '\nthis.upload=uploadImageToStorage;this.uploadPost=uploadPostImage;', {
     compilerOptions: { target: ts.ScriptTarget.ES2022 },
   });
-  const runtime = { supabase: client, generateId: () => F, imageContentTypes: { jpg: 'image/jpeg' },
-    fetch: async input => { assert.ok(String(input).startsWith('data:')); return new globalThis.Response(new Uint8Array([1, 2])); } };
+  const runtime = { ...nativeGlobals, supabase: client, generateId: () => F, imageContentTypes: { jpg: 'image/jpeg' },
+    POSTS_BUCKET: 'posts', invalidateSignedUrl: path => invalidations.push(path), createTimeoutFetch,
+    fetch: async input => {
+      imageRequests.push(String(input));
+      assert.ok(String(input).startsWith('file://'), 'Native image loading cannot use data: URLs');
+      return new globalThis.Response(new Uint8Array(uriBytes), { headers: { 'Content-Type': 'image/jpeg' } });
+    } };
   vm.runInNewContext(outputText, runtime, { filename: 'actual-private-uploader' });
-  const saved = await runtime.upload('avatars', S, { uri: 'file:///preview.jpg', base64: 'AQI=', mimeType: 'image/jpeg' });
-  assert.equal(saved.publicUrl, reference()); assert.equal(saved.path, `${S}/${F}.jpg`);
-  assert.equal(requests.length, 1); assert.equal(requests[0].options.method, 'POST');
-  assert.equal(new globalThis.Headers(requests[0].options.headers).get('x-upsert'), 'false');
-  assert.equal(requests[0].url.pathname, `/storage/v1/object/avatars/${S}/${F}.jpg`);
+  return { ...runtime, requests, imageRequests, invalidations };
+}
+
+test('private images: native uploaders preserve unique INSERT references and correct binary image bytes', async () => {
+  const cases = [
+    { bytes: [0, 1, 2, 127, 128, 254, 255] },
+    { bytes: [255, 0, 1, 2, 3], base64: '/wABAgM=' },
+    { bytes: [0, 1, 2, 127, 128, 254, 255], base64: ' AAECf4D+/w==\n' },
+    { bytes: [0, 1, 254, 255], base64: 'data:image/jpeg;base64,AAH+/w==' },
+    { bytes: [0, 1, 2], base64: 'AAEC' },
+  ];
+  for (const { bytes, base64 } of cases) {
+    for (const bucket of ['avatars', 'posts']) {
+      const f = nativeUploader(bytes);
+      const image = { uri: 'file:///preview.jpg', base64, mimeType: 'image/jpeg' };
+      const path = bucket === 'posts' ? `${S}/${A}/${B}/${F}.jpg` : `${S}/${F}.jpg`;
+      if (bucket === 'posts') {
+        assert.equal(await f.uploadPost({ stableId: S, userId: A, postId: B, image }), path);
+        assert.deepEqual(f.invalidations, [path]);
+      } else {
+        const saved = await f.upload(bucket, S, image);
+        assert.equal(saved.publicUrl, reference()); assert.equal(saved.path, path);
+      }
+      assert.equal(f.requests.length, 1); assert.equal(f.requests[0].options.method, 'POST');
+      assert.equal(f.requests[0].url.pathname, `/storage/v1/object/${bucket}/${path}`);
+      const headers = new globalThis.Headers(f.requests[0].options.headers);
+      assert.equal(headers.get('x-upsert'), 'false'); assert.equal(headers.get('content-type'), 'image/jpeg');
+      assert.ok(f.requests[0].options.body instanceof ArrayBuffer, 'Native storage upload must send raw bytes');
+      assert.deepEqual([...new Uint8Array(f.requests[0].options.body)], bytes);
+      assert.deepEqual(f.imageRequests, base64 ? [] : [image.uri]);
+    }
+  }
+});
+
+test('private images: malformed native image data cannot write storage or invalidate signed URLs', async () => {
+  const f = nativeUploader([]);
+  for (const base64 of ['A===', '!foo', 'AQI=extra', 'data:image/jpeg;base64,']) {
+    const image = { uri: 'file:///preview.jpg', base64, mimeType: 'image/jpeg' };
+    await assert.rejects(f.upload('avatars', S, image), /Kunde inte läsa bilddata/);
+    await assert.rejects(f.uploadPost({ stableId: S, userId: A, postId: B, image }), /Kunde inte läsa bilddata/);
+  }
+  assert.equal(f.requests.length, 0); assert.equal(f.imageRequests.length, 0);
+  assert.equal(f.invalidations.length, 0);
 });

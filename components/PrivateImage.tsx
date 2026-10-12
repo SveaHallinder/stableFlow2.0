@@ -106,7 +106,7 @@ export function PrivateImage({ source, style, resizeMode, accessibilityLabel,
   );
   return (
     <View style={[style, styles.placeholder]} accessibilityLabel={status === 'loading' ? 'Hämtar bild' : 'Bilden kunde inte visas'}>
-      {fallbackSource ? <Image source={fallbackSource} style={StyleSheet.absoluteFillObject} resizeMode={resizeMode} /> : null}
+      {fallbackSource ? <Image source={fallbackSource} style={StyleSheet.absoluteFill} resizeMode={resizeMode} /> : null}
       {status === 'loading' ? <ActivityIndicator color={theme.colors.mutedText} /> : (
         <>
           {!compact ? <Text style={styles.message}>Bilden kunde inte visas</Text> : null}

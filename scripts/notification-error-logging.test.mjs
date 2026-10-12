@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import test from 'node:test';
-import { URL } from 'node:url';
+import { pathToFileURL, URL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 import ts from 'typescript';
 
@@ -13,7 +14,9 @@ const source = await readFile(new URL('../lib/notifications.ts', import.meta.url
 const ast = ts.createSourceFile('notifications.ts', source, ts.ScriptTarget.Latest, true);
 const functions = ast.statements.filter(node => !ts.isImportDeclaration(node))
   .map(node => node.getText(ast)).join('\n').replace(/\bexport /g, '');
-const { CodedError } = await compile(await readFile(new URL('../node_modules/expo-modules-core/src/errors/CodedError.ts', import.meta.url), 'utf8'));
+const expoRequire = createRequire(createRequire(import.meta.url).resolve('expo/package.json'));
+const corePackage = pathToFileURL(expoRequire.resolve('expo-modules-core/package.json'));
+const { CodedError } = await compile(await readFile(new URL('src/errors/CodedError.ts', corePackage), 'utf8'));
 const token = 'synthetic-private-ExpoPushToken';
 const userId = '00000000-0000-4000-8000-000000000001';
 

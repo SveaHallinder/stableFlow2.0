@@ -3005,17 +3005,33 @@ function resolveContentType(extension: string, mimeType?: string) {
   return imageContentTypes[extension] ?? 'image/jpeg';
 }
 
-async function resolveBlob(image: UploadableImage, contentType: string) {
+async function resolveImageBytes(image: UploadableImage) {
   if (image.base64) {
     const base64Payload = image.base64.includes(',')
       ? image.base64.split(',').pop() ?? image.base64
       : image.base64;
-    const response = await fetch(`data:${contentType};base64,${base64Payload}`);
-    return response.blob();
+    const encoded = base64Payload.replace(/\s/g, '');
+    if (!encoded || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+      throw new Error('Kunde inte läsa bilddata. Välj bilden igen.');
+    }
+    const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0;
+    const bytes = new Uint8Array(encoded.length / 4 * 3 - padding);
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let buffer = 0, bits = 0, offset = 0;
+    for (const char of encoded.replace(/=+$/, '')) {
+      buffer = (buffer << 6) | alphabet.indexOf(char);
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        bytes[offset++] = (buffer >> bits) & 255;
+        buffer &= (1 << bits) - 1;
+      }
+    }
+    return bytes.buffer;
   }
 
   const response = await createTimeoutFetch((input, init) => fetch(input, init))(image.uri);
-  return response.blob();
+  return response.arrayBuffer();
 }
 
 async function uploadPostImage(params: {
@@ -3028,9 +3044,9 @@ async function uploadPostImage(params: {
   const extension = getExtensionFromUri(image.uri, image.mimeType);
   const contentType = resolveContentType(extension, image.mimeType);
   const filePath = `${stableId}/${userId}/${postId}/${generateId()}.${extension}`;
-  const blob = await resolveBlob(image, contentType);
+  const imageBytes = await resolveImageBytes(image);
 
-  const { error } = await supabase.storage.from(POSTS_BUCKET).upload(filePath, blob, {
+  const { error } = await supabase.storage.from(POSTS_BUCKET).upload(filePath, imageBytes, {
     contentType,
     upsert: false,
   });
@@ -3051,9 +3067,9 @@ async function uploadImageToStorage(
   const extension = getExtensionFromUri(image.uri, image.mimeType);
   const contentType = resolveContentType(extension, image.mimeType);
   const filePath = `${pathPrefix || 'misc'}/${generateId()}.${extension}`;
-  const blob = await resolveBlob(image, contentType);
+  const imageBytes = await resolveImageBytes(image);
 
-  const { error } = await supabase.storage.from(bucket).upload(filePath, blob, {
+  const { error } = await supabase.storage.from(bucket).upload(filePath, imageBytes, {
     contentType,
     upsert: false,
   });

@@ -247,7 +247,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} pointerEvents={waitingForStable ? 'none' : 'auto'}>{children}</View>
       {waitingForStable && (
-        <View style={[StyleSheet.absoluteFillObject, loadingStyles.container]}>
+        <View style={[StyleSheet.absoluteFill, loadingStyles.container]}>
           <ActivityIndicator size="large" color="#3E9B5F" />
           <Text style={loadingStyles.text}>Hämtar ditt stall…</Text>
         </View>

@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
-import type { EventSubscription } from 'expo-modules-core';
 import * as Notifications from 'expo-notifications';
 import { router } from 'expo-router';
 import { registerPushToken } from '@/lib/notifications';
@@ -11,7 +10,7 @@ import { supabase } from '@/lib/supabase';
  * and handles notification tap deep-linking.
  */
 export function usePushNotifications(userId: string | undefined) {
-  const responseListener = useRef<EventSubscription | null>(null);
+  const responseListener = useRef<Notifications.EventSubscription | null>(null);
   const scope = useMemo(() => ({ userId }), [userId]);
   const currentScope = useRef<typeof scope | null>(scope);
   useLayoutEffect(() => {
