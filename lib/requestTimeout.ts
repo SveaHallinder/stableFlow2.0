@@ -20,8 +20,12 @@ export function createTimeoutFetch(fetcher: typeof fetch, timeoutMs = 30_000): t
           // Supabase and image uploads consume finite responses. Buffer before releasing
           // the deadline so headers alone cannot leave JSON/blob parsing waiting forever.
           const method = init?.method ?? (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET');
+          const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+          const isText = contentType.startsWith('text/') || contentType === 'application/json' || contentType.endsWith('+json');
+          // RN's Response decodes ArrayBuffer bodies byte-by-byte. Preserve the
+          // original UTF-8 text decoder for JSON/text and keep binary bytes intact.
           const body = method.toUpperCase() === 'HEAD' || [204, 205, 304].includes(response.status)
-            ? null : await response.arrayBuffer();
+            ? null : isText ? await response.text() : await response.arrayBuffer();
           const complete = new Response(body, {
             status: response.status, statusText: response.statusText, headers: response.headers,
           });
