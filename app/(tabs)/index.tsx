@@ -742,7 +742,7 @@ export default function OverviewScreen() {
                     activeOpacity={0.85}
                     style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                   >
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Profil</Text>
+                    <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Profil</Text>
                   </TouchableOpacity>
                   {canCheckFeed ? (
                     <TouchableOpacity
@@ -763,7 +763,7 @@ export default function OverviewScreen() {
                       <Text
                         style={{
                           fontSize: 12,
-                          fontWeight: '700',
+                          fontFamily: theme.fonts.medium,
                           color: isChecked ? palette.secondaryText : palette.inverseText,
                         }}
                       >
@@ -779,13 +779,13 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avvikelse</Text>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Avvikelse</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
               </View>
               {feedSaveError?.horseId === item.horse.id ? (
-                <Text style={{ color: palette.error, fontSize: 14 }}>
+                <Text style={{ fontFamily: theme.fonts.regular, color: palette.error, fontSize: 14 }}>
                   {feedSaveError.message}
                 </Text>
               ) : null}
@@ -807,6 +807,7 @@ export default function OverviewScreen() {
                       backgroundColor: palette.surface,
                       color: palette.primaryText,
                       fontSize: 14,
+                      fontFamily: theme.fonts.regular,
                     }}
                   />
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
@@ -816,7 +817,7 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avbryt</Text>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Avbryt</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={handleFeedDeviationSave}
@@ -825,7 +826,7 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.inverseText }}>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.inverseText }}>
                         {feedSavingHorseId === item.horse.id ? 'Sparar…' : 'Spara avvikelse'}
                       </Text>
                     </TouchableOpacity>
@@ -1177,7 +1178,10 @@ export default function OverviewScreen() {
   const overviewSection = (
     <View style={styles.overviewSection}>
       <View style={styles.overviewRow}>
-        <WeatherPanel stableLocation={stableLocation} />
+        <WeatherPanel
+          stableLocation={stableLocation}
+          onEditLocation={isOwner ? () => router.push('/(onboarding)/stable-details') : undefined}
+        />
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Öppna dagens stallpass"
@@ -1390,8 +1394,10 @@ export default function OverviewScreen() {
   );
 }
 
-function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
-  const { data: weather, status, error } = useWeather(stableLocation);
+function WeatherPanel({ stableLocation, onEditLocation }: { stableLocation?: string; onEditLocation?: () => void }) {
+  const { data: weather, status, error, retry } = useWeather(stableLocation);
+  const locationError = error === 'Ort ej hittad' || error === 'Ange stallets ort';
+  const canPress = Boolean(weather) || (status === 'error' && (!locationError || Boolean(onEditLocation)));
   const symbol = weather?.symbol;
   const icon = !weather ? 'cloud-off'
     : symbol === 1 || symbol === 2 ? 'sun'
@@ -1401,27 +1407,40 @@ function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
             : symbol && symbol >= 8 ? 'cloud-rain' : 'cloud';
   return (
     <TouchableOpacity
-      disabled={!weather}
-      accessibilityRole={weather ? 'link' : undefined}
-      accessibilityLabel={weather ? `Prognos för ${weather.location}: cirka ${weather.temperature} grader, ${weather.summary}. Kommande 24 timmar högst ${weather.high} och lägst ${weather.low} grader. Källa SMHI, uppdaterad ${weather.updatedAt}, avrundade värden. Öppna SMHI.` : undefined}
+      disabled={!canPress}
+      accessibilityRole={weather ? 'link' : canPress ? 'button' : undefined}
+      accessibilityState={{ disabled: !canPress, busy: status === 'loading' }}
+      accessibilityLabel={weather ? `Prognos för ${weather.location}: cirka ${weather.temperature} grader, ${weather.summary}. Kommande 24 timmar högst ${weather.high} och lägst ${weather.low} grader. Källa SMHI, uppdaterad ${weather.updatedAt}, avrundade värden. Öppna SMHI.` : canPress ? locationError ? 'Ändra stallets ort' : 'Hämta vädret igen' : undefined}
       activeOpacity={0.85}
-      onPress={() => { void Linking.openURL('https://www.smhi.se/vader').catch(() => console.warn('[weather] Could not open SMHI.')); }}
+      onPress={() => {
+        if (weather) {
+          void Linking.openURL('https://www.smhi.se/vader').catch(() => console.warn('[weather] Could not open SMHI.'));
+        } else if (locationError) {
+          onEditLocation?.();
+        } else {
+          retry();
+        }
+      }}
     >
     <LinearGradient colors={theme.gradients.weather} style={styles.weatherTile}>
       <View>
-        <Text numberOfLines={1} style={styles.weatherTileLocation}>{weather?.location ?? stableLocation ?? 'Väder'}</Text>
+        <Text numberOfLines={1} style={styles.weatherTileLocation}>{weather?.location ?? (stableLocation?.trim() || 'Väder')}</Text>
         <Text style={styles.weatherTileTemperature}>{weather ? '≈' : ''}{weather ? `${weather.temperature}°` : '—'}</Text>
       </View>
-      <View style={styles.weatherTileIcon}>
+      {status !== 'error' ? <View style={styles.weatherTileIcon}>
         {status === 'loading' ? <ActivityIndicator size="small" color="#FFFFFF" />
           : symbol === 3 || symbol === 4 ? <CloudSun /> : <Feather name={icon} size={28} color="#FFFFFF" />}
-      </View>
+      </View> : null}
       <View>
         <Text numberOfLines={2} style={styles.weatherTileCaption}>{weather?.summary ?? (status === 'loading' ? 'Hämtar väder' : error ?? 'Ej tillgängligt')}</Text>
         {weather ? <>
           <Text style={styles.weatherTileSource}>24h H:{weather.high}° L:{weather.low}°</Text>
           <Text style={styles.weatherTileSource}>SMHI · {weather.updatedAt}</Text>
-        </> : null}
+        </> : status === 'error' ? (
+          <Text style={[styles.weatherTileAction, canPress && { textDecorationLine: 'underline' }]}>
+            {locationError ? onEditLocation ? 'Ändra ort' : 'Be ägaren ändra ort' : 'Försök igen'}
+          </Text>
+        ) : null}
       </View>
     </LinearGradient>
     </TouchableOpacity>
@@ -1713,6 +1732,7 @@ const styles = StyleSheet.create({
   weatherTileTemperature: { fontFamily: theme.fonts.semibold, fontSize: 17, lineHeight: 22, color: '#FFFFFF' },
   weatherTileCaption: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 15, color: '#FFFFFF' },
   weatherTileSource: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: '#FFFFFF' },
+  weatherTileAction: { fontFamily: theme.fonts.medium, fontSize: 11, lineHeight: 15, color: palette.primaryText, marginTop: 4 },
   weatherTileIcon: { position: 'absolute', right: 12, top: 36, width: 30, height: 30 },
   background: {
     flex: 1,

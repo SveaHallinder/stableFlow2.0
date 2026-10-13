@@ -131,12 +131,14 @@ export type WeatherState = {
   data: WeatherData | null;
   status: WeatherStatus;
   error?: string;
+  retry: () => void;
 };
 
 export function useWeather(stableLocation?: string): WeatherState {
   const [data, setData] = useState<WeatherData | null>(null);
   const [status, setStatus] = useState<WeatherStatus>('loading');
   const [error, setError] = useState<string>();
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -201,7 +203,7 @@ export function useWeather(stableLocation?: string): WeatherState {
       clearTimeout(timeoutId);
       clearInterval(refreshId);
     };
-  }, [stableLocation]);
+  }, [stableLocation, retryCount]);
 
-  return { data, status, error };
+  return { data, status, error, retry: () => setRetryCount(count => count + 1) };
 }

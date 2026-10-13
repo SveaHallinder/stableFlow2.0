@@ -125,6 +125,19 @@ test('weather: a malformed forecast, an outdated forecast and HTTP errors expose
   }
 });
 
+test('weather: a failed first request can be retried immediately when the network recovers', async () => {
+  let requests = 0;
+  const f = fixture({ reply: (_url, _options, response) => ++requests === 1
+    ? Promise.resolve({ ok: false, status: 503 }) : Promise.resolve(response()) });
+  const d = f.mount('Åkersberga'); await f.settle(d);
+  assert.equal(d.result.status, 'error'); assert.equal(d.result.data, null);
+  assert.equal(typeof d.result.retry, 'function', 'Weather must be retryable without waiting for the hourly refresh');
+  d.result.retry(); d.flush(); await f.settle(d);
+  assert.equal(f.calls.length, 2); assert.equal(d.result.status, 'ready');
+  assert.equal(d.result.data.location, 'Åkersberga'); assert.equal(d.result.data.temperature, 0);
+  d.unmount(); assert.equal(f.timeouts.size, 0); assert.equal(f.intervals.size, 0);
+});
+
 test('weather: location changes abort the old request and discard its late result', async () => {
   const requests = [];
   const f = fixture({ reply: (_url, options) => new Promise(resolve => requests.push({ resolve, signal: options.signal })) });

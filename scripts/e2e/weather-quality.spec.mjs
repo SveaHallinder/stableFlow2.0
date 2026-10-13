@@ -19,8 +19,9 @@ async function prepare(page, status = 200) {
     const url = new URL(route.request().url());
     if (url.hostname === 'opendata-download-metfcst.smhi.se') {
       weatherRequests.push(url.href);
-      return route.fulfill({ status, contentType: 'application/json',
-        headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(status === 200 ? forecast : {}) });
+      const responseStatus = typeof status === 'function' ? status() : status;
+      return route.fulfill({ status: responseStatus, contentType: 'application/json',
+        headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(responseStatus === 200 ? forecast : {}) });
     }
     if (!['localhost', '127.0.0.1'].includes(url.hostname) || /\/(auth|rest|functions)\/v1\//.test(url.pathname)) {
       return route.abort('blockedbyclient');
@@ -33,8 +34,8 @@ async function prepare(page, status = 200) {
   return weatherRequests;
 }
 
-async function setFixtureLocation(page, location) {
-  await page.evaluate(location => {
+async function setFixtureLocation(page, location, member = false) {
+  return page.evaluate(({ location, member }) => {
     const element = document.querySelector('#root');
     const key = Object.keys(element).find(key => key.startsWith('__reactContainer$'));
     const root = element[key];
@@ -50,10 +51,15 @@ async function setFixtureLocation(page, location) {
     if (!provider) throw new Error('QA weather fixture is unavailable.');
     const hook = provider.memoizedState;
     const state = hook.memoizedState;
+    const users = member ? { ...state.users, [state.currentUserId]: { ...state.users[state.currentUserId],
+      membership: state.users[state.currentUserId].membership.map(membership => ({ ...membership, role: 'member', access: 'view' })),
+    } } : state.users;
     hook.queue.dispatch({ type: 'STATE_HYDRATE', payload: { ...state,
+      users,
       stables: state.stables.map(stable => stable.id === state.currentStableId ? { ...stable, location } : stable),
     } });
-  }, location);
+    return state.stables.find(stable => stable.id === state.currentStableId)?.name;
+  }, { location, member });
 }
 
 test('weather: Åkersberga shows confirmed temperature, condition, source and 24-hour range', async ({ page }, testInfo) => {
@@ -85,4 +91,39 @@ test('weather: an unsupported place clears the old forecast instead of guessing 
   await expect(page.getByText('≈0°', { exact: true })).toHaveCount(0);
   expect(requests.length).toBe(count);
   await page.screenshot({ path: testInfo.outputPath('weather-unknown-location-390.png') });
+});
+
+test('weather: the owner can correct the current stable’s unknown place and return to its forecast', async ({ page }) => {
+  await prepare(page);
+  const stableName = await setFixtureLocation(page, 'platsen');
+  await expect(page.getByText('Ort ej hittad', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ändra stallets ort', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Ändra stallets ort', exact: true }).click();
+  await expect(page.getByText('Stalluppgifter', { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder('Stallnamn', { exact: true })).toHaveValue(stableName);
+  await expect(page.getByPlaceholder('Plats (valfritt)', { exact: true })).toHaveValue('platsen');
+  await page.getByPlaceholder('Plats (valfritt)', { exact: true }).fill('Åkersberga');
+  await page.getByText('Spara & tillbaka', { exact: true }).click();
+  await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Prognos för Åkersberga/ })).toBeVisible();
+});
+
+test('weather: a member with an unknown place gets owner guidance without an edit action', async ({ page }) => {
+  await prepare(page); await setFixtureLocation(page, 'platsen', true);
+  await expect(page.getByText('Ort ej hittad', { exact: true })).toBeVisible();
+  await expect(page.getByText('Be ägaren ändra ort', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ändra stallets ort', exact: true })).toHaveCount(0);
+});
+
+test('weather: a member can retry a temporary failure as soon as SMHI recovers', async ({ page }) => {
+  let status = 503;
+  const requests = await prepare(page, () => status);
+  await setFixtureLocation(page, 'Åkersberga', true);
+  await expect(page.getByText('Ej tillgängligt', { exact: true })).toBeVisible();
+  const count = requests.length;
+  status = 200;
+  await expect(page.getByRole('button', { name: 'Hämta vädret igen', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Hämta vädret igen', exact: true }).click();
+  await expect(page.getByRole('link', { name: /Prognos för Åkersberga/ })).toBeVisible();
+  expect(requests.length).toBe(count + 1);
 });
