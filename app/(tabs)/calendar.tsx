@@ -3392,6 +3392,7 @@ function CareEventsSection() {
           onPress={() => router.push(`/horses/${event.horseIds[0]}`)}
           style={styles.careEventLink}
           activeOpacity={0.85}
+          accessibilityRole="button"
         >
           <Text style={styles.careEventLinkText}>Öppna hästprofil →</Text>
         </TouchableOpacity>
@@ -5017,6 +5018,8 @@ const styles = StyleSheet.create({
   },
   careEventLink: {
     alignSelf: 'flex-start',
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,

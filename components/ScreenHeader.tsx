@@ -2,6 +2,7 @@ import React from 'react';
 import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { StyleSheet, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import Logo from '@/assets/images/figma/logo.svg';
 import SearchIcon from '@/assets/images/figma/search.svg';
 import {
@@ -46,6 +47,7 @@ export const ScreenHeader = ({
   primaryAction,
   primaryActionDisabled,
 }: ScreenHeaderProps) => {
+  const router = useRouter();
   const isDesktopWeb = useIsDesktopWeb();
 
   // Resolve left content — hide logo on desktop (sidebar has it)
@@ -73,7 +75,7 @@ export const ScreenHeader = ({
           )
           : showSearch
         ? (
-          <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch}>
+          <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch ?? (() => router.push('/search'))}>
             <SearchIcon />
           </HeaderIconButton>
         )

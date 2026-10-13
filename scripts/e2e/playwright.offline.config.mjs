@@ -64,6 +64,8 @@ export default {
     '**/stable-usability.spec.mjs',
     '**/stable-invite-list.spec.mjs',
     '**/weather-quality.spec.mjs',
+    '**/ui-polish-quality.spec.mjs',
+    '**/today-polish-quality.spec.mjs',
     '**/season-schedule.spec.mjs',
   ],
   use: { ...config.use, proxy, serviceWorkers: 'block' },

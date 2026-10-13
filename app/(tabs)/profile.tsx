@@ -934,7 +934,7 @@ const styles = StyleSheet.create({
   defaultPassRowChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 4,
+    gap: 2,
   },
   defaultPassChip: {
     width: '100%',

@@ -1113,7 +1113,7 @@ export default function OverviewScreen() {
         );
       })}
       {messagesExpanded && (
-        <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa färre nya meddelanden" style={styles.collapseButton} onPress={handleMessagePress}>
           <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
         </TouchableOpacity>
       )}
@@ -1164,7 +1164,7 @@ export default function OverviewScreen() {
         );
       })}
       {postsExpanded && (
-        <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa färre senaste inlägg" style={styles.collapseButton} onPress={handlePostPress}>
           <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
         </TouchableOpacity>
       )}
@@ -1334,6 +1334,9 @@ export default function OverviewScreen() {
             return (
               <TouchableOpacity
                 key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active, disabled: eventSaving }}
+                {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                 style={[styles.eventKindChip, active && styles.eventKindChipActive]}
                 disabled={eventSaving}
                 onPress={() => setEventKind(option.id as typeof eventKind)}
@@ -1545,7 +1548,7 @@ function QuickActionSheet({
         style={styles.sheetOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Stäng ${title.toLowerCase()}`} style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={styles.sheetContainer}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}>
@@ -1568,6 +1571,8 @@ function QuickActionSheet({
               ) : null}
               {primaryLabel ? (
                 <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={primaryLabel}
                   style={[
                     styles.sheetPrimaryButton,
                     primaryDisabled && styles.sheetPrimaryButtonDisabled,
@@ -2687,6 +2692,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   eventKindChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: radius.full,
@@ -2695,8 +2702,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   eventKindChipActive: {
-    borderColor: 'rgba(62,155,95,0.35)',
-    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: palette.primary,
+    backgroundColor: theme.tints.primary,
   },
   eventKindText: {
     fontFamily: theme.fonts.semibold,
@@ -3129,6 +3136,8 @@ const styles = StyleSheet.create({
     lineHeight: 17,
   },
   collapseButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     marginTop: 6,
   },

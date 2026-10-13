@@ -150,7 +150,9 @@ for (const width of [320, 390]) {
     const showMore = page.getByRole('button', { name: 'Visa fler nya meddelanden', exact: true });
     await showMore.scrollIntoViewIfNeeded();
     await showMore.click();
-    await expect(page.getByRole('button', { name: 'Visa färre nya meddelanden', exact: true })).toBeVisible();
+    const showLess = page.getByRole('button', { name: 'Visa färre nya meddelanden', exact: true });
+    await expect(showLess).toHaveCount(2);
+    await expect(showLess.first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Öppna konversation med QA Stallet', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Öppna konversation med QA Medlem', exact: true }).click();
     await expect(page).toHaveURL(/\/chat\/[^/?]+(?:\?|$)/);

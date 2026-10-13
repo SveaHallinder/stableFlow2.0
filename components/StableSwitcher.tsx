@@ -63,6 +63,7 @@ export function StableSwitcher({
                 accessibilityRole="button"
                 accessibilityLabel={`Byt till ${stable.name}`}
                 accessibilityState={{ selected: active, disabled }}
+                aria-pressed={active}
               >
                 <Text style={[styles.chipText, active && styles.chipTextActive]}>
                   {stable.name}

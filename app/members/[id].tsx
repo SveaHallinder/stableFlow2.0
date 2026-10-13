@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(62, 155, 95, 0.12)',
+    backgroundColor: palette.accentSoft,
   },
   secondaryActionLabel: { fontSize: 13, fontWeight: '600', color: palette.primary },
   blockActionButton: {
@@ -673,8 +673,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   ownerChip: {
-    backgroundColor: 'rgba(62, 155, 95, 0.08)',
-    borderColor: 'rgba(62, 155, 95, 0.25)',
+    backgroundColor: theme.tints.primary,
+    borderColor: palette.primary,
   },
   disabledChip: {
     opacity: 0.7,
@@ -685,7 +685,7 @@ const styles = StyleSheet.create({
   defaultPassRowChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   defaultPassChip: { paddingHorizontal: 10, paddingVertical: 6, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
   defaultPassChipText: { fontSize: 11, fontWeight: '600', color: palette.secondaryText },
-  defaultPassChipTextActive: { color: palette.primary },
+  defaultPassChipTextActive: { color: palette.inverseText },
   awayList: { gap: 10 },
   awayItem: { gap: 4, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: palette.border },
   awayRange: { fontSize: 13, fontWeight: '600', color: palette.primaryText },

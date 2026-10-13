@@ -74,7 +74,7 @@ const MessageItem = React.memo(function MessageItem({
           {item.description}
         </Text>
         {(!item.readMessageIds || !item.unreadMessageIds) && (
-          <Text style={styles.itemPreview}>Oläststatus ej bekräftad. Uppdatera chattlistan.</Text>
+          <Text style={styles.readStatusHint}>Oläststatus ej bekräftad. Uppdatera chattlistan.</Text>
         )}
       </View>
     </TouchableOpacity>
@@ -167,6 +167,7 @@ export default function MessagesScreen() {
               ]}
               onPress={action.onPress}
               activeOpacity={0.85}
+              accessibilityRole="button"
             >
               <Text
                 style={[
@@ -385,6 +386,7 @@ const styles = StyleSheet.create({
   emptyAction: {
     flexGrow: 1,
     minWidth: 140,
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: radius.full,
@@ -494,6 +496,12 @@ const styles = StyleSheet.create({
     fontFamily: theme.fonts.regular,
     color: palette.primaryText,
     lineHeight: 19,
+  },
+  readStatusHint: {
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    color: palette.secondaryText,
+    lineHeight: 18,
   },
   unreadBadge: {
     flexDirection: 'row',

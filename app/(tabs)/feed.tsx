@@ -955,6 +955,7 @@ export default function FeedScreen() {
                 ]}
                 onPress={action.onPress}
                 activeOpacity={0.85}
+                accessibilityRole="button"
               >
                 <Text
                   style={[
@@ -1732,6 +1733,7 @@ const styles = StyleSheet.create({
   emptyAction: {
     flexGrow: 1,
     minWidth: 140,
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,

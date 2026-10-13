@@ -1337,8 +1337,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   chipActive: {
-    backgroundColor: 'rgba(62,155,95,0.1)',
-    borderColor: 'rgba(62,155,95,0.26)',
+    backgroundColor: theme.tints.primary,
+    borderColor: palette.primary,
   },
   chipLabel: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   chipLabelActive: { color: palette.primary },

@@ -7,6 +7,7 @@ import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { useFonts } from 'expo-font';
+import { systemPalette } from '@/design/system';
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -108,7 +109,7 @@ const errorStyles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: '#3E9B5F',
+    backgroundColor: systemPalette.primary,
   },
   buttonText: {
     fontSize: 14,
@@ -148,7 +149,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <View style={loadingStyles.container}>
-        <ActivityIndicator size="large" color="#3E9B5F" />
+        <ActivityIndicator size="large" color={systemPalette.primary} />
         <Text style={loadingStyles.text}>Laddar...</Text>
       </View>
     );
@@ -263,7 +264,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
       <View style={{ flex: 1 }} pointerEvents={waitingForStable ? 'none' : 'auto'}>{children}</View>
       {waitingForStable && (
         <View style={[StyleSheet.absoluteFill, loadingStyles.container]}>
-          <ActivityIndicator size="large" color="#3E9B5F" />
+          <ActivityIndicator size="large" color={systemPalette.primary} />
           <Text style={loadingStyles.text}>Hämtar ditt stall…</Text>
         </View>
       )}
