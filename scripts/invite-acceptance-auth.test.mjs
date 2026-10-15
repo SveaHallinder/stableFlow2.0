@@ -87,6 +87,32 @@ function authFixture(overrides = {}) {
   return { calls, messages, busy, deps };
 }
 
+for (const signupIntent of ['create', 'join']) {
+  for (const emailLimit of [true, false]) {
+    test(`${signupIntent} signup explains ${emailLimit ? 'email' : 'request'} rate limiting and logs no personal data`, async () => {
+      const logs = [];
+      const fixture = authFixture({ signupIntent, stableName: 'QA Stable',
+        console: { warn: (...args) => logs.push(args) } });
+      fixture.deps.supabase.auth.signUp = async () => ({ data: {}, error: {
+        name: 'AuthApiError', status: 429,
+        code: emailLimit ? 'over_email_send_rate_limit' : 'over_request_rate_limit',
+        message: 'Private provider detail recipient@example.test SyntheticTest123!',
+      } });
+      const submit = await loadCallback('../app/(auth)/index.tsx', 'handleSubmit', fixture.deps);
+      await submit();
+      assert.deepEqual(fixture.messages.at(-1), { message: emailLimit
+        ? 'För många bekräftelsemejl har skickats. Vänta en stund innan du försöker skapa konto igen.'
+        : 'För många försök. Vänta en stund innan du försöker skapa konto igen.', type: 'error' });
+      assert.equal(fixture.busy.at(-1), false, 'the form must allow another attempt');
+      assert.equal(fixture.calls.some(([name]) => name === 'navigate'), false);
+      assert.deepEqual(logs, [['[auth signup] Kunde inte skapa konto', {
+        intent: signupIntent, code: emailLimit ? 'over_email_send_rate_limit' : 'over_request_rate_limit', status: 429,
+      }]]);
+      assert.doesNotMatch(JSON.stringify(logs), /Private provider|recipient@example|SyntheticTest123/);
+    });
+  }
+}
+
 test('signup leaves invite acceptance to hydration when hydration already consumed the email invite', async () => {
   const { calls, deps } = authFixture();
   const submit = await loadCallback('../app/(auth)/index.tsx', 'handleSubmit', deps);

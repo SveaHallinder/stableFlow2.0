@@ -32,6 +32,19 @@ const palette = theme.colors;
 type AuthMode = 'login' | 'signup';
 type SignupIntent = 'create' | 'join';
 
+function signupErrorMessage(error: { code?: string; status?: number; message?: string }, intent: SignupIntent) {
+  console.warn('[auth signup] Kunde inte skapa konto', { intent, code: error.code, status: error.status });
+  if (error.code === 'over_email_send_rate_limit') {
+    return 'För många bekräftelsemejl har skickats. Vänta en stund innan du försöker skapa konto igen.';
+  }
+  if (error.status === 429) {
+    return 'För många försök. Vänta en stund innan du försöker skapa konto igen.';
+  }
+  return error.message === 'Network request failed'
+    ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
+    : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
+}
+
 export default function AuthScreen() {
   const router = useRouter();
   const toast = useToast();
@@ -159,11 +172,7 @@ export default function AuthScreen() {
 
         if (error) {
           await clearPendingOwnerStable();
-          const message =
-            error.message === 'Network request failed'
-              ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
-              : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
-          toast.showToast(message, 'error');
+          toast.showToast(signupErrorMessage(error, signupIntent), 'error');
           setSubmitting(false);
           return;
         }
@@ -226,11 +235,7 @@ export default function AuthScreen() {
       }));
 
       if (error) {
-        const message =
-          error.message === 'Network request failed'
-            ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
-            : 'Kunde inte skapa konto. Kontrollera uppgifterna och försök igen.';
-        toast.showToast(message, 'error');
+        toast.showToast(signupErrorMessage(error, signupIntent), 'error');
         setSubmitting(false);
         return;
       }
