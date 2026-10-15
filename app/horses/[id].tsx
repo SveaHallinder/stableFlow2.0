@@ -25,6 +25,7 @@ import { color, radius } from '@/design/tokens';
 import { getResponsibleUsersForHorse, getHorseResponsibility } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
 import { generateId } from '@/lib/ids';
+import { getHorseAge } from '@/lib/horseAge';
 import { confirmAction } from '@/lib/confirm';
 import { feedSlotLabels } from '@/lib/today';
 import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
@@ -48,6 +49,7 @@ export default function HorseProfileScreen() {
   const { id: rawId } = useLocalSearchParams<{ id?: string }>();
   const horseId = Array.isArray(rawId) ? rawId[0] : rawId;
   const horse = horseId ? state.horses.find((item) => item.id === horseId) : undefined;
+  const horseAge = horse ? getHorseAge(horse) : undefined;
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
   const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId, stableId, horseId]);
@@ -157,7 +159,9 @@ export default function HorseProfileScreen() {
               <View style={styles.heroText}>
                 <Text style={styles.heroTitle}>{horse.name}</Text>
                 <Text style={styles.heroMeta}>
-                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel]
+                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel,
+                    horse.birthYear !== undefined ? `Född ${horse.birthYear}` : null,
+                    horseAge !== undefined ? `${horseAge} år` : null]
                     .filter(Boolean)
                     .join(' · ')}
                 </Text>

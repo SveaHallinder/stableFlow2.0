@@ -5,6 +5,7 @@ import type { ActionResult, InviteConfirmation } from '@/context/AppDataContext'
 import React from 'react';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
+import { getHorseAge, parseHorseBirthYear } from '@/lib/horseAge';
 import {
   Platform,
   ScrollView,
@@ -118,7 +119,7 @@ export default function StablesScreen() {
     stableId: string;
     ownerUserId?: string;
     gender: Horse['gender'];
-    age: string;
+    birthYear: string;
     note: string;
     image: Horse['image'] | null;
   }>({
@@ -127,10 +128,11 @@ export default function StablesScreen() {
     stableId: currentStableId,
     ownerUserId: undefined,
     gender: 'unknown',
-    age: '',
+    birthYear: '',
     note: '',
     image: null,
   });
+  const horseDraftAge = getHorseAge({ birthYear: parseHorseBirthYear(horseDraft.birthYear ?? '') });
   const [inviteDraft, setInviteDraft] = React.useState<{
     name: string;
     email: string;
@@ -545,9 +547,9 @@ export default function StablesScreen() {
       toast.showToast('Hästens namn krävs.', 'error');
       return;
     }
-    const parsedAge = horseDraft.age ? Number(horseDraft.age) : undefined;
-    if (horseDraft.age && Number.isNaN(parsedAge)) {
-      toast.showToast('Ålder måste vara ett nummer.', 'error');
+    const birthYear = parseHorseBirthYear(horseDraft.birthYear ?? '');
+    if (horseDraft.birthYear?.trim() && birthYear === undefined) {
+      toast.showToast(`Ange ett födelseår i hela år mellan 1900 och ${new Date().getFullYear()}.`, 'error');
       return;
     }
     savingHorseRef.current = true;
@@ -561,7 +563,7 @@ export default function StablesScreen() {
       ownerUserId: horseDraft.ownerUserId,
       image: horseDraft.image,
       gender: horseDraft.gender,
-      age: parsedAge,
+      birthYear,
       note: horseDraft.note,
     });
     savingHorseRef.current = false;
@@ -575,7 +577,7 @@ export default function StablesScreen() {
         stableId: currentStableId,
         ownerUserId: undefined,
         gender: 'unknown',
-        age: '',
+        birthYear: '',
         note: '',
         image: null,
       });
@@ -586,7 +588,7 @@ export default function StablesScreen() {
   }, [
     actions,
     currentStableId,
-    horseDraft.age,
+    horseDraft.birthYear,
     horseDraft.gender,
     horseDraft.id,
     horseDraft.image,
@@ -628,7 +630,7 @@ export default function StablesScreen() {
         stableId: target.stableId,
         ownerUserId: target.ownerUserId,
         gender: target.gender ?? 'unknown',
-        age: target.age ? `${target.age}` : '',
+        birthYear: target.birthYear !== undefined ? `${target.birthYear}` : '',
         note: target.note ?? '',
         image: target.image ?? null,
       });
@@ -658,7 +660,7 @@ export default function StablesScreen() {
           toast.showToast('Häst borttagen.', 'success');
           if (horseDraft.id === horseId) {
             setHorseDraft({ id: undefined, name: '', stableId: currentStableId, ownerUserId: undefined,
-              gender: 'unknown', age: '', note: '', image: null });
+              gender: 'unknown', birthYear: '', note: '', image: null });
           }
         } else {
           setHorseDeleteError({ id: horseId, reason: result.reason });
@@ -1820,9 +1822,11 @@ export default function StablesScreen() {
                     />
                     <View style={styles.horseList}>
                       {filteredHorses.map((horse) => {
+                        const age = getHorseAge(horse);
                         const meta = [
                           horse.gender ? genderLabel[horse.gender] : null,
-                          horse.age ? `${horse.age} år` : null,
+                          horse.birthYear !== undefined ? `Född ${horse.birthYear}` : null,
+                          age !== undefined ? `${age} år` : null,
                         ]
                           .filter(Boolean)
                           .join(' • ');
@@ -1959,15 +1963,23 @@ export default function StablesScreen() {
                           );
                         })}
                       </View>
+                      <Text style={styles.formLabel}>Födelseår (valfritt)</Text>
                       <TextInput
-                        placeholder="Ålder (valfritt)"
+                        accessibilityLabel="Födelseår (valfritt)"
+                        placeholder="T.ex. 2019"
                         placeholderTextColor={palette.mutedText}
-                        value={horseDraft.age}
-                        onChangeText={(text) => setHorseDraft((prev) => ({ ...prev, age: text }))}
+                        value={horseDraft.birthYear ?? ''}
+                        onChangeText={(text) => {
+                          setHorseDraft((prev) => ({ ...prev, birthYear: text }));
+                          setHorseSaveError(null);
+                        }}
                         style={styles.input}
                         editable={canEditHorses}
-                        keyboardType="numeric"
+                        keyboardType="number-pad"
                       />
+                      <Text style={styles.formLabel}>
+                        {horseDraftAge !== undefined ? `${horseDraftAge} år i år · åldern uppdateras automatiskt.` : 'Åldern beräknas automatiskt från födelseåret.'}
+                      </Text>
                       <TextInput
                         placeholder="Anteckning (t.ex. temperament, viktiga behov)"
                         placeholderTextColor={palette.mutedText}

@@ -54,6 +54,32 @@ test('database guards enforce arena and owner invariants in the schema and appro
     assert.match(schemaResult, /20 schema guard tests passed/);
     t.diagnostic('20 rollback-only checks passed against the complete schema.');
 
+    const birthYearChecks = `begin;
+      insert into public.horses(id, name, birth_year) values ('90000000-0000-4000-8000-000000000001', 'Birth year check', 2019);
+      insert into public.horses(id, name, age) values ('90000000-0000-4000-8000-000000000002', 'Legacy age check', 8);
+      do $$begin
+        if not exists(select 1 from public.horses where name = 'Birth year check' and birth_year = 2019) then
+          raise exception 'Birth year was not saved';
+        end if;
+        if not exists(select 1 from public.horses where name = 'Legacy age check' and birth_year is null and age = 8) then
+          raise exception 'Legacy age or optional birth year changed';
+        end if;
+        begin
+          insert into public.horses(name, birth_year) values ('Invalid year', 1899);
+          raise exception 'Lower birth year bound was not enforced';
+        exception when check_violation then null; end;
+        begin
+          insert into public.horses(name, birth_year) values ('Invalid year', 10000);
+          raise exception 'Upper birth year bound was not enforced';
+        exception when check_violation then null; end;
+      end$$;
+      rollback;`;
+    sql('guards_schema', birthYearChecks);
+    sql('guards_schema', 'alter table public.horses drop column birth_year;');
+    sql('guards_schema', await readFile(join(root, 'supabase/migrations/20261015152909_horse_birth_year.sql'), 'utf8'));
+    sql('guards_schema', birthYearChecks);
+    t.diagnostic('Birth year persistence, optional/legacy values and bounds passed against schema and migration.');
+
     const privateChatTests = await readFile(join(root, 'supabase/tests/private_chat_bootstrap.sql'), 'utf8');
     assert.match(sql('guards_schema', privateChatTests), /14 private chat checks passed/);
     sql('guards_schema', 'drop policy "conversations_private_creator_select" on public.conversations; drop policy "conversations_private_insert_self" on public.conversations;');

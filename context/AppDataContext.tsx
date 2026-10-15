@@ -4,6 +4,7 @@ import type { ImageSourcePropType } from 'react-native';
 import { AppState, Platform } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { generateId } from '@/lib/ids';
+import { isValidHorseBirthYear } from '@/lib/horseAge';
 import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/chatReadReceipts';
 import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
@@ -154,6 +155,7 @@ export type Horse = {
   ownerUserId?: string;
   image?: ImageSourcePropType;
   gender?: 'mare' | 'gelding' | 'stallion' | 'unknown';
+  birthYear?: number;
   age?: number;
   boxNumber?: string;
   canSleepInside?: boolean;
@@ -673,6 +675,7 @@ export type UpsertHorseInput = {
   ownerUserId?: string;
   image?: Horse['image'] | null;
   gender?: Horse['gender'];
+  birthYear?: number;
   age?: number;
   boxNumber?: string;
   canSleepInside?: boolean;
@@ -3593,11 +3596,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (!existing || 'name' in input) payload.name = horse.name;
         const fields = {
           ownerUserId: 'owner_user_id', boxNumber: 'box_number', canSleepInside: 'can_sleep_inside',
-          gender: 'gender', age: 'age', note: 'note',
+          gender: 'gender', birthYear: 'birth_year', age: 'age', note: 'note',
         } as const;
         for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
           if (key in input) payload[fields[key]] = horse[key] ?? null;
         }
+        if ('birthYear' in input && horse.birthYear !== undefined) payload.age = null;
         if ('image' in input) {
           const uploadable = input.image ? getUploadableImage(input.image) : null;
           if (uploadable) {
@@ -3619,7 +3623,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           id: data.id, stableId: data.stable_id, name: data.name,
           ownerUserId: data.owner_user_id ?? undefined, boxNumber: data.box_number ?? undefined,
           canSleepInside: data.can_sleep_inside ?? undefined, gender: data.gender ?? undefined,
-          age: data.age ?? undefined, note: data.note ?? undefined,
+          birthYear: data.birth_year ?? undefined, age: data.age ?? undefined, note: data.note ?? undefined,
           image: data.image_url ? { uri: data.image_url } : undefined,
         } };
       } catch (error) {
@@ -5680,6 +5684,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           boxNumber: row.box_number ?? undefined,
           canSleepInside: row.can_sleep_inside ?? undefined,
           gender: row.gender ?? undefined,
+          birthYear: row.birth_year ?? undefined,
           age: row.age ?? undefined,
           note: row.note ?? undefined,
           image: row.image_url ? { uri: row.image_url } : undefined,
@@ -9271,6 +9276,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const existing = input.id ? stateRef.current.horses.find((horse) => horse.id === input.id) : undefined;
       const name = (input.name ?? existing?.name ?? '').trim();
       if (!name) return { success: false, reason: 'Hästen måste ha ett namn.' };
+      if (input.birthYear !== undefined && !isValidHorseBirthYear(input.birthYear)) {
+        return { success: false, reason: `Ange ett födelseår i hela år mellan 1900 och ${new Date().getFullYear()}.` };
+      }
       if (input.age !== undefined && (!Number.isInteger(input.age) || input.age < 0 || input.age > 60)) {
         return { success: false, reason: 'Ange en ålder i hela år mellan 0 och 60.' };
       }

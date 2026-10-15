@@ -71,7 +71,7 @@ test('horse deletion shares the in-flight horse-save lock', async () => {
 
 const horseRow = {
   id: 'horse', stable_id: 'stable', name: 'Mira', owner_user_id: 'owner',
-  box_number: '7', can_sleep_inside: true, gender: 'mare', age: 8, note: 'Behåll', image_url: null,
+  box_number: '7', can_sleep_inside: true, gender: 'mare', age: 8, birth_year: 2019, note: 'Behåll', image_url: null,
 };
 
 async function loadPersistence(row, capture = {}) {
@@ -92,7 +92,7 @@ test('horse persistence rejects a stale acknowledgement for each edited field', 
   const edits = [
     ['name', 'Mira II', 'name'], ['ownerUserId', undefined, 'owner_user_id'],
     ['boxNumber', undefined, 'box_number'], ['canSleepInside', false, 'can_sleep_inside'],
-    ['gender', 'gelding', 'gender'], ['age', 9, 'age'], ['note', undefined, 'note'],
+    ['gender', 'gelding', 'gender'], ['age', 9, 'age'], ['birthYear', 2020, 'birth_year'], ['note', undefined, 'note'],
     ['image', { uri: 'https://example.test/new-horse.jpg' }, 'image_url'],
   ];
   for (const [field, value, column] of edits) {
@@ -117,7 +117,47 @@ test('horse persistence accepts confirmed edits without overwriting omitted fiel
   assert.deepEqual(capture.payload, { id: 'horse', stable_id: 'stable', note: null });
   assert.equal(result.data.boxNumber, '7');
   assert.equal(result.data.canSleepInside, true);
+  assert.equal(result.data.birthYear, 2019);
   assert.equal(result.data.note, undefined);
+});
+
+test('horse persistence saves and confirms the actual birth year rather than a fixed age', async () => {
+  const capture = {};
+  const persist = await loadPersistence({ ...horseRow, age: null }, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira', birthYear: 2019 }, { birthYear: 2019 }, true);
+  assert.equal(result.success, true);
+  assert.equal(capture.payload.birth_year, 2019);
+  assert.equal(result.data.birthYear, 2019);
+  assert.equal(capture.payload.age, null);
+});
+
+test('clearing a birth year is acknowledged without writing a fabricated age', async () => {
+  const capture = {};
+  const persist = await loadPersistence({ ...horseRow, birth_year: null, age: null }, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira' }, { birthYear: undefined }, true);
+  assert.equal(result.success, true);
+  assert.deepEqual(capture.payload, { id: 'horse', stable_id: 'stable', birth_year: null });
+  assert.equal(result.data.birthYear, undefined);
+  assert.equal(result.data.age, undefined);
+});
+
+test('horse action rejects invalid birth years before any write', async () => {
+  const source = await readFile(new URL('../lib/horseAge.ts', import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } });
+  const { isValidHorseBirthYear } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  let writes = 0;
+  const action = await loadAction('upsertHorse', {
+    stateRef: { current: { horses: [] } }, ensurePermission: () => ({ success: true }),
+    isValidHorseBirthYear, dispatch() {}, generateId: () => 'new-horse',
+    pendingDataWrites: { current: new Set() }, dataWriteVersion: { current: 0 },
+    persistHorseUpsert: async () => { writes += 1; return { success: true }; },
+  });
+  for (const birthYear of [1899, new Date().getFullYear() + 1, NaN, 2019.5]) {
+    const result = await action({ stableId: 'stable', name: 'Mira', birthYear });
+    assert.equal(result.success, false);
+    assert.match(result.reason, /födelseår/);
+  }
+  assert.equal(writes, 0);
 });
 
 async function loadTimedPersistence(name) {

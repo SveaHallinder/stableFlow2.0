@@ -476,6 +476,7 @@ create table if not exists public.horses (
   can_sleep_inside boolean,
   gender text,
   age integer,
+  birth_year integer constraint horses_birth_year_check check (birth_year between 1900 and 9999),
   note text,
   image_url text
 );
