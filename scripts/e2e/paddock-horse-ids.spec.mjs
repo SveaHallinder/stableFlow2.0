@@ -143,7 +143,7 @@ test('renaming a Horse retains every paddock link in list, profile, Today, searc
   await expect(page.getByText('Box B1 · Östra hagen, Västra hagen', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Status för Nova', exact: true }).click();
   await expect(page).toHaveURL(/\/horses\/qa-horse-main(?:\?|$)/);
-  await expect(page.getByText('Box B1 · Östra hagen, Västra hagen', { exact: true }).last()).toBeVisible();
+  await expect(page.getByText('Box B1 · Östra hagen, Västra hagen · 9 år', { exact: true }).filter({ visible: true })).toBeVisible();
   await page.getByLabel('Öppna hästlistan').click();
   await page.getByRole('tab', { name: 'Idag', exact: true }).click();
   const todayLink = page.getByText('Öppna Nova · Östra hagen, Västra hagen', { exact: true });
