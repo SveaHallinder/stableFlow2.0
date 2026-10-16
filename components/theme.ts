@@ -6,6 +6,7 @@ import {
   systemSpacing,
   systemRadius,
   systemShadows,
+  systemFonts,
 } from '../design/system';
 
 export const theme = {
@@ -22,7 +23,7 @@ export const theme = {
     disabledText: systemPalette.textDisabled,
     inverseText: systemPalette.textInverse,
     accent: systemPalette.accent,
-    accentSoft: 'rgba(62, 155, 95, 0.16)',
+    accentSoft: '#E5F5FF',
     primary: systemPalette.primary,
     info: systemPalette.info,
     warning: systemPalette.warning,
@@ -39,12 +40,12 @@ export const theme = {
     ...systemStatus,
   },
   tints: {
-    accent: 'rgba(62, 155, 95, 0.16)',
-    primary: 'rgba(62, 155, 95, 0.12)',
-    info: 'rgba(90, 163, 255, 0.16)',
-    warning: 'rgba(226, 152, 51, 0.16)',
-    error: 'rgba(249, 95, 95, 0.18)',
-    success: 'rgba(46, 158, 91, 0.18)',
+    accent: '#E5F5FF',
+    primary: '#E5F5FF',
+    info: '#E9F4FE',
+    warning: '#FAF2E5',
+    error: '#FBEDED',
+    success: '#EDF5EE',
   },
   gradients: {
     background: systemGradients.background,
@@ -53,6 +54,7 @@ export const theme = {
   },
   spacing: systemSpacing,
   typography: systemTypography,
+  fonts: systemFonts,
   radii: systemRadius,
   borderRadius: systemRadius,
   shadows: {

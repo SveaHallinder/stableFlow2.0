@@ -955,6 +955,7 @@ export default function FeedScreen() {
                 ]}
                 onPress={action.onPress}
                 activeOpacity={0.85}
+                accessibilityRole="button"
               >
                 <Text
                   style={[
@@ -1215,10 +1216,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background,
   },
   content: {
-    paddingHorizontal: space.lg,
+    paddingHorizontal: 22,
     paddingBottom: 50,
-    gap: space.xl,
-    paddingTop: 24,
+    gap: 10,
+    paddingTop: 0,
   },
   contentDesktop: {
     maxWidth: 1400,
@@ -1251,14 +1252,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   postList: {
-    gap: space.xl,
+    gap: 10,
   },
   flatListItem: {
-    marginBottom: space.xl,
+    marginBottom: 10,
   },
   flatListHeader: {
-    gap: space.xl,
-    marginBottom: space.xl,
+    gap: 10,
+    marginBottom: 10,
   },
   flatListEmpty: {
     marginBottom: space.xl,
@@ -1281,30 +1282,36 @@ const styles = StyleSheet.create({
   },
   loadMoreButtonText: {
     fontSize: 14,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primary,
   },
   loadMoreText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.mutedText,
   },
   loadMoreError: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.error,
   },
   postListDesktop: {
-    gap: space.xl,
+    gap: 10,
   },
   composerCard: {
     paddingHorizontal: 16,
     paddingVertical: 16,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: palette.border,
     gap: 14,
   },
   composerClosedCard: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderWidth: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
   },
   composerClosedRow: {
     flexDirection: 'row',
@@ -1316,9 +1323,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: palette.primary,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   composerOpenButtonText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
@@ -1339,11 +1349,13 @@ const styles = StyleSheet.create({
   },
   composerTitle: {
     fontSize: 15,
-    fontWeight: '700',
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   composerSubtitle: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   composerInput: {
@@ -1354,7 +1366,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
     textAlignVertical: 'top',
   },
@@ -1367,6 +1380,7 @@ const styles = StyleSheet.create({
   },
   composerMeta: {
     fontSize: 11,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   composerActionButton: {
@@ -1376,9 +1390,12 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   composerActionText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -1386,8 +1403,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 520,
     alignSelf: 'flex-start',
-    aspectRatio: 1,
-    borderRadius: 16,
+    aspectRatio: 1.75,
+    borderRadius: 18,
   },
   readOnlyCard: {
     paddingHorizontal: 16,
@@ -1397,11 +1414,13 @@ const styles = StyleSheet.create({
   },
   readOnlyTitle: {
     fontSize: 14,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   readOnlyText: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   importantAlertsCard: {
@@ -1418,11 +1437,13 @@ const styles = StyleSheet.create({
   },
   importantAlertsTitle: {
     fontSize: 14,
+    fontFamily: theme.fonts.bold,
     fontWeight: '800',
     color: palette.primaryText,
   },
   importantAlertsMeta: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.secondaryText,
   },
@@ -1446,11 +1467,13 @@ const styles = StyleSheet.create({
   },
   importantAlertTitle: {
     fontSize: 13,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   importantAlertText: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   groupPicker: {
@@ -1461,6 +1484,7 @@ const styles = StyleSheet.create({
   },
   groupLabel: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.secondaryText,
   },
@@ -1475,11 +1499,12 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   groupChipLocked: {
-    backgroundColor: 'rgba(62, 155, 95, 0.12)',
-    borderColor: 'rgba(62, 155, 95, 0.3)',
+    backgroundColor: palette.surfaceTint,
+    borderColor: palette.primary,
   },
   groupChipText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -1495,11 +1520,13 @@ const styles = StyleSheet.create({
   },
   groupManagerTitle: {
     fontSize: 14,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   groupManagerHint: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   groupCreateRow: {
@@ -1516,19 +1543,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
+    minHeight: 44,
   },
   createGroupButton: {
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
     backgroundColor: palette.primary,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   createGroupButtonDisabled: {
     opacity: 0.5,
   },
   createGroupButtonText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
@@ -1545,6 +1577,7 @@ const styles = StyleSheet.create({
   },
   groupRowText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     color: palette.primaryText,
     fontWeight: '600',
   },
@@ -1555,14 +1588,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(249, 95, 95, 0.12)',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(249, 95, 95, 0.22)',
+    minHeight: 44,
+    justifyContent: 'center',
   },
   groupRowActionText: {
     fontSize: 11,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.error,
   },
   groupEmpty: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   composerFooter: {
@@ -1573,6 +1610,7 @@ const styles = StyleSheet.create({
   },
   composerHint: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   publishButton: {
@@ -1580,22 +1618,25 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 999,
     backgroundColor: palette.primary,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   publishButtonDisabled: {
     opacity: 0.5,
   },
   publishButtonText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.inverseText,
   },
   filterScroll: {
-    paddingHorizontal: space.lg,
-    paddingTop: 8,
-    paddingBottom: 4,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   customFilterWrap: {
-    paddingHorizontal: space.lg,
+    paddingHorizontal: 0,
     paddingTop: 4,
     paddingBottom: 4,
   },
@@ -1621,6 +1662,7 @@ const styles = StyleSheet.create({
   },
   customFilterLabel: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.secondaryText,
   },
@@ -1633,9 +1675,11 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   filterChip: {
-    backgroundColor: palette.surfaceTint,
-    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
     borderColor: palette.border,
+    minHeight: 44,
+    justifyContent: 'center',
   },
   filterChipPanel: {
     paddingHorizontal: 12,
@@ -1643,7 +1687,8 @@ const styles = StyleSheet.create({
   },
   filterChipText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   filterChipTextActive: {
@@ -1657,11 +1702,13 @@ const styles = StyleSheet.create({
   },
   panelTitle: {
     fontSize: 15,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   panelText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
@@ -1673,6 +1720,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 16,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
@@ -1685,6 +1733,7 @@ const styles = StyleSheet.create({
   emptyAction: {
     flexGrow: 1,
     minWidth: 140,
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
@@ -1693,6 +1742,7 @@ const styles = StyleSheet.create({
   },
   emptyActionText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
   },
   emptyActionPrimary: {
@@ -1712,6 +1762,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     lineHeight: 18,
   },

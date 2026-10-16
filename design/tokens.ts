@@ -16,13 +16,13 @@ export const space = {
 };
 
 export const color = {
-  bg: '#FFFFFF', // crisp canvas
+  bg: '#FDFDFD',
   card: '#FFFFFF',
-  cardGlass: 'rgba(255, 255, 255, 0.72)',
-  text: '#101622',
-  textMuted: 'rgba(16, 22, 34, 0.55)',
-  divider: 'rgba(16, 22, 34, 0.08)',
-  tint: '#3E9B5F',
+  cardGlass: '#F5F5F5',
+  text: '#000000',
+  textMuted: '#767676',
+  divider: '#F0F0F0',
+  tint: '#0099FF',
 };
 
 export const shadow = {
@@ -34,16 +34,16 @@ export const shadow = {
       shadowOffset: { width: 0, height: 0 },
     },
     micro: {
-      shadowColor: 'rgba(15, 22, 38, 0.05)',
-      shadowOpacity: 1,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 3 },
+      shadowColor: '#000000',
+      shadowOpacity: 0.03,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
     },
     small: {
-      shadowColor: 'rgba(15, 22, 38, 0.08)',
-      shadowOpacity: 1,
-      shadowRadius: 12,
-      shadowOffset: { width: 0, height: 6 },
+      shadowColor: '#000000',
+      shadowOpacity: 0.04,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
     },
     medium: {
       shadowColor: 'rgba(15, 22, 38, 0.12)',
@@ -58,7 +58,7 @@ export const shadow = {
       shadowOffset: { width: 0, height: 14 },
     },
     glow: {
-      shadowColor: 'rgba(62, 155, 95, 0.22)',
+      shadowColor: 'rgba(0, 153, 255, 0.16)',
       shadowOpacity: 1,
       shadowRadius: 24,
       shadowOffset: { width: 0, height: 12 },

@@ -2,6 +2,8 @@ import { generateId } from '@/lib/ids';
 import React from 'react';
 import {
   KeyboardAvoidingView,
+  ActivityIndicator,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -16,14 +18,15 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
-import HeartIcon from '@/assets/images/Heart.svg';
-import SpeechBubbleIcon from '@/assets/images/Speech Bubble.svg';
-import CloudSun from '@/assets/images/cloud-sun.svg';
-import UserGroupsIcon from '@/assets/images/User Groups.svg';
+import { LinearGradient } from 'expo-linear-gradient';
+import HeartIcon from '@/assets/images/figma/heart.svg';
+import SpeechBubbleIcon from '@/assets/images/figma/comment.svg';
+import CloudSun from '@/assets/images/figma/weather.svg';
+import UserGroupsIcon from '@/assets/images/figma/group.svg';
+import SearchIcon from '@/assets/images/figma/search.svg';
+import MoreIcon from '@/assets/images/figma/more.svg';
 import { theme } from '@/components/theme';
-import { quickActionVariants, systemPalette } from '@/design/system';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -38,6 +41,7 @@ import {
   toISODate,
 } from '@/lib/schedule';
 import { deriveFeedFocus, deriveTodayOverview, getCurrentFeedSlot } from '@/lib/today';
+import { getPaddockHorses, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { formatShortDate, formatTimeAgo } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { useWeather } from '@/hooks/useWeather';
@@ -66,24 +70,13 @@ const tourSteps = [
   },
   {
     title: 'Schema & standardpass',
-    text: 'Kolla dina rid-/stallpass, markera “kan inte” eller “klart”, och välj standarddagar så schemat fylls automatiskt.',
+    text: 'Kolla dina rid-/stallpass och markera “kan inte” eller “klart”. Välj standarddagar för automatisk tilldelning av passen som admin skapar.',
   },
   {
     title: 'Hagar & kartor',
     text: 'Lägg till hagar med bild/karta och skriv ut listor så alla ser var hästarna går – sommar, vinter eller året runt.',
   },
 ];
-
-const quickActionStyles: Record<
-  QuickActionTint,
-  { gradient: [string, string]; icon: string; accentBorder: string; shadow: string }
-> = {
-  primary: quickActionVariants.primary,
-  accent: quickActionVariants.accent,
-  warning: quickActionVariants.warning,
-};
-
-
 
 export default function OverviewScreen() {
   const router = useRouter();
@@ -227,6 +220,11 @@ export default function OverviewScreen() {
     setTourStep((prev) => Math.min(tourSteps.length - 1, prev + 1));
   }, [closeTour, tourStep]);
   const todayIso = toISODate(new Date());
+  const todayDateLabel = new Date().toLocaleDateString('sv-SE', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
   const groupedDays = React.useMemo(
     () => groupAssignmentsByDay(activeAssignments),
     [activeAssignments],
@@ -245,7 +243,7 @@ export default function OverviewScreen() {
   );
 
   const myAssignedUpcoming = React.useMemo(() => {
-    return assignments
+    return activeAssignments
       .filter(
         (assignment) =>
           assignment.assigneeId === currentUserId &&
@@ -256,7 +254,7 @@ export default function OverviewScreen() {
         (a, b) =>
           new Date(`${a.date}T${a.time}`).getTime() - new Date(`${b.date}T${b.time}`).getTime(),
       );
-  }, [assignments, currentUserId, todayIso]);
+  }, [activeAssignments, currentUserId, todayIso]);
 
   const myNextAssignment = myAssignedUpcoming[0];
   const myNextAssignmentTimeLabel = React.useMemo(() => {
@@ -284,9 +282,13 @@ export default function OverviewScreen() {
 
   const paddockSummary = React.useMemo(() => {
     const paddockCount = activePaddocks.length;
-    const horseCount = activePaddocks.reduce((total, paddock) => total + paddock.horseNames.length, 0);
-    return { paddockCount, horseCount };
-  }, [activePaddocks]);
+    const horseCount = new Set(activePaddocks.flatMap((paddock) =>
+      getPaddockHorses(paddock, state.horses).map((horse) => horse.id),
+    )).size;
+    const linksUnconfirmed = state.paddockLinksReady !== true ||
+      hasUnconfirmedPaddockLinks(activePaddocks, state.horses);
+    return { paddockCount, horseCount, linksUnconfirmed };
+  }, [activePaddocks, state.horses, state.paddockLinksReady]);
   const quickActions = React.useMemo<QuickAction[]>(() => {
     return [
       {
@@ -303,7 +305,7 @@ export default function OverviewScreen() {
         id: 'open-passes',
         label: 'Lediga pass',
         caption: openUpcomingCount
-          ? `${openUpcomingCount} lediga pass`
+          ? `${openUpcomingCount} ${openUpcomingCount === 1 ? 'ledigt' : 'lediga'} pass`
           : 'Alla pass är bemannade\nÖppna schema',
         icon: 'users',
         tint: 'accent',
@@ -324,9 +326,11 @@ export default function OverviewScreen() {
       {
         id: 'paddocks',
         label: 'Hagar',
-        caption: paddockSummary.paddockCount
-          ? `${paddockSummary.paddockCount} hagar · ${paddockSummary.horseCount} hästar`
-          : 'Lägg in hagar\nSkriv ut haglista',
+        caption: paddockSummary.linksUnconfirmed
+          ? 'Hästkopplingar ej bekräftade\nÖppna hagar'
+          : paddockSummary.paddockCount
+            ? `${paddockSummary.paddockCount} ${paddockSummary.paddockCount === 1 ? 'hage' : 'hagar'} · ${paddockSummary.horseCount} ${paddockSummary.horseCount === 1 ? 'häst' : 'hästar'}`
+            : 'Lägg in hagar\nSkriv ut haglista',
         icon: 'map',
         tint: 'primary',
         highlight: paddockSummary.paddockCount === 0,
@@ -581,7 +585,6 @@ export default function OverviewScreen() {
   const startHereSection = showOnboardingEntry ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.startHereCard, !isDesktopWeb && styles.startHereCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.startHereHeader}>
@@ -621,14 +624,13 @@ export default function OverviewScreen() {
   const prioritySection = (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.priorityHeader}>
         <View style={styles.priorityTitleBlock}>
           <Text style={styles.priorityEyebrow}>Idag</Text>
           <Text style={[styles.priorityTitle, !isDesktopWeb && styles.priorityTitleMobile]}>
-            {todayOverview.headline}
+            {todayOverview.mode === 'admin' ? 'Läget i stallet' : todayOverview.headline}
           </Text>
           <Text style={styles.prioritySubtitle}>{todayOverview.subheadline}</Text>
         </View>
@@ -652,7 +654,10 @@ export default function OverviewScreen() {
       ) : null}
 
       <View style={[styles.priorityGrid, isDesktopWeb && styles.priorityGridDesktop]}>
-        {(isDesktopWeb ? todayOverview.insights : todayOverview.insights.slice(0, 3)).map((item) => (
+        {todayOverview.insights.filter((item) =>
+          todayOverview.mode !== 'admin' || !hasTodayAssignments ||
+          (item.id !== 'stable-status' && item.id !== 'open'),
+        ).map((item) => (
           <View
             key={item.id}
             style={[
@@ -664,9 +669,9 @@ export default function OverviewScreen() {
           >
             <Text style={[styles.priorityValue, !isDesktopWeb && styles.priorityValueMobile]}>{item.value}</Text>
             <Text style={styles.priorityLabel}>{item.label}</Text>
-            {isDesktopWeb ? <Text style={styles.priorityMeta} numberOfLines={2}>
+            <Text style={styles.priorityMeta}>
               {item.meta}
-            </Text> : null}
+            </Text>
           </View>
         ))}
       </View>
@@ -679,6 +684,9 @@ export default function OverviewScreen() {
           <Feather name="activity" size={15} color={palette.primary} />
           <Text style={styles.priorityHorseButtonText}>
             Öppna {todayOverview.myHorseSummaries[0].horse.name}
+            {todayOverview.myHorseSummaries[0].paddocks.length
+              ? ` · ${todayOverview.myHorseSummaries[0].paddocks.map((paddock) => paddock.name).join(', ')}`
+              : todayOverview.myHorseSummaries[0].paddockLinksUnconfirmed ? ' · Hage ej bekräftad' : ' · Ingen hage satt'}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -688,8 +696,7 @@ export default function OverviewScreen() {
   const feedSection = currentStableId && feedFocus.totalCount > 0 ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
-      style={[styles.priorityCard, !isDesktopWeb && styles.priorityCardMobile, isDesktopWeb && styles.desktopCardVisible]}
+      style={[styles.priorityCard, styles.feedingCard, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.priorityHeader}>
         <View style={styles.priorityTitleBlock}>
@@ -712,7 +719,7 @@ export default function OverviewScreen() {
           const deviationActive = feedDeviation?.horseId === item.horse.id;
           return (
             <View key={item.horse.id} style={{ gap: 8 }}>
-              <View style={[styles.priorityNotice, !isDesktopWeb && { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+              <View style={[styles.priorityNotice, styles.feedingRow, !isDesktopWeb && { flexDirection: 'column', alignItems: 'stretch', gap: 4 }]}>
                 <View style={isDesktopWeb ? { flex: 1, minWidth: 0 } : undefined}>
                   <Text style={styles.priorityNoticeText}>
                     {`${item.horse.name} · ${planLabel}`}
@@ -735,7 +742,7 @@ export default function OverviewScreen() {
                     activeOpacity={0.85}
                     style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                   >
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Profil</Text>
+                    <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Profil</Text>
                   </TouchableOpacity>
                   {canCheckFeed ? (
                     <TouchableOpacity
@@ -756,7 +763,7 @@ export default function OverviewScreen() {
                       <Text
                         style={{
                           fontSize: 12,
-                          fontWeight: '700',
+                          fontFamily: theme.fonts.medium,
                           color: isChecked ? palette.secondaryText : palette.inverseText,
                         }}
                       >
@@ -772,13 +779,13 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: palette.surfaceTint }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avvikelse</Text>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Avvikelse</Text>
                     </TouchableOpacity>
                   ) : null}
                 </View>
               </View>
               {feedSaveError?.horseId === item.horse.id ? (
-                <Text style={{ color: palette.error, fontSize: 14 }}>
+                <Text style={{ fontFamily: theme.fonts.regular, color: palette.error, fontSize: 14 }}>
                   {feedSaveError.message}
                 </Text>
               ) : null}
@@ -800,6 +807,7 @@ export default function OverviewScreen() {
                       backgroundColor: palette.surface,
                       color: palette.primaryText,
                       fontSize: 14,
+                      fontFamily: theme.fonts.regular,
                     }}
                   />
                   <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
@@ -809,7 +817,7 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.primaryText }}>Avbryt</Text>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>Avbryt</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={handleFeedDeviationSave}
@@ -818,7 +826,7 @@ export default function OverviewScreen() {
                       activeOpacity={0.85}
                       style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
                     >
-                      <Text style={{ fontSize: 12, fontWeight: '700', color: palette.inverseText }}>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.inverseText }}>
                         {feedSavingHorseId === item.horse.id ? 'Sparar…' : 'Spara avvikelse'}
                       </Text>
                     </TouchableOpacity>
@@ -840,26 +848,25 @@ export default function OverviewScreen() {
   const stableAlertsSection = activeStableAlerts.length ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
-      style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
+      style={[styles.eventsCard, !isDesktopWeb && styles.stableAlertStrip, isDesktopWeb && styles.desktopCardVisible]}
     >
-      <View style={styles.eventsHeader}>
+      {isDesktopWeb ? <View style={styles.eventsHeader}>
         <Text style={[styles.eventsTitle, !isDesktopWeb && styles.eventsTitleMobile]}>
           Viktigt
         </Text>
         <Text style={[styles.eventsMeta, !isDesktopWeb && styles.eventsMetaMobile]}>
           {`${activeStableAlerts.length} ${activeStableAlerts.length === 1 ? 'aktivt' : 'aktiva'}`}
         </Text>
-      </View>
+      </View> : null}
       <View style={styles.eventsList}>
         {activeStableAlerts.map((alert) => (
           <View key={alert.id} style={styles.eventRow}>
-            <View
+            {isDesktopWeb ? <View
               style={[
                 styles.eventDot,
                 { backgroundColor: alert.severity === 'urgent' ? palette.error : palette.warning },
               ]}
-            />
+            /> : <Text style={styles.stableAlertLabel}>{alert.severity === 'urgent' ? 'AKUT!' : 'OBS!'}</Text>}
             <View style={styles.eventBody}>
               <Text
                 style={[styles.eventMessage, !isDesktopWeb && styles.eventMessageMobile]}
@@ -896,7 +903,6 @@ export default function OverviewScreen() {
   const eventsSection = recentEvents.length ? (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.eventsCard, !isDesktopWeb && styles.eventsCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.eventsHeader}>
@@ -934,7 +940,6 @@ export default function OverviewScreen() {
   const missedSection = (
     <Card
       tone={isDesktopWeb ? 'default' : 'muted'}
-      elevated
       style={[styles.missedCard, !isDesktopWeb && styles.missedCardMobile, isDesktopWeb && styles.desktopCardVisible]}
     >
       <View style={styles.missedHeader}>
@@ -975,15 +980,18 @@ export default function OverviewScreen() {
   );
 
   const quickActionsSection = (
-    <View style={styles.quickActionGrid}>
-      {quickActions.map((action) => (
-        <QuickActionCard
-          key={action.id}
-          action={action}
-          isDesktop={isDesktopWeb}
-          onPress={handleQuickActionPress}
-        />
-      ))}
+    <View style={styles.quickActionsSection}>
+      <Text style={styles.sectionTitle}>Snabbval</Text>
+      <View style={styles.quickActionGrid}>
+        {quickActions.map((action) => (
+          <QuickActionCard
+            key={action.id}
+            action={action}
+            isDesktop={isDesktopWeb}
+            onPress={handleQuickActionPress}
+          />
+        ))}
+      </View>
     </View>
   );
 
@@ -992,7 +1000,7 @@ export default function OverviewScreen() {
       <View style={styles.summaryHeader}>
         <View>
           <Text style={[styles.summaryTitle, !isDesktopWeb && styles.summaryTitleMobile]}>
-            Idag
+            Dagens pass
           </Text>
           <Text style={[styles.summarySubtitle, !isDesktopWeb && styles.summarySubtitleMobile]}>
             {hasTodayAssignments ? 'Status för dagens pass' : 'Inga pass idag'}
@@ -1046,7 +1054,7 @@ export default function OverviewScreen() {
   );
 
   const summarySection = isDesktopWeb ? (
-    <Card tone="default" elevated style={[styles.summaryCard, styles.desktopCardVisible]}>
+    <Card tone="default" style={[styles.summaryCard, styles.desktopCardVisible]}>
       {summaryContent}
     </Card>
   ) : (
@@ -1055,23 +1063,27 @@ export default function OverviewScreen() {
 
   const messagesSection = (
     <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
-      <SectionHeader title="Nya meddelanden" count={activeMessages.length} />
+      <SectionHeader title="Nya meddelanden" count={activeMessages.length} expanded={messagesExpanded} onPress={handleMessagePress} />
+      {activeMessages.length === 0 ? (
+        <Text style={styles.actionEmptyText}>Inga meddelanden i det här stallet ännu.</Text>
+      ) : null}
       {visibleMessages.map((message, index) => {
         const isPrimaryCard = index === 0;
-        const stacked = isPrimaryCard && !messagesExpanded;
+        const stacked = isPrimaryCard && !messagesExpanded && activeMessages.length > 1;
 
         return (
           <StackedCard
             key={message.id}
             offset={stacked ? [6, 16] : undefined}
             stacked={stacked}
-            onPress={isPrimaryCard ? handleMessagePress : undefined}
+            onPress={() => router.push(`/chat/${message.id}`)}
+            accessibilityLabel={`Öppna konversation med ${message.title}`}
             cardStyle={styles.messageCard}
           >
             <View style={styles.messageRow}>
               {message.group ? (
                 <View style={styles.groupAvatar}>
-                  <UserGroupsIcon width={28} height={28} />
+                  <UserGroupsIcon />
                 </View>
               ) : (
                 <Avatar
@@ -1101,7 +1113,7 @@ export default function OverviewScreen() {
         );
       })}
       {messagesExpanded && (
-        <TouchableOpacity style={styles.collapseButton} onPress={handleMessagePress}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa färre nya meddelanden" style={styles.collapseButton} onPress={handleMessagePress}>
           <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
         </TouchableOpacity>
       )}
@@ -1110,10 +1122,13 @@ export default function OverviewScreen() {
 
   const postsSection = (
     <View style={[styles.sectionBlock, isDesktopWeb && styles.sectionBlockDesktop]}>
-      <SectionHeader title="Senaste inlägg" count={activePosts.length} />
+      <SectionHeader title="Senaste inlägg" count={activePosts.length} expanded={postsExpanded} onPress={handlePostPress} />
+      {activePosts.length === 0 ? (
+        <Text style={styles.actionEmptyText}>Inga inlägg i det här stallet ännu.</Text>
+      ) : null}
       {visiblePosts.map((post, index) => {
         const isPrimaryCard = index === 0;
-        const stacked = isPrimaryCard && !postsExpanded;
+        const stacked = isPrimaryCard && !postsExpanded && activePosts.length > 1;
         const postTimeAgo = post.createdAt ? formatTimeAgo(post.createdAt) : post.timeAgo;
         const postDateLabel = post.createdAt ? formatShortDate(post.createdAt) : 'Idag';
 
@@ -1137,11 +1152,11 @@ export default function OverviewScreen() {
             </View>
             <View style={styles.postFooter}>
               <View style={styles.postStat}>
-                <HeartIcon width={16} height={16} />
+                <HeartIcon />
                 <Text style={styles.postStatText}>{post.likes}</Text>
               </View>
               <View style={styles.postStat}>
-                <SpeechBubbleIcon width={16} height={16} />
+                <SpeechBubbleIcon />
                 <Text style={styles.postStatText}>{post.comments}</Text>
               </View>
             </View>
@@ -1149,26 +1164,106 @@ export default function OverviewScreen() {
         );
       })}
       {postsExpanded && (
-        <TouchableOpacity style={styles.collapseButton} onPress={handlePostPress}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa färre senaste inlägg" style={styles.collapseButton} onPress={handlePostPress}>
           <Text style={styles.collapseButtonText}>Visa mindre ↑</Text>
         </TouchableOpacity>
       )}
     </View>
   );
 
+  const statusPreview = (todayOverview.myHorseSummaries.length
+    ? todayOverview.myHorseSummaries
+    : todayOverview.horseStatusGaps).slice(0, 2);
+  const nextDaysPreview = calendarPreviewGroups.filter((day) => day.isoDate !== todayIso).slice(0, 2);
+  const overviewSection = (
+    <View style={styles.overviewSection}>
+      <View style={styles.overviewRow}>
+        <WeatherPanel
+          stableLocation={stableLocation}
+          onEditLocation={isOwner ? () => router.push('/(onboarding)/stable-details') : undefined}
+        />
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Öppna dagens stallpass"
+          onPress={handleOpenCalendar}
+          activeOpacity={0.8}
+          style={styles.calendarPreview}
+        >
+          <View style={styles.calendarToday}>
+            <Text style={styles.calendarWeekday}>{new Date().toLocaleDateString('sv-SE', { weekday: 'long' })}</Text>
+            <Text style={styles.calendarDate}>{new Date().toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' })}</Text>
+            {(todayDayGroup?.assignments ?? []).slice(0, 2).map((assignment) => (
+              <View key={assignment.id} style={[styles.calendarTag, assignment.status === 'open' && styles.calendarTagOpen]}>
+                <Text numberOfLines={1} style={styles.calendarTagText}>{assignment.label}</Text>
+              </View>
+            ))}
+            {!todayDayGroup?.assignments.length ? <Text style={styles.previewEmpty}>Inga pass idag</Text> : null}
+          </View>
+          <View style={styles.calendarNext}>
+            {nextDaysPreview.length ? nextDaysPreview.map((day) => (
+              <View key={day.isoDate} style={styles.calendarNextDay}>
+                <Text numberOfLines={1} style={styles.calendarNextDate}>{formatShortDate(day.isoDate)}</Text>
+                <Text numberOfLines={1} style={styles.calendarTagText}>{day.assignments[0]?.label}</Text>
+              </View>
+            )) : <Text style={styles.previewEmpty}>Se hela schemat →</Text>}
+          </View>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.overviewRow}>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Öppna häststatus"
+          onPress={() => router.push('/stable-horses')}
+          style={styles.horsePreview}
+          activeOpacity={0.8}
+        >
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>Häststatus</Text>
+            <MoreIcon />
+          </View>
+          {statusPreview.map((item) => (
+            <Text key={item.horse.id} numberOfLines={1} style={styles.previewBody}>
+              {item.horse.name} · {item.status?.checked ? 'Kollad idag' : 'Ej kollad idag'}
+            </Text>
+          ))}
+          {!statusPreview.length ? <Text style={styles.previewBody}>{state.horses.some((horse) => horse.stableId === currentStableId) ? 'Inga luckor i dagstatus' : 'Lägg till din första häst'}</Text> : null}
+        </TouchableOpacity>
+        <View style={styles.quickPreview}>
+          <Text style={styles.quickPreviewTitle}>Snabbval</Text>
+          <View style={styles.quickPreviewActions}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityState={{ disabled: !canManageDayEvents }}
+              disabled={!canManageDayEvents}
+              onPress={() => setEventsModalVisible(true)}
+              style={[styles.quickPreviewButton, !canManageDayEvents && styles.quickActionCardDisabled]}
+              activeOpacity={0.8}
+            >
+              <View style={styles.quickPreviewPill}><Text style={styles.quickPreviewButtonText}>Händelse</Text></View>
+            </TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/feed')} style={styles.quickPreviewButton} activeOpacity={0.8}>
+              <View style={styles.quickPreviewPill}><Text style={styles.quickPreviewButtonText}>Inlägg</Text></View>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+
   return (
-    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+    <View style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Idag"
+          title="Dagens översikt"
           primaryAction={
             <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
-              <Feather name="search" size={18} color={palette.primaryText} />
+              <SearchIcon />
             </HeaderIconButton>
           }
         />
-        {!isDesktopWeb ? <StableSwitcher showAccess /> : null}
+        {!isDesktopWeb ? <StableSwitcher showAccess showLocation={false} /> : null}
+        <View style={[styles.syncStatus, isDesktopWeb && styles.pageHeaderDesktop]}><DataSyncStatus /></View>
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={[
@@ -1178,49 +1273,44 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <DataSyncStatus />
+          {isDesktopWeb ? <View style={styles.todayHeading}>
+            <Text style={styles.todayContext}>{todayDateLabel} · {stableName}</Text>
+            <Text accessibilityRole="header" style={styles.todayTitle}>Dagens arbete</Text>
+            <Text style={styles.todaySubtitle}>Foder, viktiga notiser och dina nästa pass.</Text>
+          </View> : null}
           {isDesktopWeb ? (
             <>
               {startHereSection}
-              {prioritySection}
+              {stableAlertsSection}
+              {overviewSection}
               {feedSection}
-              {/* Row 1: Events + Messages side by side */}
-              <View style={styles.desktopRow}>
-                <View style={styles.desktopRowMain}>
-                  {stableAlertsSection}
-                  {eventsSection}
-                </View>
-                <View style={styles.desktopRowSide}>
-                  {messagesSection}
-                </View>
-              </View>
-              {/* Row 2: Quick actions full width */}
               {quickActionsSection}
-              {/* Row 3: Today summary + Posts + Weather */}
               <View style={styles.desktopRow}>
                 <View style={styles.desktopRowMain}>
+                  {prioritySection}
                   {summarySection}
                   {missedSection}
                 </View>
                 <View style={styles.desktopRowSide}>
+                  {messagesSection}
+                  {eventsSection}
                   {postsSection}
-                  <WeatherPanel stableLocation={stableLocation} />
                 </View>
               </View>
             </>
           ) : (
             <>
               {startHereSection}
-              {prioritySection}
               {stableAlertsSection}
+              {overviewSection}
               {feedSection}
-              {quickActionsSection}
-              {eventsSection}
-              {summarySection}
-              {missedSection}
-              <WeatherPanel stableLocation={stableLocation} />
               {messagesSection}
               {postsSection}
+              {quickActionsSection}
+              {prioritySection}
+              {summarySection}
+              {missedAssignments.length ? missedSection : null}
+              {eventsSection}
             </>
           )}
       </ScrollView>
@@ -1244,6 +1334,9 @@ export default function OverviewScreen() {
             return (
               <TouchableOpacity
                 key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active, disabled: eventSaving }}
+                {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                 style={[styles.eventKindChip, active && styles.eventKindChipActive]}
                 disabled={eventSaving}
                 onPress={() => setEventKind(option.id as typeof eventKind)}
@@ -1300,75 +1393,60 @@ export default function OverviewScreen() {
         </View>
       </Modal>
 
-    </LinearGradient>
+    </View>
   );
 }
 
-function WeatherPanel({ stableLocation }: { stableLocation?: string }) {
-  const { data: weather, status } = useWeather(stableLocation);
-
-  // Weather is non-critical. If it can't load (SMHI unreachable, or CORS-blocked
-  // on web), hide the panel rather than hang on "Laddar väder..." forever.
-  if (status === 'error') {
-    return null;
-  }
-
-  if (!weather) {
-    return (
-      <LinearGradient
-        colors={['#3A73FF', '#5F96FF']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.weatherPanel}
-      >
-        <Text style={styles.weatherSummary}>Laddar väder...</Text>
-      </LinearGradient>
-    );
-  }
-
+function WeatherPanel({ stableLocation, onEditLocation }: { stableLocation?: string; onEditLocation?: () => void }) {
+  const { data: weather, status, error, retry } = useWeather(stableLocation);
+  const locationError = error === 'Ort ej hittad' || error === 'Ange stallets ort';
+  const canPress = Boolean(weather) || (status === 'error' && (!locationError || Boolean(onEditLocation)));
+  const symbol = weather?.symbol;
+  const icon = !weather ? 'cloud-off'
+    : symbol === 1 || symbol === 2 ? 'sun'
+      : symbol === 7 ? 'wind'
+        : symbol === 11 || symbol === 21 ? 'cloud-lightning'
+          : symbol && ((symbol >= 12 && symbol <= 17) || symbol >= 22) ? 'cloud-snow'
+            : symbol && symbol >= 8 ? 'cloud-rain' : 'cloud';
   return (
-    <LinearGradient
-      colors={['#3A73FF', '#5F96FF']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.weatherPanel}
+    <TouchableOpacity
+      disabled={!canPress}
+      accessibilityRole={weather ? 'link' : canPress ? 'button' : undefined}
+      accessibilityState={{ disabled: !canPress, busy: status === 'loading' }}
+      accessibilityLabel={weather ? `Prognos för ${weather.location}: cirka ${weather.temperature} grader, ${weather.summary}. Kommande 24 timmar högst ${weather.high} och lägst ${weather.low} grader. Källa SMHI, uppdaterad ${weather.updatedAt}, avrundade värden. Öppna SMHI.` : canPress ? locationError ? 'Ändra stallets ort' : 'Hämta vädret igen' : undefined}
+      activeOpacity={0.85}
+      onPress={() => {
+        if (weather) {
+          void Linking.openURL('https://www.smhi.se/vader').catch(() => console.warn('[weather] Could not open SMHI.'));
+        } else if (locationError) {
+          onEditLocation?.();
+        } else {
+          retry();
+        }
+      }}
     >
-      <View style={styles.weatherTopRow}>
-        <View style={styles.weatherLocationBlock}>
-          <Text style={styles.weatherMetaLabel}>Plats</Text>
-          <Text style={styles.weatherLocation}>{weather.location}</Text>
-        </View>
-        <View style={styles.weatherMetaRight}>
-          <Text style={styles.weatherMetaLabel}>Uppdaterad</Text>
-          <Text style={styles.weatherMetaValue}>{weather.updatedAt}</Text>
-        </View>
+    <LinearGradient colors={theme.gradients.weather} style={styles.weatherTile}>
+      <View>
+        <Text numberOfLines={1} style={styles.weatherTileLocation}>{weather?.location ?? (stableLocation?.trim() || 'Väder')}</Text>
+        <Text style={styles.weatherTileTemperature}>{weather ? '≈' : ''}{weather ? `${weather.temperature}°` : '—'}</Text>
       </View>
-
-      <View style={styles.weatherContentRow}>
-        <View style={styles.weatherTempBlock}>
-          <Text style={styles.weatherTemperatureLarge}>{weather.temperature}°</Text>
-          <Text style={styles.weatherSummary}>{weather.summary}</Text>
-        </View>
-        <CloudSun width={48} height={48} style={styles.weatherIconLarge} />
-      </View>
-
-      <View style={styles.weatherMetrics}>
-        <View style={styles.weatherMetricItem}>
-          <Text style={styles.weatherMetricLabel}>Högsta</Text>
-          <Text style={styles.weatherMetricValue}>{weather.high}°</Text>
-        </View>
-        <View style={styles.weatherMetricDivider} />
-        <View style={styles.weatherMetricItem}>
-          <Text style={styles.weatherMetricLabel}>Lägsta</Text>
-          <Text style={styles.weatherMetricValue}>{weather.low}°</Text>
-        </View>
-        <View style={styles.weatherMetricDivider} />
-        <View style={styles.weatherMetricItem}>
-          <Text style={styles.weatherMetricLabel}>Vind</Text>
-          <Text style={styles.weatherMetricValue}>{weather.wind} m/s</Text>
-        </View>
+      {status !== 'error' ? <View style={styles.weatherTileIcon}>
+        {status === 'loading' ? <ActivityIndicator size="small" color="#FFFFFF" />
+          : symbol === 3 || symbol === 4 ? <CloudSun /> : <Feather name={icon} size={28} color="#FFFFFF" />}
+      </View> : null}
+      <View>
+        <Text numberOfLines={2} style={styles.weatherTileCaption}>{weather?.summary ?? (status === 'loading' ? 'Hämtar väder' : error ?? 'Ej tillgängligt')}</Text>
+        {weather ? <>
+          <Text style={styles.weatherTileSource}>24h H:{weather.high}° L:{weather.low}°</Text>
+          <Text style={styles.weatherTileSource}>SMHI · {weather.updatedAt}</Text>
+        </> : status === 'error' ? (
+          <Text style={[styles.weatherTileAction, canPress && { textDecorationLine: 'underline' }]}>
+            {locationError ? onEditLocation ? 'Ändra ort' : 'Be ägaren ändra ort' : 'Försök igen'}
+          </Text>
+        ) : null}
       </View>
     </LinearGradient>
+    </TouchableOpacity>
   );
 }
 
@@ -1381,8 +1459,7 @@ const QuickActionCard = React.memo(function QuickActionCard({
   onPress?: (action: QuickAction) => void;
   isDesktop?: boolean;
 }) {
-  const themeStyles = quickActionStyles[action.tint];
-  const badgeColor = themeStyles.icon;
+  const iconColor = action.tint === 'warning' ? palette.warning : palette.primary;
 
   return (
     <Pressable
@@ -1397,32 +1474,21 @@ const QuickActionCard = React.memo(function QuickActionCard({
           action.disabled && styles.quickActionCardDisabled,
         ]}
       >
-      <LinearGradient
-        colors={themeStyles.gradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+      <View
         style={[
           styles.quickActionInner,
           !isDesktop && styles.quickActionInnerMobile,
-          {
-            borderColor: themeStyles.accentBorder,
-            shadowColor: themeStyles.shadow,
-            shadowOpacity: isDesktop ? 0.2 : 0.12,
-            shadowRadius: isDesktop ? 14 : 10,
-            shadowOffset: { width: 0, height: isDesktop ? 8 : 5 },
-            elevation: 2,
-          },
           action.disabled && styles.quickActionInnerDisabled,
         ]}
       >
         {action.highlight && !action.disabled ? (
-          <View style={[styles.quickActionBadge, { backgroundColor: badgeColor }]} />
+          <View style={[styles.quickActionBadge, { backgroundColor: iconColor }]} />
         ) : null}
-        <View style={[styles.quickActionIcon, { backgroundColor: `${themeStyles.icon}10` }]}>
+        <View style={styles.quickActionIcon}>
           <Feather
             name={action.icon}
             size={18}
-            color={action.disabled ? `${themeStyles.icon}60` : themeStyles.icon}
+            color={action.disabled ? palette.secondaryText : iconColor}
           />
         </View>
         <View style={styles.quickActionText}>
@@ -1439,7 +1505,7 @@ const QuickActionCard = React.memo(function QuickActionCard({
             {action.caption}
           </Text>
         </View>
-      </LinearGradient>
+      </View>
     </Pressable>
   );
 });
@@ -1482,7 +1548,7 @@ function QuickActionSheet({
         style={styles.sheetOverlay}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <TouchableOpacity style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose} />
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Stäng ${title.toLowerCase()}`} style={styles.sheetBackdrop} activeOpacity={1} onPress={onClose} />
         <View style={styles.sheetContainer}>
           <View style={styles.sheetHandle} />
           <View style={styles.sheetHeader}>
@@ -1505,6 +1571,8 @@ function QuickActionSheet({
               ) : null}
               {primaryLabel ? (
                 <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={primaryLabel}
                   style={[
                     styles.sheetPrimaryButton,
                     primaryDisabled && styles.sheetPrimaryButtonDisabled,
@@ -1535,7 +1603,7 @@ function QuickActionSheet({
   );
 }
 
-const SectionHeader = React.memo(function SectionHeader({ title, count }: { title: string; count: number }) {
+const SectionHeader = React.memo(function SectionHeader({ title, count, expanded, onPress }: { title: string; count: number; expanded?: boolean; onPress?: () => void }) {
   return (
     <View style={styles.sectionHeader}>
       <View style={styles.sectionTitleGroup}>
@@ -1543,7 +1611,11 @@ const SectionHeader = React.memo(function SectionHeader({ title, count }: { titl
         <View style={styles.sectionDot} />
         <Text style={styles.sectionCount}>{count}</Text>
       </View>
-      <Text style={styles.sectionAction}>Visa mer ↓</Text>
+      {count > 1 ? (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Visa ${expanded ? 'färre' : 'fler'} ${title.toLowerCase()}`} onPress={onPress} style={styles.sectionMore}>
+          <Text style={styles.sectionAction}>{expanded ? 'Visa mindre ↑' : 'Visa mer ↓'}</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 });
@@ -1552,6 +1624,7 @@ const StackedCard = React.memo(function StackedCard({
   children,
   offset,
   onPress,
+  accessibilityLabel,
   cardStyle,
   stacked = true,
   layerColors,
@@ -1559,6 +1632,7 @@ const StackedCard = React.memo(function StackedCard({
   children: React.ReactNode;
   offset?: [number, number];
   onPress?: () => void;
+  accessibilityLabel?: string;
   cardStyle?: StyleProp<ViewStyle>;
   stacked?: boolean;
   layerColors?: {
@@ -1575,6 +1649,7 @@ const StackedCard = React.memo(function StackedCard({
           <View
             pointerEvents="none"
             style={[
+              styles.stackLayer,
               layerColors?.base && { backgroundColor: layerColors.base },
               { transform: [{ translateY: secondOffset }] },
             ]}
@@ -1582,6 +1657,7 @@ const StackedCard = React.memo(function StackedCard({
           <View
             pointerEvents="none"
             style={[
+              styles.stackLayer,
               layerColors?.top && { backgroundColor: layerColors.top },
               { transform: [{ translateY: firstOffset }] },
             ]}
@@ -1589,6 +1665,8 @@ const StackedCard = React.memo(function StackedCard({
         </>
       )}
       <Pressable
+        accessibilityRole={onPress ? 'button' : undefined}
+        accessibilityLabel={accessibilityLabel}
         disabled={!onPress}
         onPress={onPress}
         style={({ pressed }) => [
@@ -1617,8 +1695,53 @@ function formatEventTime(value: string) {
 }
 
 const styles = StyleSheet.create({
+  overviewSection: { gap: 10 },
+  overviewRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
+  calendarPreview: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 100,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#F5F5F5',
+    borderRadius: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  calendarToday: { flex: 1, minWidth: 0, gap: 3 },
+  calendarWeekday: { fontFamily: theme.fonts.semibold, fontSize: 11, lineHeight: 14, color: '#2196F3', textTransform: 'uppercase' },
+  calendarDate: { fontFamily: theme.fonts.regular, fontSize: 20, lineHeight: 24, color: palette.primaryText },
+  calendarTag: { paddingHorizontal: 4, paddingVertical: 1, backgroundColor: '#E5F5FF', borderLeftWidth: 1.5, borderLeftColor: palette.primary, borderRadius: 2 },
+  calendarTagOpen: { backgroundColor: '#FFE5E5', borderLeftColor: palette.error },
+  calendarTagText: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: palette.primaryText },
+  calendarNext: { flex: 1, minWidth: 0, gap: 8, justifyContent: 'center' },
+  calendarNextDay: { gap: 3 },
+  calendarNextDate: { fontFamily: theme.fonts.medium, fontSize: 10, lineHeight: 13, color: palette.secondaryText },
+  previewEmpty: { fontFamily: theme.fonts.regular, fontSize: 11, lineHeight: 15, color: palette.secondaryText },
+  horsePreview: { flex: 1, minWidth: 0, minHeight: 100, padding: 10, gap: 5, borderRadius: 12, backgroundColor: '#F5F5F5' },
+  previewHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 4 },
+  previewTitle: { fontFamily: theme.fonts.regular, fontSize: 17, lineHeight: 22, color: palette.primaryText },
+  previewBody: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 16, color: palette.primaryText },
+  quickPreview: { flex: 1, minWidth: 0, minHeight: 100, padding: 10, borderRadius: 12, backgroundColor: '#0099FF', justifyContent: 'space-between' },
+  quickPreviewTitle: { fontFamily: theme.fonts.regular, fontSize: 15, lineHeight: 20, color: '#FFFFFF' },
+  quickPreviewActions: { flexDirection: 'row', gap: 8 },
+  quickPreviewButton: { flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center' },
+  quickPreviewPill: { minHeight: 26, justifyContent: 'center', alignItems: 'center', borderRadius: 999, backgroundColor: '#FFFFFF' },
+  quickPreviewButtonText: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 16, color: palette.primaryText },
+  feedingCard: { padding: 14, borderRadius: 12, borderColor: '#F5F5F5', backgroundColor: '#FFFFFF', gap: 10 },
+  feedingRow: { backgroundColor: 'transparent', paddingHorizontal: 0, paddingVertical: 4, borderRadius: 0 },
+  sectionMore: { minHeight: 44, paddingLeft: 12, justifyContent: 'center' },
+  syncStatus: { paddingHorizontal: 20 },
+  weatherTile: { width: 100, minHeight: 100, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 12, justifyContent: 'space-between' },
+  weatherTileLocation: { fontFamily: theme.fonts.medium, fontSize: 12, lineHeight: 15, color: '#FFFFFF', maxWidth: 80 },
+  weatherTileTemperature: { fontFamily: theme.fonts.semibold, fontSize: 17, lineHeight: 22, color: '#FFFFFF' },
+  weatherTileCaption: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 15, color: '#FFFFFF' },
+  weatherTileSource: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: '#FFFFFF' },
+  weatherTileAction: { fontFamily: theme.fonts.medium, fontSize: 11, lineHeight: 15, color: palette.primaryText, marginTop: 4 },
+  weatherTileIcon: { position: 'absolute', right: 12, top: 36, width: 30, height: 30 },
   background: {
     flex: 1,
+    backgroundColor: color.bg,
   },
   safeArea: {
     flex: 1,
@@ -1629,9 +1752,9 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingTop: 8,
     paddingBottom: 120,
-    gap: 18,
+    gap: 20,
   },
   scrollContentDesktop: {
     maxWidth: 1100,
@@ -1641,6 +1764,30 @@ const styles = StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 40,
     gap: 20,
+  },
+  todayHeading: {
+    gap: 5,
+    paddingBottom: 2,
+  },
+  todayContext: {
+    fontFamily: theme.fonts.regular,
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.secondaryText,
+  },
+  todayTitle: {
+    fontFamily: theme.fonts.medium,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '500',
+    letterSpacing: 0,
+    color: palette.primaryText,
+  },
+  todaySubtitle: {
+    fontFamily: theme.fonts.regular,
+    fontSize: 14,
+    lineHeight: 20,
+    color: palette.secondaryText,
   },
   desktopRow: {
     flexDirection: 'row',
@@ -1665,7 +1812,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 36,
   },
   pageHeader: {
-    marginBottom: 8,
+    marginBottom: 0,
   },
   pageHeaderDesktop: {
     maxWidth: 1100,
@@ -1686,11 +1833,13 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   alertLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
     color: palette.error,
   },
   alertText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 15,
     color: palette.primaryText,
   },
@@ -1701,17 +1850,36 @@ const styles = StyleSheet.create({
     marginTop: 0,
     marginBottom: 0,
   },
+  quickActionsSection: {
+    gap: 12,
+  },
   eventsCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
-    gap: 16,
-    borderRadius: radius.xl,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    gap: 12,
+    borderRadius: radius.lg,
   },
   eventsCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
+  },
+  stableAlertStrip: {
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+    borderRadius: 0,
+    backgroundColor: 'transparent',
+  },
+  stableAlertLabel: {
+    fontFamily: theme.fonts.semibold,
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#FF0000',
+    alignSelf: 'flex-start',
+    paddingTop: 6,
   },
   eventsHeader: {
     flexDirection: 'row',
@@ -1719,22 +1887,26 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   eventsTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
-    letterSpacing: -0.3,
+    letterSpacing: 0,
   },
   eventsTitleMobile: {
+    fontFamily: theme.fonts.regular,
     fontSize: 17,
-    fontWeight: '600',
+    fontWeight: '400',
   },
   eventsMeta: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
     color: palette.secondaryText,
     fontWeight: '500',
   },
   eventsMetaMobile: {
-    fontSize: 11,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
   },
   eventsList: {
     gap: 10,
@@ -1754,16 +1926,19 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   eventMessage: {
+    fontFamily: theme.fonts.medium,
     fontSize: 15,
     color: palette.primaryText,
     fontWeight: '500',
     lineHeight: 20,
   },
   eventMessageMobile: {
-    fontSize: 14,
-    lineHeight: 18,
+    fontFamily: theme.fonts.regular,
+    fontSize: 15,
+    lineHeight: 21,
   },
   eventTime: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
@@ -1778,6 +1953,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   alertResolveText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '700',
     color: palette.primaryText,
@@ -1789,15 +1965,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   missedCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     gap: 16,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
   },
   missedCardMobile: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
   },
   missedHeader: {
@@ -1806,21 +1983,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   missedTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 20,
     fontWeight: '700',
     color: palette.primaryText,
     letterSpacing: -0.3,
   },
   missedTitleMobile: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 17,
     fontWeight: '600',
   },
   missedMeta: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
     color: palette.secondaryText,
     fontWeight: '500',
   },
   missedMetaMobile: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
   },
   missedList: {
@@ -1842,15 +2023,18 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   missedLabel: {
+    fontFamily: theme.fonts.medium,
     fontSize: 15,
     color: palette.primaryText,
     fontWeight: '500',
   },
   missedTime: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
   missedEmpty: {
+    fontFamily: theme.fonts.regular,
     fontSize: 14,
     color: palette.secondaryText,
   },
@@ -1864,15 +2048,16 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   missedActionText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
     color: palette.primary,
   },
   quickActionCard: {
-    flexGrow: 0,
-    flexBasis: '48%',
-    minWidth: '48%',
-    borderRadius: radii.xl,
+    flexGrow: 1,
+    flexBasis: '47%',
+    minWidth: 0,
+    borderRadius: radius.lg,
     overflow: 'hidden',
   },
   quickActionCardDesktop: {
@@ -1881,21 +2066,23 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   quickActionCardPressed: {
-    transform: [{ scale: 0.98 }],
+    opacity: 0.8,
   },
   quickActionCardDisabled: {
     opacity: 0.7,
   },
   quickActionInner: {
-    borderRadius: radii.xl,
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    gap: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    backgroundColor: systemPalette.surface,
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 6,
+    borderWidth: 0,
+    borderColor: palette.border,
+    backgroundColor: palette.surfaceTint,
   },
   quickActionInnerMobile: {
-    borderColor: 'rgba(15,22,34,0.08)',
+    paddingHorizontal: 14,
   },
   quickActionInnerDisabled: {
     opacity: 0.7,
@@ -1912,9 +2099,10 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   quickActionIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.md,
+    width: 24,
+    height: 24,
+    borderRadius: radius.md,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1922,25 +2110,29 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   quickActionLabel: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontFamily: theme.fonts.medium,
+    fontSize: 14,
+    fontWeight: '500',
     color: palette.primaryText,
-    letterSpacing: -0.2,
+    letterSpacing: 0,
   },
   quickActionLabelMobile: {
-    fontSize: 14,
-    letterSpacing: -0.2,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontSize: 13,
+    letterSpacing: 0,
+    fontWeight: '500',
   },
   quickActionCaption: {
-    fontSize: 13,
-    lineHeight: 18,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    lineHeight: 16,
     color: palette.secondaryText,
   },
   quickActionCaptionMobile: {
-    fontSize: 11,
-    lineHeight: 15,
-    color: palette.mutedText,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    lineHeight: 16,
+    color: palette.secondaryText,
   },
   startHereCard: {
     paddingHorizontal: 28,
@@ -1965,12 +2157,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   startHereTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 22,
     fontWeight: '700',
     color: palette.primaryText,
     letterSpacing: -0.3,
   },
   startHereSubtitle: {
+    fontFamily: theme.fonts.regular,
     fontSize: 14,
     lineHeight: 20,
     color: palette.secondaryText,
@@ -1984,6 +2178,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   startHereBadgeText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 11,
     fontWeight: '700',
     color: palette.primaryText,
@@ -2003,6 +2198,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   startHereText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.primaryText,
   },
@@ -2023,6 +2219,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.primary,
   },
   startHerePrimaryText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '700',
     color: palette.inverseText,
@@ -2037,6 +2234,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   startHereSecondaryText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '600',
     color: palette.primaryText,
@@ -2050,22 +2248,24 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   startHereHintText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.secondaryText,
   },
   priorityCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
-    gap: 16,
-    borderRadius: radius.xl,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    gap: 12,
+    borderRadius: 12,
   },
   priorityCardMobile: {
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.08)',
+    borderColor: palette.border,
     backgroundColor: palette.surface,
   },
   priorityHeader: {
@@ -2080,22 +2280,26 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   priorityEyebrow: {
+    fontFamily: theme.fonts.medium,
     fontSize: 11,
-    fontWeight: '800',
+    fontWeight: '500',
     color: palette.primary,
     textTransform: 'uppercase',
   },
   priorityTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   priorityTitleMobile: {
-    fontSize: 18,
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
   },
   prioritySubtitle: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
+    lineHeight: 17,
     color: palette.secondaryText,
   },
   priorityRolePill: {
@@ -2107,6 +2311,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   priorityRoleText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 11,
     fontWeight: '700',
     color: palette.primaryText,
@@ -2121,10 +2326,11 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   priorityNoticeText: {
+    fontFamily: theme.fonts.regular,
     flex: 1,
     fontSize: 13,
     lineHeight: 18,
-    color: palette.secondaryText,
+    color: palette.primaryText,
   },
   priorityGrid: {
     flexDirection: 'row',
@@ -2132,7 +2338,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   priorityGridDesktop: {
-    flexWrap: 'nowrap',
+    flexWrap: 'wrap',
   },
   priorityItem: {
     flexGrow: 1,
@@ -2151,10 +2357,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 246, 230, 0.82)',
   },
   priorityItemMobile: {
-    flexBasis: 0,
+    flexBasis: '45%',
     minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
   },
   priorityValueMobile: { fontSize: 20 },
   priorityItemSuccess: {
@@ -2162,16 +2368,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(235, 249, 241, 0.8)',
   },
   priorityValue: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontFamily: theme.fonts.medium,
+    fontSize: 20,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   priorityLabel: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '500',
     color: palette.primaryText,
   },
   priorityMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     lineHeight: 16,
     color: palette.secondaryText,
@@ -2187,8 +2396,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   priorityHorseButtonText: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '500',
     color: palette.primaryText,
   },
   summarySection: {
@@ -2199,11 +2409,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   summaryCard: {
-    paddingHorizontal: 28,
-    paddingVertical: 24,
-    borderWidth: 0,
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
     gap: 16,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -2212,22 +2423,26 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   summaryTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
-    letterSpacing: -0.3,
+    letterSpacing: 0,
   },
   summaryTitleMobile: {
+    fontFamily: theme.fonts.regular,
     fontSize: 17,
-    fontWeight: '600',
-    letterSpacing: -0.2,
+    fontWeight: '400',
+    letterSpacing: 0,
   },
   summarySubtitle: {
+    fontFamily: theme.fonts.regular,
     marginTop: 4,
     fontSize: 15,
     color: palette.secondaryText,
   },
   summarySubtitleMobile: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.mutedText,
   },
@@ -2241,9 +2456,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(62,155,95,0.1)',
+    backgroundColor: palette.surfaceTint,
   },
   summaryBadgeText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.primary,
@@ -2252,12 +2468,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'nowrap',
     gap: 10,
-    marginTop: 10,
+    marginTop: 0,
   },
   summaryTilesDesktop: {
     gap: 16,
   },
   summaryEmpty: {
+    fontFamily: theme.fonts.regular,
     marginTop: 8,
     fontSize: 13,
     color: palette.mutedText,
@@ -2265,57 +2482,46 @@ const styles = StyleSheet.create({
   summaryTile: {
     flex: 1,
     minWidth: 0,
-    borderRadius: radius.xl,
-    paddingVertical: 22,
-    paddingHorizontal: 22,
-    backgroundColor: color.card,
-    gap: 10,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.04)',
-    shadowColor: 'rgba(15,22,34,0.06)',
-    shadowOpacity: 0.1,
-    shadowRadius: 20,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 1,
+    paddingVertical: 8,
+    gap: 5,
   },
   summaryTileMobile: {
-    borderColor: 'rgba(15,22,34,0.08)',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    paddingHorizontal: 2,
   },
   summaryValue: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#1B1E2F',
-    letterSpacing: -0.5,
+    fontFamily: theme.fonts.medium,
+    fontSize: 20,
+    fontWeight: '500',
+    color: palette.primaryText,
+    letterSpacing: 0,
   },
   summaryLabel: {
-    fontSize: 12,
+    fontFamily: theme.fonts.semibold,
+    fontSize: 13,
     fontWeight: '600',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#8B8F9E',
+    color: palette.primaryText,
   },
   summaryLabelMobile: {
     letterSpacing: 0.4,
   },
   summaryMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    color: palette.mutedText,
+    lineHeight: 17,
+    color: palette.secondaryText,
   },
   summaryMetaMobile: {
-    fontSize: 11,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
   },
   activityColumn: {
     gap: 8,
   },
   activityTitle: {
-    fontSize: 12,
+    fontFamily: theme.fonts.semibold,
+    fontSize: 14,
     fontWeight: '600',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    color: '#8B8F9E',
+    color: palette.primaryText,
   },
   activityRow: {
     flexDirection: 'row',
@@ -2324,11 +2530,12 @@ const styles = StyleSheet.create({
   },
   activityChip: {
     borderRadius: radius.full,
-    backgroundColor: 'rgba(10,132,255,0.08)',
+    backgroundColor: palette.surfaceTint,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   activityChipText: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
     fontWeight: '500',
     color: palette.primaryText,
@@ -2349,15 +2556,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   myPassTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
     color: palette.primaryText,
   },
   myPassMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
   myPassNote: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.primaryText,
     lineHeight: 18,
@@ -2390,11 +2600,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   sheetTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 18,
     fontWeight: '700',
     color: palette.primaryText,
   },
   sheetDescription: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
     lineHeight: 18,
@@ -2413,6 +2625,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   sheetSecondaryLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
     color: palette.primary,
@@ -2430,6 +2643,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   sheetPrimaryLabel: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
     color: palette.inverseText,
@@ -2445,24 +2659,29 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   actionDetailTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 16,
     fontWeight: '600',
     color: palette.primaryText,
   },
   actionDetailMeta: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
   actionDetailNote: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.primaryText,
     lineHeight: 18,
   },
   actionDetailHint: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   actionEmptyText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
     lineHeight: 18,
@@ -2473,6 +2692,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   eventKindChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: radius.full,
@@ -2481,10 +2702,11 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   eventKindChipActive: {
-    borderColor: 'rgba(62,155,95,0.35)',
-    backgroundColor: 'rgba(62,155,95,0.12)',
+    borderColor: palette.primary,
+    backgroundColor: theme.tints.primary,
   },
   eventKindText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '700',
     color: palette.primaryText,
@@ -2493,6 +2715,7 @@ const styles = StyleSheet.create({
     color: palette.primary,
   },
   reportInput: {
+    fontFamily: theme.fonts.regular,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: 'rgba(15,22,34,0.15)',
@@ -2508,6 +2731,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'center',
   },
   reportHint: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
@@ -2517,7 +2741,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     gap: 14,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderColor: palette.border,
   },
   weatherTopRow: {
     flexDirection: 'row',
@@ -2528,24 +2752,27 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   weatherMetaLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
-    color: 'rgba(255,255,255,0.7)',
+    color: palette.secondaryText,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
   },
   weatherLocation: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 18,
     fontWeight: '600',
-    color: 'white',
+    color: palette.primaryText,
   },
   weatherMetaRight: {
     alignItems: 'flex-end',
     gap: 2,
   },
   weatherMetaValue: {
+    fontFamily: theme.fonts.medium,
     fontSize: 12,
     fontWeight: '500',
-    color: 'white',
+    color: palette.secondaryText,
   },
   weatherContentRow: {
     flexDirection: 'row',
@@ -2556,14 +2783,16 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   weatherTemperatureLarge: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 36,
     fontWeight: '700',
-    color: 'white',
+    color: palette.primaryText,
     letterSpacing: -1,
   },
   weatherSummary: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    color: 'rgba(255,255,255,0.9)',
+    color: palette.secondaryText,
     letterSpacing: 0.2,
   },
   weatherIconLarge: {
@@ -2575,7 +2804,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: palette.surfaceTint,
     borderRadius: radius.full,
     paddingHorizontal: 14,
     paddingVertical: 6,
@@ -2586,20 +2815,22 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   weatherMetricLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 9,
-    color: 'rgba(255,255,255,0.7)',
+    color: palette.secondaryText,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   weatherMetricValue: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
-    color: 'white',
+    color: palette.primaryText,
   },
   weatherMetricDivider: {
     width: 1,
     height: 16,
-    backgroundColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: palette.border,
   },
   scheduleCard: {
     flex: 1,
@@ -2620,11 +2851,13 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   scheduleTitle: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
     color: palette.primaryText,
   },
   scheduleSubtitle: {
+    fontFamily: theme.fonts.regular,
     fontSize: 11,
     color: palette.secondaryText,
   },
@@ -2640,12 +2873,14 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   scheduleMainDayName: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.accent,
     letterSpacing: 0.1,
   },
   scheduleMainDate: {
+    fontFamily: theme.fonts.regular,
     fontSize: 21,
     fontWeight: '400',
     color: palette.primaryText,
@@ -2658,6 +2893,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   scheduleSecondaryDayName: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
     color: palette.mutedText,
@@ -2678,6 +2914,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   scheduleChipText: {
+    fontFamily: theme.fonts.medium,
     fontSize: 11,
     fontWeight: '500',
     color: palette.secondaryText,
@@ -2692,22 +2929,12 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.06)',
-    shadowColor: 'rgba(15,22,38,0.08)',
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    borderColor: palette.border,
   },
   desktopCardVisible: {
     backgroundColor: '#FFFFFF',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(15,22,34,0.06)',
-    shadowColor: 'rgba(15,22,38,0.08)',
-    shadowOpacity: 1,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 1,
+    borderColor: palette.border,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -2717,14 +2944,15 @@ const styles = StyleSheet.create({
   sectionTitleGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
+    gap: 5,
+    marginBottom: 0,
   },
   sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 17,
+    fontWeight: '400',
     color: palette.primaryText,
-    letterSpacing: -0.3,
+    letterSpacing: 0,
   },
   sectionDot: {
     width: 6,
@@ -2733,12 +2961,14 @@ const styles = StyleSheet.create({
     backgroundColor: palette.accent,
   },
   sectionCount: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   sectionAction: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
-    color: palette.primary,
+    color: palette.primaryText,
   },
   stackedWrapper: {
     position: 'relative',
@@ -2747,22 +2977,35 @@ const styles = StyleSheet.create({
   stackedWrapperFlat: {
     marginBottom: 0,
   },
+  stackLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 20,
+    shadowColor: '#000000',
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: 2 },
+    shadowRadius: 3,
+  },
   primaryCard: {
     backgroundColor: palette.surfaceTint,
     borderRadius: radius.lg,
-    padding: space.lg,
+    padding: 15,
   },
   primaryCardPressed: {
     transform: [{ translateY: 1 }],
   },
   postCard: {
-    gap: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 14,
+    gap: 10,
+    paddingHorizontal: 15,
+    paddingVertical: 15,
   },
   messageCard: {
-    paddingHorizontal: 8,
-    paddingVertical: 14,
+    paddingHorizontal: 15,
+    paddingVertical: 15,
   },
   postHeader: {
     flexDirection: 'row',
@@ -2771,15 +3014,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   postAuthor: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontFamily: theme.fonts.regular,
+    fontSize: 15,
+    fontWeight: '400',
     color: palette.primaryText,
     marginBottom: 8,
   },
   postBody: {
-    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
     color: palette.primaryText,
-    lineHeight: 22,
+    lineHeight: 17,
   },
   postContent: {
     flex: 1,
@@ -2791,10 +3036,12 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   postMetaDay: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
   postMetaTime: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
   },
@@ -2809,25 +3056,26 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   postStatText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     color: palette.secondaryText,
   },
   messageRow: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
     alignItems: 'center',
   },
   groupAvatar: {
-    width: 44,
-    height: 44,
+    width: 46,
+    height: 50,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceMuted,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
   messageAvatar: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     borderRadius: radius.full,
     backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
@@ -2848,12 +3096,14 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   messageTitle: {
-    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontSize: 14,
     color: palette.primaryText,
-    fontWeight: '600',
+    fontWeight: '400',
     letterSpacing: -0.2,
   },
   messageTime: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: palette.secondaryText,
     fontWeight: '400',
@@ -2868,25 +3118,31 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   messageBadgeText: {
+    fontFamily: theme.fonts.semibold,
     fontSize: 10,
     color: palette.inverseText,
     fontWeight: '600',
   },
   messageAuthor: {
-    fontSize: 14,
+    fontFamily: theme.fonts.medium,
+    fontSize: 12,
     color: palette.secondaryText,
     fontWeight: '500',
   },
   messagePreview: {
-    fontSize: 14,
+    fontFamily: theme.fonts.regular,
+    fontSize: 12,
     color: palette.mutedText,
-    lineHeight: 20,
+    lineHeight: 17,
   },
   collapseButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     alignSelf: 'flex-start',
     marginTop: 6,
   },
   collapseButtonText: {
+    fontFamily: theme.fonts.regular,
     fontSize: 12,
     fontWeight: '400',
     color: palette.primaryText,

@@ -1,4 +1,5 @@
 import { InviteReceipt } from '@/components/InviteReceipt';
+import { StableInviteList } from '@/components/StableInviteList';
 import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { generateId } from '@/lib/ids';
@@ -299,7 +300,7 @@ export default function AdminDashboard() {
   }, []);
 
   const handleQuickAddPaddock = React.useCallback(async () => {
-    if (savingPaddockRef.current) return;
+    if (savingPaddockRef.current || !state.paddockLinksReady) return;
     if (!quickStableId) {
       toast.showToast('Välj ett stall först.', 'error');
       return;
@@ -309,30 +310,33 @@ export default function AdminDashboard() {
       toast.showToast('Hagens namn krävs.', 'error');
       return;
     }
-    const horseNames = quickStableHorses
-      .filter((horse) => quickPaddockDraft.horseIds.includes(horse.id))
-      .map((horse) => horse.name);
     savingPaddockRef.current = true;
     setSavingPaddock(true);
     setPaddockError(null);
     newPaddockIdRef.current ??= generateId();
-    const result = await actions.upsertPaddock({
-      id: newPaddockIdRef.current,
-      stableId: quickStableId,
-      name,
-      horseNames,
-      season: 'yearRound',
-    });
-    savingPaddockRef.current = false;
-    setSavingPaddock(false);
-    if (!result.success) {
-      setPaddockError(result.reason);
-      return;
+    try {
+      const result = await actions.upsertPaddock({
+        id: newPaddockIdRef.current,
+        stableId: quickStableId,
+        name,
+        horseIds: [...quickPaddockDraft.horseIds],
+        expectedRevision: null,
+        season: 'yearRound',
+      });
+      if (!result.success) {
+        setPaddockError(result.reason);
+        return;
+      }
+      newPaddockIdRef.current = null;
+      setQuickPaddockDraft({ name: '', horseIds: [] });
+      toast.showToast('Hage skapad.', 'success');
+    } catch (error) {
+      setPaddockError(error instanceof Error ? error.message : 'Hagen kunde inte sparas. Dina val finns kvar.');
+    } finally {
+      savingPaddockRef.current = false;
+      setSavingPaddock(false);
     }
-    newPaddockIdRef.current = null;
-    setQuickPaddockDraft({ name: '', horseIds: [] });
-    toast.showToast('Hage skapad.', 'success');
-  }, [actions, quickPaddockDraft.horseIds, quickPaddockDraft.name, quickStableHorses, quickStableId, toast]);
+  }, [actions, quickPaddockDraft.horseIds, quickPaddockDraft.name, quickStableId, state.paddockLinksReady, toast]);
 
   const handleQuickInviteMember = React.useCallback(async () => {
     if (savingInviteRef.current) return;
@@ -387,7 +391,7 @@ export default function AdminDashboard() {
 
   const canQuickCreateStable = !creatingStable && quickStableDraft.name.trim().length > 0;
   const canQuickAddHorse = Boolean(!savingHorse && quickStableId && quickHorseDraft.name.trim().length > 0);
-  const canQuickAddPaddock = Boolean(!savingPaddock && quickStableId && quickPaddockDraft.name.trim().length > 0);
+  const canQuickAddPaddock = Boolean(!savingPaddock && state.paddockLinksReady && quickStableId && quickPaddockDraft.name.trim().length > 0);
   const canQuickInvite = Boolean(
     !savingInvite &&
     quickStableId &&
@@ -714,13 +718,16 @@ export default function AdminDashboard() {
                     <Text style={styles.quickTitle}>Skapa hage</Text>
                     {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
                     {savingPaddock ? <Text accessibilityLiveRegion="polite">Sparar hagen…</Text> : null}
+                    {!state.paddockLinksReady ? (
+                      <Text style={styles.sectionHint}>Hästkopplingarna är inte aktiverade ännu. Hagar kan inte skapas, ändras eller tas bort.</Text>
+                    ) : null}
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
                     ) : null}
                     <TextInput
                       placeholder="Namn på hage"
                       placeholderTextColor={palette.mutedText}
-                      editable={!savingPaddock}
+                      editable={!savingPaddock && state.paddockLinksReady}
                       value={quickPaddockDraft.name}
                       onChangeText={(text) =>
                         setQuickPaddockDraft((prev) => ({ ...prev, name: text }))
@@ -731,16 +738,22 @@ export default function AdminDashboard() {
                     <View style={styles.chipRow}>
                       {quickStableHorses.map((horse) => {
                         const active = quickPaddockDraft.horseIds.includes(horse.id);
+                        const label = [horse.name, horse.boxNumber ? `Box ${horse.boxNumber}` : '',
+                          horse.ownerUserId ? state.users[horse.ownerUserId]?.name : '',
+                          quickStableHorses.some((other) => other.id !== horse.id && other.name === horse.name) ? horse.id : '',
+                        ].filter(Boolean).join(' · ');
                         return (
                           <TouchableOpacity
                             key={horse.id}
                             style={[styles.chip, active && styles.chipActive]}
-                            disabled={savingPaddock}
+                            disabled={savingPaddock || !state.paddockLinksReady}
+                            accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }}
+                            {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                             onPress={() => handleToggleQuickHorse(horse.id)}
                             activeOpacity={0.85}
                           >
                             <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                              {horse.name}
+                              {label}
                             </Text>
                           </TouchableOpacity>
                         );
@@ -764,6 +777,8 @@ export default function AdminDashboard() {
                   </View>
                 </View>
               </Card>
+
+              <StableInviteList confirmation={inviteReceipt} />
 
               <View style={[styles.cardGrid, isDesktopWeb && styles.cardGridDesktop]}>
                 {adminLinks.map((link) => (

@@ -16,9 +16,7 @@ import {
   type ExternalContact,
   type FeedPlanItem,
   type FeedSlot,
-  type Horse,
   type HorseDayStatus,
-  type Paddock,
   type PlannedRide,
   type RideLogEntry,
   type Stable,
@@ -27,41 +25,42 @@ import { color, radius } from '@/design/tokens';
 import { getResponsibleUsersForHorse, getHorseResponsibility } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
 import { generateId } from '@/lib/ids';
+import { getHorseAge } from '@/lib/horseAge';
 import { confirmAction } from '@/lib/confirm';
 import { feedSlotLabels } from '@/lib/today';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { DateTimeField } from '@/components/DateTimeField';
+import { CareReminder } from '@/components/CareReminder';
+import { useAuth } from '@/context/AuthContext';
+import HorseIcon from '@/assets/images/figma/profile-horse.svg';
 
 const FEED_SLOTS: FeedSlot[] = ['morning', 'lunch', 'evening'];
 
 const palette = theme.colors;
 
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function getHorsePaddock(horse: Horse, paddocks: Paddock[]) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
-
 export default function HorseProfileScreen() {
   const router = useRouter();
   const isDesktopWeb = useIsDesktopWeb();
   const { state, derived, actions } = useAppData();
+  const { user: authUser } = useAuth();
   const toast = useToast();
   const { id: rawId } = useLocalSearchParams<{ id?: string }>();
   const horseId = Array.isArray(rawId) ? rawId[0] : rawId;
   const horse = horseId ? state.horses.find((item) => item.id === horseId) : undefined;
+  const horseAge = horse ? getHorseAge(horse) : undefined;
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
+  const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId, stableId, horseId]);
   const stable = state.stables.find((item) => item.id === stableId);
-  const paddock = horse
-    ? getHorsePaddock(
-        horse,
-        state.paddocks.filter((item) => item.stableId === stableId),
-      )
-    : undefined;
+  const stablePaddocks = state.paddocks.filter((item) => item.stableId === stableId);
+  const horsePaddocks = horse ? getHorsePaddocks(horse, stablePaddocks) : [];
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, state.horses);
+  const paddockLabel = horsePaddocks.length
+    ? horsePaddocks.map((paddock) => paddock.name).join(', ')
+    : paddockLinksUnconfirmed ? 'Hage ej bekräftad' : 'Ingen hage satt';
   const status = horse
     ? state.horseDayStatuses.find(
         (item) => item.stableId === stableId && item.horseId === horse.id && item.date === todayIso,
@@ -111,7 +110,7 @@ export default function HorseProfileScreen() {
             }
           />
           <View style={styles.centerEmpty}>
-            <Card elevated style={styles.emptyCard}>
+            <Card style={styles.emptyCard}>
               <Feather name="alert-circle" size={22} color={palette.primary} />
               <Text style={styles.emptyTitle}>Hästen hittades inte.</Text>
               <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace('/stable-horses')}>
@@ -152,15 +151,17 @@ export default function HorseProfileScreen() {
           showsVerticalScrollIndicator={false}
         >
           <DataSyncStatus />
-          <Card elevated style={styles.heroCard}>
+          <Card style={styles.heroCard}>
             <View style={styles.heroTop}>
               <View style={styles.heroIcon}>
-                <Feather name="activity" size={24} color={palette.primary} />
+                <HorseIcon />
               </View>
               <View style={styles.heroText}>
                 <Text style={styles.heroTitle}>{horse.name}</Text>
                 <Text style={styles.heroMeta}>
-                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddock?.name ?? 'Ingen hage satt']
+                  {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel,
+                    horse.birthYear !== undefined ? `Född ${horse.birthYear}` : null,
+                    horseAge !== undefined ? `${horseAge} år` : null]
                     .filter(Boolean)
                     .join(' · ')}
                 </Text>
@@ -262,6 +263,7 @@ export default function HorseProfileScreen() {
           <SectionCard title="Ridning/träning" icon="calendar">
             {horse ? (
               <PlannedRidesEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
                 stable={stable}
@@ -324,8 +326,10 @@ export default function HorseProfileScreen() {
           <SectionCard title="Vård" icon="heart">
             {horse ? (
               <CareEventsEditor
+                scopeKey={dateTimeScope}
                 stableId={stableId}
                 horseId={horse.id}
+                horseName={horse.name}
                 events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
                 contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
                 canEdit={derived.permissions.canManageCareEvents}
@@ -388,7 +392,7 @@ function SectionCard({
   inGrid?: boolean;
 }) {
   return (
-    <Card elevated style={[styles.sectionCard, inGrid ? styles.sectionCardInGrid : null]}>
+    <Card style={[styles.sectionCard, inGrid ? styles.sectionCardInGrid : null]}>
       <View style={styles.sectionHeader}>
         <View style={styles.sectionIcon}>
           <Feather name={icon} size={16} color={palette.primary} />
@@ -938,6 +942,7 @@ function FeedPlanForm({
 }
 
 type PlannedRidesEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
   stable?: Stable;
@@ -952,6 +957,7 @@ type PlannedRidesEditorProps = {
 };
 
 function PlannedRidesEditor({
+  scopeKey,
   stableId,
   horseId,
   stable,
@@ -1154,7 +1160,10 @@ function PlannedRidesEditor({
         creating ? (
           <View style={styles.feedFormBlock}>
             <Text style={styles.feedFormLabel}>Nytt ridpass</Text>
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Planerat ridpass: datum"
+              scopeKey={scopeKey}
               value={draft.date}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1162,7 +1171,11 @@ function PlannedRidesEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Planerat ridpass: tid"
+              scopeKey={scopeKey}
+              allowClear
               value={draft.time}
               editable={!isBusy}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
@@ -1286,8 +1299,10 @@ const careEventTypeOrder: CareEventType[] = [
 ];
 
 type CareEventsEditorProps = {
+  scopeKey: string;
   stableId: string;
   horseId: string;
+  horseName: string;
   events: CareEvent[];
   contacts: ExternalContact[];
   canEdit: boolean;
@@ -1298,8 +1313,10 @@ type CareEventsEditorProps = {
 };
 
 function CareEventsEditor({
+  scopeKey,
   stableId,
   horseId,
+  horseName,
   events,
   contacts,
   canEdit,
@@ -1419,6 +1436,7 @@ function CareEventsEditor({
             </TouchableOpacity>
           </View>
         ) : null}
+        <CareReminder event={event} horseId={horseId} horseName={horseName} />
         {saving?.id === event.id ? (
           <Text>{saving.deleting ? 'Tar bort vårdhändelse…' : 'Sparar vårdhändelse…'}</Text>
         ) : null}
@@ -1532,7 +1550,10 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="date"
+              label="Vårdhändelse: datum"
+              scopeKey={scopeKey}
               editable={saving === null}
               value={draft.date}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, date: text }))}
@@ -1540,7 +1561,11 @@ function CareEventsEditor({
               placeholderTextColor={palette.secondaryText}
               style={styles.feedFormInput}
             />
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Vårdhändelse: tid"
+              scopeKey={scopeKey}
+              allowClear
               editable={saving === null}
               value={draft.time}
               onChangeText={(text) => setDraft((prev) => ({ ...prev, time: text }))}
@@ -1680,7 +1705,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.bg,
   },
   pageHeader: {
-    marginBottom: 8,
+    marginBottom: 0,
   },
   pageHeaderDesktop: {
     maxWidth: 1100,
@@ -1693,10 +1718,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 50,
-    gap: 14,
+    paddingHorizontal: 21,
+    paddingTop: 24,
+    paddingBottom: 120,
+    gap: 20,
   },
   scrollContentDesktop: {
     maxWidth: 1100,
@@ -1707,9 +1732,10 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   heroCard: {
-    padding: 18,
+    padding: 14,
     gap: 14,
-    borderRadius: radius.xl,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   heroTop: {
     flexDirection: 'row',
@@ -1730,17 +1756,21 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   heroTitle: {
-    fontSize: 24,
-    fontWeight: '800',
+    fontSize: 17,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   heroMeta: {
-    fontSize: 14,
+    fontSize: 12,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 18,
     color: palette.secondaryText,
   },
   heroNote: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 22,
     color: palette.primaryText,
   },
   sectionGrid: {
@@ -1749,9 +1779,10 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   sectionCard: {
-    padding: 16,
+    padding: 14,
     gap: 12,
-    borderRadius: radius.xl,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   sectionCardInGrid: {
     flexGrow: 1,
@@ -1763,16 +1794,16 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionIcon: {
-    width: 32,
-    height: 32,
+    width: 20,
+    height: 20,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   sectionBody: {
@@ -1787,13 +1818,15 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
     textTransform: 'capitalize',
   },
   infoValue: {
     flex: 1,
     fontSize: 14,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
     textAlign: 'right',
   },
@@ -1817,17 +1850,20 @@ const styles = StyleSheet.create({
   },
   rideTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   rideMeta: {
     marginTop: 2,
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
   emptyText: {
     fontSize: 14,
+    fontFamily: theme.fonts.regular,
     lineHeight: 20,
     color: palette.secondaryText,
   },
@@ -1846,13 +1882,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
     textAlign: 'center',
   },
   primaryButton: {
-    minHeight: 42,
+    minHeight: 44,
     paddingHorizontal: 18,
     borderRadius: radius.full,
     alignItems: 'center',
@@ -1861,7 +1898,8 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     fontSize: 13,
-    fontWeight: '800',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.inverseText,
   },
   feedList: {
@@ -1881,7 +1919,8 @@ const styles = StyleSheet.create({
   },
   feedSlotTitle: {
     fontSize: 15,
-    fontWeight: '800',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   feedSlotPillSuccess: {
@@ -1892,7 +1931,8 @@ const styles = StyleSheet.create({
   },
   feedSlotPillText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primary,
   },
   feedSlotBody: {
@@ -1900,22 +1940,26 @@ const styles = StyleSheet.create({
   },
   feedSlotLabel: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   feedSlotMeta: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
   feedSlotKind: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primary,
     textTransform: 'uppercase',
   },
   feedSlotEmpty: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
@@ -1927,6 +1971,7 @@ const styles = StyleSheet.create({
   feedActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 44,
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -1946,17 +1991,20 @@ const styles = StyleSheet.create({
   },
   feedActionButtonText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.inverseText,
   },
   feedActionButtonTextSecondary: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   feedActionButtonTextMuted: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
   },
   feedFormBlock: {
@@ -1968,11 +2016,13 @@ const styles = StyleSheet.create({
   },
   feedFormLabel: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
     textTransform: 'uppercase',
   },
   feedFormInput: {
+    minHeight: 44,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: radius.md,
@@ -1994,7 +2044,8 @@ const styles = StyleSheet.create({
   },
   feedHistoryTitle: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
     textTransform: 'uppercase',
   },
@@ -2006,10 +2057,12 @@ const styles = StyleSheet.create({
   },
   feedHistoryLabel: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
   },
   feedHistoryValue: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
     flexShrink: 1,
     textAlign: 'right',
@@ -2022,7 +2075,8 @@ const styles = StyleSheet.create({
   },
   statusEditorLabel: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   statusEditorButtons: {
@@ -2032,6 +2086,7 @@ const styles = StyleSheet.create({
   statusEditorButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: 44,
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 7,
@@ -2046,7 +2101,8 @@ const styles = StyleSheet.create({
   },
   statusEditorButtonText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   statusEditorButtonTextActive: {
@@ -2073,11 +2129,13 @@ const styles = StyleSheet.create({
   },
   plannedRideTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   plannedRideMeta: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   plannedRideStatusPill: {
@@ -2091,7 +2149,8 @@ const styles = StyleSheet.create({
   },
   plannedRideStatusText: {
     fontSize: 11,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   plannedRideActions: {

@@ -68,3 +68,174 @@ test('horse deletion shares the in-flight horse-save lock', async () => {
   assert.equal((await action('horse')).success, false);
   assert.equal(deletes, 0);
 });
+
+const horseRow = {
+  id: 'horse', stable_id: 'stable', name: 'Mira', owner_user_id: 'owner',
+  box_number: '7', can_sleep_inside: true, gender: 'mare', age: 8, birth_year: 2019, note: 'Behåll', image_url: null,
+};
+
+async function loadPersistence(row, capture = {}) {
+  const query = {
+    update(payload) { capture.payload = payload; return this; },
+    upsert(payload) { capture.payload = payload; return this; },
+    eq() { return this; }, select() { return this; }, abortSignal() { return this; },
+    single: async () => ({ data: row, error: null }),
+  };
+  return loadAction('persistHorseUpsert', {
+    isQaDemoMode: false, user: { id: 'user' }, supabase: { from: () => query },
+    getUploadableImage: image => image, isRemoteUri: () => true,
+    console: { warn() {} },
+  });
+}
+
+test('horse persistence rejects a stale acknowledgement for each edited field', async (t) => {
+  const edits = [
+    ['name', 'Mira II', 'name'], ['ownerUserId', undefined, 'owner_user_id'],
+    ['boxNumber', undefined, 'box_number'], ['canSleepInside', false, 'can_sleep_inside'],
+    ['gender', 'gelding', 'gender'], ['age', 9, 'age'], ['birthYear', 2020, 'birth_year'], ['note', undefined, 'note'],
+    ['image', { uri: 'https://example.test/new-horse.jpg' }, 'image_url'],
+  ];
+  for (const [field, value, column] of edits) {
+    await t.test(field, async () => {
+      const capture = {};
+      const persist = await loadPersistence(horseRow, capture);
+      const horse = { id: 'horse', stableId: 'stable', name: 'Mira', [field]: value };
+      const result = await persist(horse, { [field]: value }, true);
+      assert.notEqual(capture.payload[column], horseRow[column]);
+      assert.equal(result.success, false, `Stale ${column} must not confirm a save`);
+      assert.match(result.reason, /uppgifter finns kvar/);
+    });
+  }
+});
+
+test('horse persistence accepts confirmed edits without overwriting omitted fields', async () => {
+  const capture = {};
+  const row = { ...horseRow, note: null };
+  const persist = await loadPersistence(row, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira', note: undefined }, { note: '' }, true);
+  assert.equal(result.success, true);
+  assert.deepEqual(capture.payload, { id: 'horse', stable_id: 'stable', note: null });
+  assert.equal(result.data.boxNumber, '7');
+  assert.equal(result.data.canSleepInside, true);
+  assert.equal(result.data.birthYear, 2019);
+  assert.equal(result.data.note, undefined);
+});
+
+test('horse persistence saves and confirms the actual birth year rather than a fixed age', async () => {
+  const capture = {};
+  const persist = await loadPersistence({ ...horseRow, age: null }, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira', birthYear: 2019 }, { birthYear: 2019 }, true);
+  assert.equal(result.success, true);
+  assert.equal(capture.payload.birth_year, 2019);
+  assert.equal(result.data.birthYear, 2019);
+  assert.equal(capture.payload.age, null);
+});
+
+test('clearing a birth year is acknowledged without writing a fabricated age', async () => {
+  const capture = {};
+  const persist = await loadPersistence({ ...horseRow, birth_year: null, age: null }, capture);
+  const result = await persist({ id: 'horse', stableId: 'stable', name: 'Mira' }, { birthYear: undefined }, true);
+  assert.equal(result.success, true);
+  assert.deepEqual(capture.payload, { id: 'horse', stable_id: 'stable', birth_year: null });
+  assert.equal(result.data.birthYear, undefined);
+  assert.equal(result.data.age, undefined);
+});
+
+test('horse action rejects invalid birth years before any write', async () => {
+  const source = await readFile(new URL('../lib/horseAge.ts', import.meta.url), 'utf8');
+  const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext } });
+  const { isValidHorseBirthYear } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`);
+  let writes = 0;
+  const action = await loadAction('upsertHorse', {
+    stateRef: { current: { horses: [] } }, ensurePermission: () => ({ success: true }),
+    isValidHorseBirthYear, dispatch() {}, generateId: () => 'new-horse',
+    pendingDataWrites: { current: new Set() }, dataWriteVersion: { current: 0 },
+    persistHorseUpsert: async () => { writes += 1; return { success: true }; },
+  });
+  for (const birthYear of [1899, new Date().getFullYear() + 1, NaN, 2019.5]) {
+    const result = await action({ stableId: 'stable', name: 'Mira', birthYear });
+    assert.equal(result.success, false);
+    assert.match(result.reason, /födelseår/);
+  }
+  assert.equal(writes, 0);
+});
+
+async function loadTimedPersistence(name) {
+  const capture = { queries: 0, timers: [], cleared: [], logs: [] };
+  const response = new Promise(resolve => { capture.finishRequest = resolve; });
+  const image = new Promise(resolve => { capture.finishImage = resolve; });
+  const query = {
+    update(payload) { capture.payload = payload; return this; },
+    upsert(payload) { capture.payload = payload; return this; },
+    delete() { return this; }, eq() { return this; }, select() { return this; },
+    abortSignal(signal) { capture.signal = signal; return this; },
+    single: () => response,
+    then: (...args) => response.then(...args),
+  };
+  const persist = await loadAction(name, {
+    isQaDemoMode: false, user: { id: 'user' },
+    supabase: { from() { capture.queries += 1; return query; } },
+    getUploadableImage: value => value, isRemoteUri: uri => uri.startsWith('https://'),
+    uploadImageToStorage: () => image,
+    setTimeout(callback, delay) { capture.timers.push({ callback, delay }); return capture.timers.length; },
+    clearTimeout: timer => capture.cleared.push(timer),
+    console: { warn: (...args) => capture.logs.push(args) },
+  });
+  return { persist, capture };
+}
+
+async function settleMicrotasks() {
+  for (let turn = 0; turn < 12; turn += 1) await Promise.resolve();
+}
+
+test('horse image preparation times out without starting a late save', async () => {
+  const { persist, capture } = await loadTimedPersistence('persistHorseUpsert');
+  let result;
+  const operation = persist({ id: 'horse', stableId: 'stable', name: 'Mira' },
+    { image: { uri: 'file:///synthetic-horse.jpg' } }, true).then(value => { result = value; });
+  assert.equal(capture.queries, 0);
+  assert.equal(capture.timers[0].delay, 15_000);
+  capture.timers[0].callback();
+  await settleMicrotasks();
+  assert.equal(result?.success, false, 'The actual callback must settle at its deadline');
+  assert.match(result.reason, /bekräftas/);
+  assert.deepEqual(capture.cleared, [1]);
+  assert.match(capture.logs[0][0], /^\[horse save\]/);
+  capture.finishImage({ publicUrl: 'https://example.test/late-horse.jpg' });
+  await operation;
+  await settleMicrotasks();
+  assert.equal(capture.queries, 0, 'A late upload must not start an expired save');
+});
+
+for (const [actionName, persistenceName] of [['upsertHorse', 'persistHorseUpsert'], ['deleteHorse', 'persistHorseDelete']]) {
+  test(`${actionName} releases its lock and ignores a late acknowledgement after timeout`, async () => {
+    const { persist, capture } = await loadTimedPersistence(persistenceName);
+    const horse = { id: 'horse', stableId: 'stable', name: 'Mira' };
+    const dispatched = [];
+    const pendingDataWrites = { current: new Set() };
+    const action = await loadAction(actionName, {
+      stateRef: { current: { horses: [horse] } }, ensurePermission: () => ({ success: true }),
+      dispatch: value => dispatched.push(value), generateId: () => 'new-horse',
+      pendingDataWrites, dataWriteVersion: { current: 0 }, trackDataWrite() {},
+      [persistenceName]: persist,
+    });
+    let result;
+    const operation = (actionName === 'upsertHorse'
+      ? action({ id: 'horse', stableId: 'stable', name: 'Mira II' }) : action('horse'))
+      .then(value => { result = value; });
+    assert.ok(pendingDataWrites.current.has('horse:horse'));
+    capture.timers[0].callback();
+    await settleMicrotasks();
+    assert.equal(result?.success, false, 'Transport ignoring AbortSignal must not keep the UI pending');
+    assert.match(result.reason, /bekräftas/);
+    assert.equal(capture.signal.aborted, true);
+    assert.equal(pendingDataWrites.current.size, 0);
+    assert.deepEqual(dispatched, []);
+    assert.deepEqual(capture.cleared, [1]);
+    capture.finishRequest({ data: actionName === 'upsertHorse'
+      ? { ...horseRow, name: 'Mira II' } : [{ id: 'horse' }], error: null });
+    await operation;
+    await settleMicrotasks();
+    assert.deepEqual(dispatched, [], 'A late response must not change local horse state');
+  });
+}

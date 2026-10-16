@@ -15,6 +15,7 @@ import { systemPalette } from '@/design/system';
 import type { ActionResult, AssignmentSlot } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
+import { DateTimeField } from '@/components/DateTimeField';
 
 type DateOption = {
   label: string;
@@ -34,6 +35,7 @@ export type AssignmentModalSubmit = {
 
 type NewAssignmentModalProps = {
   visible: boolean;
+  scopeKey: string;
   onClose: () => void;
   onSubmit: (input: AssignmentModalSubmit) => Promise<ActionResult<unknown>>;
   dateOptions: DateOption[];
@@ -55,6 +57,7 @@ const slots: { label: string; value: AssignmentSlot }[] = [
 
 export function NewAssignmentModal({
   visible,
+  scopeKey,
   onClose,
   onSubmit,
   dateOptions,
@@ -253,7 +256,12 @@ export function NewAssignmentModal({
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Tid</Text>
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Pass: tid"
+              scopeKey={scopeKey}
+              active={visible}
+              allowClear
               editable={pending === null}
               value={time}
               onChangeText={(value) => {

@@ -1,4 +1,5 @@
-import type { Paddock } from '@/context/AppDataContext';
+import type { Horse, Paddock } from '@/context/AppDataContext';
+import { getPaddockHorses, getPaddockHorseNames, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 
 function escapeHtml(value: string) {
   return value
@@ -26,7 +27,7 @@ function toDataUri(image: Paddock['image']) {
   return undefined;
 }
 
-export function createPaddocksPrintHtml(paddocks: Paddock[]) {
+export function createPaddocksPrintHtml(paddocks: readonly Paddock[], horses: readonly Horse[]) {
   const generatedAt = new Date();
   const generatedLabel = generatedAt.toLocaleString('sv-SE', {
     year: 'numeric',
@@ -46,18 +47,21 @@ export function createPaddocksPrintHtml(paddocks: Paddock[]) {
           : paddock.season === 'winter'
             ? 'Vinterhage'
             : 'Året runt';
-      const horses =
-        paddock.horseNames.length > 0
-          ? paddock.horseNames
+      const horseNames = getPaddockHorseNames(paddock, horses);
+      const linksUnconfirmed = hasUnconfirmedPaddockLinks([paddock], horses);
+      const horseCount = getPaddockHorses(paddock, horses).length;
+      const horseList =
+        horseNames.length > 0
+          ? horseNames
               .map((name) => `<li>${escapeHtml(name)}</li>`)
               .join('')
-          : '<li class="muted">Inga hästar angivna</li>';
+          : `<li class="muted">${linksUnconfirmed ? 'Hästkopplingar ej bekräftade' : 'Inga hästar angivna'}</li>`;
 
       return `
         <section class="paddock">
           <header class="paddockHeader">
             <h2 class="paddockTitle">${escapeHtml(paddock.name)}</h2>
-            <div class="paddockMeta">${paddock.horseNames.length} hästar · ${season}</div>
+            <div class="paddockMeta">${linksUnconfirmed ? 'Antal ej bekräftat' : `${horseCount} hästar`} · ${season}</div>
           </header>
           ${
             imageSrc
@@ -67,9 +71,9 @@ export function createPaddocksPrintHtml(paddocks: Paddock[]) {
               : `<div class="paddockImagePlaceholder" aria-hidden="true">Ingen bild</div>`
           }
           <div class="paddockBody">
-            <div class="label">Hästar</div>
+            <div class="label">${linksUnconfirmed ? 'Hästkopplingar ej bekräftade' : 'Hästar'}</div>
             <ul class="horseList">
-              ${horses}
+              ${horseList}
             </ul>
           </div>
         </section>

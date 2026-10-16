@@ -11,20 +11,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import UserGroups from '@/assets/images/User Groups.svg';
+import UserGroups from '@/assets/images/figma/group.svg';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { radius, space } from '@/design/tokens';
-import { surfacePresets, systemPalette } from '@/design/system';
+import { systemPalette } from '@/design/system';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
 
 const palette = theme.colors;
-const radii = theme.radii;
 
 type MessageFilter = 'all' | 'group' | 'private';
 
@@ -37,19 +36,18 @@ const MessageItem = React.memo(function MessageItem({
   onPress: () => void;
   desktop?: boolean;
 }) {
-  const badgeColor = item.group ? palette.primary : palette.accent;
   return (
     <TouchableOpacity
       style={[styles.item, desktop && styles.itemDesktop]}
       onPress={onPress}
       activeOpacity={0.9}
       accessibilityRole="button"
-      accessibilityLabel={`Öppna konversation med ${item.title}`}
+      accessibilityLabel={`Öppna konversation med ${item.title}${item.unreadCount ? `, ${item.unreadCount} olästa meddelanden` : ''}`}
     >
       <View style={styles.avatarBubble}>
         {item.group ? (
-          <View style={[styles.groupAvatar, { backgroundColor: `${badgeColor}15` }]}>
-            <UserGroups width={22} height={22} />
+          <View style={styles.groupAvatar}>
+            <UserGroups />
           </View>
         ) : (
           <Avatar
@@ -62,30 +60,22 @@ const MessageItem = React.memo(function MessageItem({
       <View style={styles.itemBody}>
         <View style={styles.itemHeader}>
           <View style={styles.itemTitleRow}>
-            <Text style={styles.itemTitle}>{item.title}</Text>
+            <Text numberOfLines={1} style={[styles.itemTitle, item.unreadCount ? styles.itemTitleUnread : undefined]}>{item.title}</Text>
             {item.unreadCount ? (
-              <View style={[styles.unreadDot, { backgroundColor: badgeColor }]}>
+              <View style={styles.unreadBadge}>
+                <View style={styles.unreadDot} />
                 <Text style={styles.unreadCount}>{item.unreadCount}</Text>
               </View>
             ) : null}
           </View>
           <Text style={styles.itemTime}>{item.timeAgo}</Text>
         </View>
-        <Text numberOfLines={1} style={styles.itemSubtitle}>
-          {item.subtitle}
-        </Text>
         <Text numberOfLines={1} style={styles.itemPreview}>
           {item.description}
         </Text>
-        <View style={styles.itemFooter}>
-          <View style={styles.statusChip}>
-            <View style={[styles.statusDot, { backgroundColor: badgeColor }]} />
-            <Text style={styles.statusText}>
-              {item.group ? 'Grupptråd' : 'Privat chatt'}
-            </Text>
-          </View>
-          <Text style={styles.ctaText}>Visa tråd →</Text>
-        </View>
+        {(!item.readMessageIds || !item.unreadMessageIds) && (
+          <Text style={styles.readStatusHint}>Oläststatus ej bekräftad. Uppdatera chattlistan.</Text>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -99,7 +89,7 @@ const FILTER_OPTIONS: { label: string; value: MessageFilter }[] = [
 
 export default function MessagesScreen() {
   const router = useRouter();
-  const { state, actions, derived, hydrating, refreshing } = useAppData();
+  const { state, actions, derived, hydrating, refreshing, refreshError } = useAppData();
   const { messages, currentStableId, conversations, currentUserId, blockedUserIds } = state;
 
   // A private conversation whose only other participant is blocked is hidden from the list.
@@ -125,7 +115,6 @@ export default function MessagesScreen() {
   const [filter, setFilter] = React.useState<MessageFilter>('all');
 
   const handleOpenConversation = (item: MessagePreview) => {
-    actions.markConversationRead(item.id);
     router.push({
       pathname: '/chat/[id]',
       params: { id: item.id, name: item.title },
@@ -178,6 +167,7 @@ export default function MessagesScreen() {
               ]}
               onPress={action.onPress}
               activeOpacity={0.85}
+              accessibilityRole="button"
             >
               <Text
                 style={[
@@ -226,6 +216,7 @@ export default function MessagesScreen() {
         title="Meddelanden"
       />
       {!isDesktopWeb ? <StableSwitcher /> : null}
+      {refreshError && <Text accessibilityRole="alert" style={styles.emptyText}>{refreshError} Oläststatus kan inte bekräftas just nu.</Text>}
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={[styles.content, isDesktopWeb && styles.contentDesktop]}
@@ -297,10 +288,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 22,
+    paddingHorizontal: 0,
     paddingBottom: 120,
-    paddingTop: 10,
-    gap: 18,
+    paddingTop: 0,
+    gap: 0,
   },
   contentDesktop: {
     maxWidth: 1100,
@@ -334,30 +325,23 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   list: {
-    gap: 14,
+    gap: 0,
   },
   listDesktop: {
-    gap: 16,
+    gap: 0,
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: radii.xl,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
-    backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    shadowColor: palette.overlay,
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 1,
+    borderRadius: 20,
+    minHeight: 80,
+    padding: 15,
+    backgroundColor: 'transparent',
   },
   itemDesktop: {
     paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: radii.lg,
+    borderRadius: 20,
   },
   panelCard: {
     paddingHorizontal: 16,
@@ -367,11 +351,13 @@ const styles = StyleSheet.create({
   },
   panelTitle: {
     fontSize: 15,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   panelText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
@@ -381,11 +367,13 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 16,
+    fontFamily: theme.fonts.bold,
     fontWeight: '700',
     color: palette.primaryText,
   },
   emptyText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.secondaryText,
   },
@@ -398,6 +386,7 @@ const styles = StyleSheet.create({
   emptyAction: {
     flexGrow: 1,
     minWidth: 140,
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: radius.full,
@@ -406,6 +395,7 @@ const styles = StyleSheet.create({
   },
   emptyActionText: {
     fontSize: 13,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
   },
   emptyActionPrimary: {
@@ -437,11 +427,12 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   panelChipActive: {
-    backgroundColor: 'rgba(62,155,95,0.12)',
-    borderColor: 'rgba(62,155,95,0.3)',
+    backgroundColor: palette.surfaceTint,
+    borderColor: palette.primary,
   },
   panelChipText: {
     fontSize: 12,
+    fontFamily: theme.fonts.semibold,
     fontWeight: '600',
     color: palette.primaryText,
   },
@@ -449,93 +440,84 @@ const styles = StyleSheet.create({
     color: palette.primary,
   },
   avatarBubble: {
-    marginRight: 16,
+    marginRight: 10,
   },
   groupAvatar: {
-    width: 42,
-    height: 42,
+    width: 50,
+    height: 50,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: surfacePresets.section,
   },
   personAvatar: {
-    width: 42,
-    height: 42,
+    width: 50,
+    height: 50,
     borderRadius: radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.borderMuted,
   },
   itemBody: {
     flex: 1,
+    minWidth: 0,
+    minHeight: 50,
     gap: 8,
+    justifyContent: 'space-between',
   },
   itemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: 8,
   },
   itemTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 6,
+    flex: 1,
+    minWidth: 0,
   },
   itemTitle: {
     fontSize: 17,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
-    fontWeight: '600',
+    fontWeight: '400',
+    flexShrink: 1,
+  },
+  itemTitleUnread: {
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
   },
   itemTime: {
     fontSize: 12,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
-  },
-  itemSubtitle: {
-    fontSize: 12,
-    color: palette.mutedText,
+    flexShrink: 0,
   },
   itemPreview: {
-    fontSize: 13,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
-    opacity: 0.7,
+    lineHeight: 19,
+  },
+  readStatusHint: {
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    color: palette.secondaryText,
+    lineHeight: 18,
+  },
+  unreadBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
   },
   unreadDot: {
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 4,
+    width: 5,
+    height: 5,
     borderRadius: radius.full,
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: palette.primary,
   },
   unreadCount: {
-    fontSize: 10,
-    color: palette.inverseText,
-    fontWeight: '600',
-  },
-  itemFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 4,
-  },
-  statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: radius.full,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-    color: palette.secondaryText,
-  },
-  ctaText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: systemPalette.primary,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
+    color: palette.secondaryText,
   },
 });
