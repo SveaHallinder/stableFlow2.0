@@ -143,6 +143,10 @@ function callbackFixture(fixture) {
   const messages = [];
   const deps = {
     accessToken: fixture.token, refreshToken: 'offline-refresh', sessionReady: false, settingSession: false, linkError: null,
+    aliveRef: { current: true }, busyRef: { current: false }, codeAttemptRef: { current: 0 }, displayedCodeVersion: 0, codeRenderAttempt: 0,
+    codeVersionRef: { current: null }, verifiedCodeVersionRef: { current: null }, codeFlowRef: { current: false },
+    getRecoveryCodeState: () => ({ email: '', session: null, version: 0 }), hasRecoveryCodeSession: () => false,
+    setPassword() {}, setConfirmPassword() {},
     verifiedSessionRef: { current: null },
     verifiedOriginRef: { current: 'web' }, activeSessionRef: { current: null }, linkVersionRef: { current: 0 },
     hasPasswordRecoverySession: session => Boolean(session),
@@ -300,13 +304,13 @@ test('recovery proof binds the active SDK session, survives same-user refresh an
 async function boundPasswordFactory(fetch, sdk = { auth: { onAuthStateChange() {} } }, retired = new Set()) {
   const ast = await sourceAst('../lib/supabase.ts');
   const source = ast.statements.filter(node => {
-    if (ts.isVariableStatement(node)) return node.declarationList.declarations.some(item => ['passwordRecoverySession', 'passwordRecoverySubscribers', 'passwordRecoveryAttempt'].includes(item.name.getText(ast)));
-    if (ts.isFunctionDeclaration(node)) return ['hasPasswordRecoverySession', 'subscribePasswordRecovery', 'consumePasswordRecoverySession', 'createRecoveryClient', 'verifyRecoverySession', 'updateRecoveryPassword'].includes(node.name?.text);
+    if (ts.isVariableStatement(node)) return node.declarationList.declarations.some(item => ['passwordRecoverySession', 'passwordRecoverySubscribers', 'passwordRecoveryAttempt', 'recoveryCodeSession', 'recoveryCodeEmail', 'recoveryCodeVersion'].includes(item.name.getText(ast)));
+    if (ts.isFunctionDeclaration(node)) return ['hasPasswordRecoverySession', 'subscribePasswordRecovery', 'consumePasswordRecoverySession', 'createRecoveryClient', 'verifyRecoverySession', 'updateRecoveryPassword', 'getRecoveryCodeState', 'hasRecoveryCodeSession', 'clearRecoveryCodeSession', 'consumeRecoveryCodeSession', 'requestRecoveryCode', 'verifyRecoveryCode'].includes(node.name?.text);
     return ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
       && node.expression.expression.getText(ast) === 'supabase.auth.onAuthStateChange';
   }).map(node => node.getText(ast).replace(/^export /, '')).join('\n');
   assert.match(source, /function updateRecoveryPassword/, 'Actual account-bound password helper must exist');
-  return compileFactory(`${source}\nreturn { verifyRecoverySession, updateRecoveryPassword, hasPasswordRecoverySession, subscribePasswordRecovery };`, {
+  return compileFactory(`${source}\nreturn { verifyRecoverySession, updateRecoveryPassword, hasPasswordRecoverySession, subscribePasswordRecovery, requestRecoveryCode: typeof requestRecoveryCode === 'function' ? requestRecoveryCode : undefined, verifyRecoveryCode: typeof verifyRecoveryCode === 'function' ? verifyRecoveryCode : undefined, getRecoveryCodeState: typeof getRecoveryCodeState === 'function' ? getRecoveryCodeState : undefined, hasRecoveryCodeSession: typeof hasRecoveryCodeSession === 'function' ? hasRecoveryCodeSession : undefined, clearRecoveryCodeSession: typeof clearRecoveryCodeSession === 'function' ? clearRecoveryCodeSession : undefined };`, {
     createClient, createTimeoutFetch: value => value, fetch,
     supabaseUrl: 'https://offline-bound-recovery.example.test', supabaseAnonKey: 'offline-anon', authStorageKey: 'offline-bound',
     supabase: sdk, deletedAccountIds: retired,
@@ -480,4 +484,337 @@ test('an older pending explicit link cannot replace a newer link verification', 
   assert.equal(result.deps.verifiedSessionRef.current, null);
   assert.ok(!result.ready.includes(true));
   assert.equal(result.busy.at(-1), false);
+});
+
+
+async function codeFixture(overrides = {}) {
+  const primary = sdkFixture();
+  const userA = { ...primary.user, email: 'recovery-a@example.test' };
+  const userB = { ...primary.user, id: '60000000-0000-4000-8000-000000000003', email: 'primary-b@example.test' };
+  primary.controls.user = userB;
+  const primarySession = (await primary.sdk.auth.signInWithPassword({ email: userB.email, password: 'OfflinePrimaryPassword123!' })).data.session;
+  const calls = [], retired = new Set();
+  const controls = { rejectVerify: false, rejectUpdate: false, noSession: false, expired: false, wrongEmail: false, gate: null, ...overrides };
+  const http = async (input, init) => {
+    const url = new URL(String(input)), method = init?.method ?? 'GET';
+    const body = init?.body ? JSON.parse(init.body) : undefined;
+    calls.push({ path: url.pathname, query: url.search, method, body, authorization: new globalThis.Headers(init?.headers).get('authorization') });
+    let response = userA, status = 200;
+    if (url.pathname === '/auth/v1/recover') response = {};
+    else if (url.pathname === '/auth/v1/token') { status = 400; response = { code: 'refresh_token_not_found', message: 'Offline expired recovery session' }; }
+    else if (url.pathname === '/auth/v1/verify') {
+      if (controls.gate) await controls.gate;
+      if (controls.rejectVerify) { status = 403; response = { code: 'otp_expired', message: 'private recovery-code detail' }; }
+      else if (controls.noSession) response = { user: userA };
+      else response = { access_token: primary.token, refresh_token: 'offline-code-refresh', expires_in: 3600,
+        expires_at: controls.expired ? 1 : 4102444800, token_type: 'bearer',
+        user: controls.wrongEmail ? { ...userA, email: 'other@example.test' } : userA };
+    } else {
+      assert.equal(url.pathname, '/auth/v1/user');
+      if (method === 'GET' && controls.getGate) { controls.onGet(); await controls.getGate; }
+      if (method === 'PUT' && controls.putGate) { controls.onPut(); await controls.putGate; }
+      const token = new globalThis.Headers(init.headers).get('authorization').slice(7);
+      assert.equal(JSON.parse(Buffer.from(token.split('.')[1], 'base64url')).sub, userA.id);
+      if (method === 'PUT' && controls.rejectUpdate) { status = 503; response = { code: 'offline', message: 'private password detail' }; }
+    }
+    return new globalThis.Response(JSON.stringify(response), { status, headers: { 'content-type': 'application/json' } });
+  };
+  const bound = await boundPasswordFactory(http, primary.sdk, retired);
+  return { primary, userA, userB, primarySession, calls, controls, retired, bound };
+}
+
+function requireRecoveryCodeApi(bound) {
+  for (const name of ['requestRecoveryCode', 'verifyRecoveryCode', 'getRecoveryCodeState', 'hasRecoveryCodeSession', 'clearRecoveryCodeSession']) {
+    assert.equal(typeof bound[name], 'function', `Actual isolated recovery-code API ${name} must exist`);
+  }
+}
+
+test('isolated recovery code request retains only the normalized pending address and leaves primary B intact', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  await fixture.bound.requestRecoveryCode('  RECOVERY-A@EXAMPLE.TEST ', 'http://localhost:8081/reset');
+  assert.equal(fixture.bound.getRecoveryCodeState().email, fixture.userA.email);
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+  assert.deepEqual(fixture.calls.map(call => call.path), ['/auth/v1/recover']);
+  assert.equal(fixture.calls[0].body.email, fixture.userA.email);
+  assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.access_token, fixture.primarySession.access_token);
+});
+
+test('verifyOtp recovery publishes an expiring in-memory A proof without changing B or its web proof', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  await fixture.primary.sdk.auth._notifyAllSubscribers('PASSWORD_RECOVERY', fixture.primarySession);
+  const session = await fixture.bound.verifyRecoveryCode(' RECOVERY-A@EXAMPLE.TEST ', '123456');
+  assert.equal(session.user.id, fixture.userA.id);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(session), true);
+  assert.deepEqual(fixture.calls[0].body, { email: fixture.userA.email, token: '123456', type: 'recovery', gotrue_meta_security: {} });
+  assert.equal(fixture.calls[0].query, '');
+  assert.equal(fixture.bound.hasPasswordRecoverySession(fixture.primarySession), true);
+  assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.access_token, fixture.primarySession.access_token);
+});
+
+test('invalid, expired, missing-session and wrong-email recovery responses cannot create proof', async () => {
+  for (const controls of [{ rejectVerify: true }, { noSession: true }, { expired: true }, { wrongEmail: true }]) {
+    const fixture = await codeFixture(controls); requireRecoveryCodeApi(fixture.bound);
+    await assert.rejects(fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456'));
+    assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+    assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.user.id, fixture.userB.id);
+  }
+});
+
+test('recovery input validation rejects incomplete codes without any HTTP request', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  for (const token of ['', '12345', '1234567', 'abcdef']) await assert.rejects(fixture.bound.verifyRecoveryCode(fixture.userA.email, token));
+  await assert.rejects(fixture.bound.verifyRecoveryCode('not-an-email', '123456'));
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('a canceled or older pending verification cannot publish recovery proof', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  let release;
+  fixture.controls.gate = new Promise(resolve => { release = resolve; });
+  let current = true;
+  const pending = fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456', () => current);
+  const version = fixture.bound.getRecoveryCodeState().version;
+  current = false;
+  fixture.bound.clearRecoveryCodeSession(version);
+  release();
+  await assert.rejects(pending);
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+});
+
+test('an older clear cannot remove a newer code proof and returned session objects cannot mutate it', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  const old = fixture.bound.getRecoveryCodeState().version;
+  const latest = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '654321');
+  fixture.bound.clearRecoveryCodeSession(old);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), true);
+  latest.user.id = fixture.userB.id;
+  latest.access_token = 'mutated-local-copy';
+  const canonical = fixture.bound.getRecoveryCodeState().session;
+  assert.equal(canonical.user.id, fixture.userA.id);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(canonical), true);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), false);
+});
+
+test('a confirmed code password update consumes only its proof and cannot be replayed', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  await fixture.bound.updateRecoveryPassword(session, 'OfflineChangedPassword123!', 'code');
+  assert.equal(fixture.bound.hasRecoveryCodeSession(session), false);
+  await assert.rejects(fixture.bound.updateRecoveryPassword(session, 'OfflineChangedPassword123!', 'code'));
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 1);
+  assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.access_token, fixture.primarySession.access_token);
+});
+
+test('a rejected code password update preserves proof for a safe retry', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  fixture.controls.rejectUpdate = true;
+  await assert.rejects(fixture.bound.updateRecoveryPassword(session, 'OfflineChangedPassword123!', 'code'));
+  assert.equal(fixture.bound.hasRecoveryCodeSession(session), true);
+  fixture.controls.rejectUpdate = false;
+  await fixture.bound.updateRecoveryPassword(session, 'OfflineChangedPassword123!', 'code');
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+});
+
+test('a retired account cannot gain code proof or update through an earlier proof', async () => {
+  const fixture = await codeFixture(); requireRecoveryCodeApi(fixture.bound);
+  fixture.retired.add(fixture.userA.id);
+  await assert.rejects(fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456'));
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+  fixture.retired.clear();
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  fixture.retired.add(fixture.userA.id);
+  await assert.rejects(fixture.bound.updateRecoveryPassword(session, 'OfflineChangedPassword123!', 'code'));
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 0);
+});
+
+test('a code proof survives an initial bare reset URL and null native URL', async () => {
+  const fixture = await codeFixture();
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  for (const url of [null, 'http://localhost:8081/reset']) {
+    const result = callbackFixture(fixture.primary);
+    Object.assign(result.deps, fixture.bound, { Platform: { OS: 'web' },
+      setAccessToken() {}, setRefreshToken() {}, setCodeEmail() {}, setCodeSent() {},
+      codeVersionRef: { current: fixture.bound.getRecoveryCodeState().version }, verifiedCodeVersionRef: { current: null } });
+    await (await resetCallback('applyUrl', result.deps))(url);
+    assert.equal(result.deps.verifiedOriginRef.current, 'code');
+    assert.equal(result.deps.verifiedSessionRef.current.user.id, session.user.id);
+    assert.equal(result.ready.at(-1), true);
+    assert.ok(!result.errors.at(-1));
+  }
+});
+
+test('actual code verification ignores a canceled response and blocks duplicate same-tick presses', async () => {
+  const fixture = await codeFixture();
+  let release;
+  fixture.controls.gate = new Promise(resolve => { release = resolve; });
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { codeEmail: fixture.userA.email, code: '123456',
+    aliveRef: { current: true }, busyRef: { current: false }, codeAttemptRef: { current: 0 }, displayedCodeVersion: 0, codeRenderAttempt: 0,
+    codeVersionRef: { current: null }, verifiedCodeVersionRef: { current: null }, codeFlowRef: { current: false },
+    setCode() {}, setCodeEmail() {}, setCodeSent() {}, setPassword() {}, setConfirmPassword() {} });
+  const verify = await resetCallback('handleVerifyCode', result.deps);
+  const pending = verify();
+  await verify();
+  result.deps.aliveRef.current = false;
+  result.deps.codeAttemptRef.current += 1;
+  release(); await pending;
+  assert.equal(fixture.calls.filter(call => call.path === '/auth/v1/verify').length, 1);
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+  assert.ok(!result.ready.includes(true));
+  assert.deepEqual(result.routes, []);
+});
+
+test('a consumed code proof cannot dispatch from a stale ready password form', async () => {
+  const fixture = await codeFixture();
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { sessionReady: true,
+    aliveRef: { current: true }, busyRef: { current: false },
+    verifiedCodeVersionRef: { current: fixture.bound.getRecoveryCodeState().version },
+    setPassword() {}, setConfirmPassword() {} });
+  result.deps.verifiedSessionRef.current = session;
+  result.deps.verifiedOriginRef.current = 'code';
+  fixture.bound.clearRecoveryCodeSession(fixture.bound.getRecoveryCodeState().version);
+  await (await resetCallback('handleUpdatePassword', result.deps))();
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 0);
+  assert.ok(!result.messages.some(([, type]) => type === 'success'));
+});
+
+test('a legacy recovery link replacing pending code verification releases the old busy owner', async () => {
+  const fixture = await codeFixture();
+  let release;
+  fixture.controls.gate = new Promise(resolve => { release = resolve; });
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { codeEmail: fixture.userA.email, code: '123456', Platform: { OS: 'web' },
+    setAccessToken() {}, setRefreshToken() {}, setCode() {}, setCodeEmail() {}, setCodeSent() {} });
+  const pending = (await resetCallback('handleVerifyCode', result.deps))();
+  assert.equal(result.deps.busyRef.current, true);
+  (await resetCallback('applyUrl', result.deps))('http://localhost:8081/reset#access_token=offline-new-link&refresh_token=offline-new-refresh');
+  release(); await pending;
+  assert.equal(result.deps.busyRef.current, false);
+  assert.equal(result.busy.at(-1), false);
+  assert.equal(fixture.bound.getRecoveryCodeState().session, null);
+});
+
+async function resetProofEffect(dependencies) {
+  const ast = await sourceAst('../app/(auth)/reset.tsx');
+  let effect;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(ast) === 'React.useEffect'
+      && node.arguments[0].body?.statements?.some(statement => ts.isVariableStatement(statement)
+        && statement.declarationList.declarations.some(item => item.name.getText(ast) === 'recovery'))) effect = node.arguments[0];
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.ok(effect);
+  return compileFactory(`return (${effect.getText(ast)});`, dependencies);
+}
+
+test('choosing a new code address does not reopen a different primary web recovery proof', async () => {
+  const fixture = await codeFixture();
+  await fixture.primary.sdk.auth._notifyAllSubscribers('PASSWORD_RECOVERY', fixture.primarySession);
+  const session = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { session: fixture.primarySession, Platform: { OS: 'web' },
+    accessToken: '', refreshToken: '', codeFlowRef: { current: true },
+    codeVersionRef: { current: fixture.bound.getRecoveryCodeState().version }, displayedCodeVersion: fixture.bound.getRecoveryCodeState().version,
+    setAccessToken() {}, setRefreshToken() {}, setCode() {}, setCodeEmail() {}, setCodeSent() {} });
+  result.deps.verifiedSessionRef.current = session; result.deps.verifiedOriginRef.current = 'code';
+  (await resetCallback('handleChangeEmail', result.deps))();
+  (await resetProofEffect(result.deps))();
+  assert.equal(result.deps.verifiedSessionRef.current, null);
+  assert.ok(!result.ready.includes(true));
+  assert.equal(fixture.bound.hasPasswordRecoverySession(fixture.primarySession), true);
+});
+
+test('a fresh code request ignores a stale native initial recovery URL but later link events stay supported', async () => {
+  const fixture = await codeFixture();
+  await fixture.bound.requestRecoveryCode(fixture.userA.email, 'exp://offline/reset');
+  const result = callbackFixture(fixture.primary);
+  const urls = [];
+  Object.assign(result.deps, fixture.bound, { active: true,
+    Linking: { getInitialURL: async () => 'exp://offline/reset#access_token=old-access&refresh_token=old-refresh' },
+    codeVersionRef: { current: fixture.bound.getRecoveryCodeState().version }, applyUrl: url => urls.push(url) });
+  await (await resetCallback('readInitialUrl', result.deps))();
+  assert.deepEqual(urls, [null]);
+  assert.equal(fixture.bound.getRecoveryCodeState().email, fixture.userA.email);
+});
+
+test('a stale verify callback cannot restart an old code address after choosing a new address', async () => {
+  const fixture = await codeFixture();
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { codeEmail: fixture.userA.email, code: '123456',
+    codeRenderAttempt: 0, setAccessToken() {}, setRefreshToken() {}, setCode() {}, setCodeEmail() {}, setCodeSent() {} });
+  const stale = await resetCallback('handleVerifyCode', result.deps);
+  (await resetCallback('handleChangeEmail', result.deps))();
+  await stale();
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('a password callback from an earlier code proof cannot consume a newer verification', async () => {
+  const fixture = await codeFixture();
+  const old = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { sessionReady: true,
+    displayedCodeVersion: fixture.bound.getRecoveryCodeState().version,
+    verifiedCodeVersionRef: { current: fixture.bound.getRecoveryCodeState().version } });
+  result.deps.verifiedOriginRef.current = 'code'; result.deps.verifiedSessionRef.current = old;
+  const stale = await resetCallback('handleUpdatePassword', result.deps);
+  const latest = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '654321');
+  result.deps.verifiedCodeVersionRef.current = fixture.bound.getRecoveryCodeState().version;
+  result.deps.verifiedSessionRef.current = latest;
+  await stale();
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 0);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), true);
+});
+
+test('a newer code proof releases the superseded form without clearing the new proof', async () => {
+  const fixture = await codeFixture();
+  const old = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  const result = callbackFixture(fixture.primary);
+  Object.assign(result.deps, fixture.bound, { session: fixture.primarySession, Platform: { OS: 'web' },
+    accessToken: '', refreshToken: '', codeFlowRef: { current: true },
+    codeVersionRef: { current: fixture.bound.getRecoveryCodeState().version },
+    verifiedCodeVersionRef: { current: fixture.bound.getRecoveryCodeState().version },
+    setAccessToken() {}, setRefreshToken() {} });
+  result.deps.verifiedSessionRef.current = old; result.deps.verifiedOriginRef.current = 'code';
+  result.deps.busyRef.current = true;
+  const latest = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '654321');
+  (await resetProofEffect(result.deps))();
+  assert.equal(result.deps.busyRef.current, false);
+  assert.equal(result.busy.at(-1), false);
+  assert.equal(result.ready.at(-1), false);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), true);
+});
+
+
+test('a code proof replaced during isolated account verification cannot dispatch a password PUT', async () => {
+  const fixture = await codeFixture();
+  const old = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  fixture.controls.getGate = new Promise(resolve => { release = resolve; }); fixture.controls.onGet = entered;
+  const pending = fixture.bound.updateRecoveryPassword(old, 'OfflineChangedPassword123!', 'code');
+  await started;
+  const latest = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '654321');
+  release(); await assert.rejects(pending);
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 0);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), true);
+  assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.user.id, fixture.userB.id);
+});
+
+test('a late successful password acknowledgement cannot consume a newer code proof', async () => {
+  const fixture = await codeFixture();
+  const old = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '123456');
+  let entered, release;
+  const started = new Promise(resolve => { entered = resolve; });
+  fixture.controls.putGate = new Promise(resolve => { release = resolve; }); fixture.controls.onPut = entered;
+  const pending = fixture.bound.updateRecoveryPassword(old, 'OfflineChangedPassword123!', 'code');
+  await started;
+  const latest = await fixture.bound.verifyRecoveryCode(fixture.userA.email, '654321');
+  release(); await pending;
+  assert.equal(fixture.calls.filter(call => call.method === 'PUT').length, 1);
+  assert.equal(fixture.bound.hasRecoveryCodeSession(latest), true);
+  assert.equal((await fixture.primary.sdk.auth.getSession()).data.session.access_token, fixture.primarySession.access_token);
 });

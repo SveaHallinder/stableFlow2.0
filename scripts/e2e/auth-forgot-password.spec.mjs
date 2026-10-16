@@ -4,28 +4,18 @@ import { expect, test } from '@playwright/test';
 test.use({ trace: 'off', serviceWorkers: 'block' });
 
 for (const width of [390, 1280]) {
-  test(`recovery email survives SDK cleanup failure and rate limiting before retry at ${width}px`, async ({ page }) => {
+  test(`recovery email survives provider failure and rate limiting before retry at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const email = 'offline-forgot@example.test';
-    const errorMessage = 'Kunde inte skicka återställningslänken. Din e-post finns kvar. Försök igen.';
-    const limitedMessage = 'För många försök. Vänta en stund innan du skickar en ny återställningslänk.';
-    const confirmation = 'Om adressen har ett konto får du en återställningslänk. Kontrollera även skräpposten.';
+    const errorMessage = 'Kunde inte skicka återställningskoden. Din e-post finns kvar. Försök igen.';
+    const limitedMessage = 'För många försök. Vänta en stund innan du skickar en ny återställningskod.';
+    const confirmation = 'Om adressen har ett konto får du en återställningskod. Kontrollera även skräpposten.';
     const warnings = [], pageErrors = [], blockedWrites = [];
     let attempts = 0;
     page.on('console', message => {
       if (message.type() === 'warning' && message.text().includes('[auth forgot-password]')) warnings.push(message.text());
     });
     page.on('pageerror', error => pageErrors.push(error.message));
-    await page.addInitScript(() => {
-      const removeItem = globalThis.Storage.prototype.removeItem;
-      globalThis.Storage.prototype.removeItem = function (key) {
-        if (globalThis.__failRecoveryCleanup && key.endsWith('-code-verifier')) {
-          globalThis.__failRecoveryCleanup = false;
-          throw new Error('Offline private storage cleanup error');
-        }
-        return removeItem.call(this, key);
-      };
-    });
     // Every backend request is a local fixture, including the installed SDK's
     // recovery transport. Never send a real reset email from this test.
     await page.route('**/*', route => {
@@ -53,8 +43,7 @@ for (const width of [390, 1280]) {
     await page.routeWebSocket(/.*/, socket => socket.close());
     await page.goto('/forgot-password');
     await page.getByPlaceholder('namn@exempel.se').fill(`  ${email}  `);
-    await page.evaluate(() => { globalThis.__failRecoveryCleanup = true; });
-    const button = page.getByRole('button', { name: 'Skicka återställningslänk', exact: true });
+    const button = page.getByRole('button', { name: 'Skicka återställningskod', exact: true });
     await button.click();
     await expect(page.getByRole('alert')).toHaveText(errorMessage);
     await expect(button).toBeEnabled();
@@ -69,8 +58,11 @@ for (const width of [390, 1280]) {
     await button.click();
     await expect(page.getByText(confirmation, { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('alert')).toHaveCount(0);
-    await expect(button).toBeEnabled();
-    await expect(page).toHaveURL(/\/forgot-password$/);
+    await expect(page.getByRole('button', { name: 'Verifiera återställningskod', exact: true })).toBeEnabled();
+    await expect(page).toHaveURL(/\/reset$/);
+    await expect(page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true })).toBeVisible();
+    expect(new URL(page.url()).search).toBe('');
+    expect(new URL(page.url()).hash).toBe('');
     expect(attempts).toBe(3);
     expect(warnings).toHaveLength(2);
     expect(warnings.join(' ')).not.toContain(email);

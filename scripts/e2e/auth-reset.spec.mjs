@@ -210,7 +210,7 @@ test('password rejection preserves the mobile draft and releases the button for 
 
 test('an invalid recovery link shows an error and stops automatic SDK verification retries', async ({ page }) => {
   const fixture = await offlineRecovery(page, { invalidLink: true });
-  await expect(page.getByRole('alert').filter({ hasText: 'Kunde inte verifiera länken. Öppna återställningslänken igen eller välj Skicka ny länk.' })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: 'Kunde inte verifiera länken. Öppna återställningslänken igen eller välj Skicka ny kod.' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Uppdatera lösenord', exact: true })).toBeDisabled();
   await expect(page.getByText('Verifierar länken...', { exact: true })).toHaveCount(0);
   expect(fixture.calls.verify).toBeGreaterThan(0);
@@ -224,3 +224,90 @@ test('an invalid recovery link shows an error and stops automatic SDK verificati
   expect(fixture.calls.memberships).toBe(0);
   expectCleanTraffic(fixture);
 });
+
+
+for (const width of [390, 1280]) {
+  test(`six-digit recovery stays private, retries failures and consumes proof at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const email = 'offline-code@example.test';
+    const user = { id: userId, aud: 'authenticated', role: 'authenticated', email,
+      app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const token = [{ alg: 'HS256', typ: 'JWT' }, { sub: userId, exp: expiresAt }]
+      .map(value => Buffer.from(JSON.stringify(value)).toString('base64url')).join('.') + '.offline-code-signature';
+    const calls = { request: 0, verify: 0, put: 0, unexpected: [], errors: [] };
+    const controls = { invalid: true, rejectUpdate: true };
+    page.on('pageerror', error => calls.errors.push(error.message));
+    await page.route('**/*', route => {
+      const request = route.request(), url = new URL(request.url());
+      if (!/\/(auth|rest|functions|storage|realtime)\/v1(?:\/|$)/.test(url.pathname)) {
+        return ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname) ? route.continue() : route.abort('blockedbyclient');
+      }
+      const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*',
+        'access-control-allow-methods': 'GET,POST,PUT,OPTIONS' };
+      const respond = (json, status = 200) => route.fulfill({ json, status, headers });
+      if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers });
+      if (url.pathname === '/auth/v1/recover' && request.method() === 'POST') {
+        expect(request.postDataJSON().email).toBe(email); calls.request += 1; return respond({});
+      }
+      if (url.pathname === '/auth/v1/verify' && request.method() === 'POST') {
+        expect(request.postDataJSON()).toEqual({ email, token: '123456', type: 'recovery', gotrue_meta_security: {} });
+        expect(url.search).toBe(''); calls.verify += 1;
+        return controls.invalid ? respond({ code: 'otp_expired', message: 'Offline invalid code' }, 403)
+          : respond({ access_token: token, refresh_token: 'offline-code-refresh', token_type: 'bearer',
+            expires_in: 3600, expires_at: expiresAt, user });
+      }
+      if (url.pathname === '/auth/v1/user') {
+        expect(request.headers().authorization).toBe(`Bearer ${token}`);
+        if (request.method() === 'GET') return respond(user);
+        if (request.method() === 'PUT') {
+          expect(request.postDataJSON()).toEqual({ password, code_challenge: null, code_challenge_method: null }); calls.put += 1;
+          return controls.rejectUpdate ? respond({ code: 'offline_rejected', message: 'Offline rejected password' }, 503) : respond(user);
+        }
+      }
+      calls.unexpected.push({ path: url.pathname, method: request.method() });
+      return route.abort('blockedbyclient');
+    });
+    await page.routeWebSocket(/.*/, socket => socket.close());
+    await page.goto('/reset');
+    await expect(page.getByPlaceholder('Minst 8 tecken')).toHaveCount(0);
+    await page.getByRole('textbox', { name: 'E-post för återställning', exact: true }).fill(email);
+    await page.getByRole('button', { name: 'Skicka återställningskod', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true })).toBeVisible();
+    await page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true }).fill('12345');
+    await page.getByRole('button', { name: 'Verifiera återställningskod', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('sexsiffriga');
+    expect(calls.verify).toBe(0);
+    await page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true }).fill('123456');
+    await page.getByRole('button', { name: 'Verifiera återställningskod', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('Koden kunde inte verifieras');
+    await expect(page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true })).toHaveValue('123456');
+    await page.getByRole('button', { name: 'Skicka ny kod', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true })).toHaveValue('');
+    await page.getByRole('button', { name: 'Ändra e-post', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'E-post för återställning', exact: true })).toBeEditable();
+    await expect(page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Skicka återställningskod', exact: true }).click();
+    controls.invalid = false;
+    await page.getByRole('textbox', { name: 'Sexsiffrig återställningskod', exact: true }).fill('123456');
+    await page.getByRole('button', { name: 'Verifiera återställningskod', exact: true }).click();
+    await expect(page.getByText(`Återställer ${email}`, { exact: true })).toBeVisible();
+    await fillPassword(page);
+    await page.getByRole('button', { name: 'Uppdatera lösenord', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText(updateError);
+    await expect(page.getByPlaceholder('Minst 8 tecken')).toHaveValue(password);
+    await expect(page.getByRole('button', { name: 'Uppdatera lösenord', exact: true })).toBeEnabled();
+    const stored = await page.evaluate(() => Object.values(globalThis.localStorage));
+    expect(JSON.stringify(stored)).not.toContain(token);
+    expect(JSON.stringify(stored)).not.toContain('offline-code-refresh');
+    expect(new URL(page.url()).search).toBe(''); expect(new URL(page.url()).hash).toBe('');
+    controls.rejectUpdate = false;
+    await page.getByRole('button', { name: 'Uppdatera lösenord', exact: true }).click();
+    await expect(page).not.toHaveURL(/\/reset$/);
+    expect(calls.request).toBe(3); expect(calls.verify).toBe(2); expect(calls.put).toBe(2);
+    await page.goto('/reset');
+    await expect(page.getByPlaceholder('Minst 8 tecken')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Skicka återställningskod', exact: true })).toBeEnabled();
+    expect(calls.unexpected).toEqual([]); expect(calls.errors).toEqual([]);
+  });
+}

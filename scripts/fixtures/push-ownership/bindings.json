@@ -4,7 +4,7 @@
   "fixtureHashes": {
     "ownership-overlay.test.mjs.txt": "855bc1758f7dad28e41e70670358957d45a0b8b3be5cc6fbbe7f4ada1d5666ac",
     "baseline-supabase.ts.txt": "eaf050a3f72a1505fbc7ad5f039a4b2f988a33833847d6273b5111fa036594af",
-    "primary-session-mutation.test.mjs.txt": "c0ef878ad16184adef0521d79bd54afb42509d62a9d2344ec0a27536d8bfcf30"
+    "primary-session-mutation.test.mjs.txt": "6e3c80e3afa4feb63d63e626fcf54fd2c255d526b91bf642773c8375859e7f2c"
   },
   "sources": [
     "app/(auth)/confirm.tsx",
@@ -62,7 +62,7 @@
         "B password login gate acquired first: captured A callback aborts after gate acquisition without logout",
         "already acquired SDK lock queues actual signOut internally while B actual password mutation waits app gate",
         "actual navigatorLock helper with shared LockManager adapter serializes two SDK clients and distinct app/auth names",
-        "all four primary UI mutations are wrapped; recovery-client setSession remains byte-identical"
+        "all four primary UI mutations are wrapped; isolated recovery verification remains byte-identical"
       ]
     },
     {

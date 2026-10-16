@@ -15,7 +15,7 @@ async function sendCallback(dependencies) {
     ts.forEachChild(node, visit);
   }
   visit(ast);
-  assert.ok(callback, 'Exercise the actual recovery-link callback.');
+  assert.ok(callback, 'Exercise the actual recovery-code callback.');
   const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(dependencies).join(', ')} }) => (${callback.getText(ast)});`, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });
@@ -26,6 +26,9 @@ function fixture(overrides = {}) {
   const busy = [], messages = [], errors = [], logs = [], toasts = [];
   const dependencies = {
     email: '  offline-forgot@example.test  ', submitting: false,
+    busyRef: { current: false }, aliveRef: { current: true }, attemptRef: { current: 0 },
+    codeVersionRef: { current: null }, forwardingRef: { current: false },
+    getRecoveryCodeState: () => ({ version: 1 }), router: { replace() {} },
     supabaseConfig: { isConfigured: true },
     setSubmitting: value => busy.push(value), setMessage: value => messages.push(value),
     setFormError: value => errors.push(value),
@@ -33,10 +36,16 @@ function fixture(overrides = {}) {
     toast: { showToast: (...args) => toasts.push(args) }, console: { warn: (...args) => logs.push(args) },
     ...overrides,
   };
+  // This legacy callback fixture exercises SDK errors; isolated transport/session
+  // behavior is bound to the actual recovery helpers in auth-reset.test.mjs.
+  dependencies.requestRecoveryCode ??= async (email, redirectTo) => {
+    const { error } = await dependencies.supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) throw error;
+  };
   return { busy, messages, errors, logs, toasts, dependencies };
 }
 
-test('recovery-link form releases busy state after an installed SDK storage exception and can retry', async () => {
+test('recovery-code form releases busy state after an installed SDK storage exception and can retry', async () => {
   let attempts = 0, rejectCleanup = false;
   const sdk = createClient('https://offline-forgot.example.test', 'offline-anon', {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, storage: {
@@ -76,7 +85,7 @@ test('recovery-link form releases busy state after an installed SDK storage exce
 });
 
 for (const status of [503, 429]) {
-  test(`recovery-link form handles SDK error ${status} without exposing provider details`, async () => {
+  test(`recovery-code form handles SDK error ${status} without exposing provider details`, async () => {
     const state = fixture({ supabase: { auth: { resetPasswordForEmail: async () => ({ error: {
       name: 'AuthApiError', status, message: 'private-email-and-token provider detail',
     } }) } } });
@@ -99,4 +108,32 @@ test('invalid addresses and missing configuration do not request a recovery emai
     assert.equal(state.toasts.at(-1)?.[1], 'error');
     assert.doesNotMatch(state.toasts.at(-1)?.[0], /Supabase|Expo|\.env/);
   }
+});
+
+test('a recovery request only routes to bare reset after acknowledgement and blocks same-tick duplicates', async () => {
+  let release, requests = 0;
+  const routes = [];
+  const state = fixture({ router: { replace: route => routes.push(route) }, requestRecoveryCode: async () => {
+    requests += 1; await new Promise(resolve => { release = resolve; });
+  } });
+  const send = await sendCallback(state.dependencies);
+  const pending = send(); await send();
+  assert.equal(requests, 1); assert.deepEqual(routes, []);
+  release(); await pending;
+  assert.deepEqual(routes, ['/(auth)/reset']);
+  assert.equal(state.dependencies.forwardingRef.current, true);
+});
+
+test('an unmounted or superseded recovery request cannot show success or route', async () => {
+  let release;
+  const routes = [];
+  const state = fixture({ router: { replace: route => routes.push(route) }, requestRecoveryCode: async () => {
+    await new Promise(resolve => { release = resolve; });
+  } });
+  const pending = (await sendCallback(state.dependencies))();
+  state.dependencies.aliveRef.current = false;
+  state.dependencies.attemptRef.current += 1;
+  release(); await pending;
+  assert.deepEqual(routes, []);
+  assert.ok(!state.toasts.some(([, kind]) => kind === 'success'));
 });

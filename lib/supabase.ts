@@ -214,6 +214,34 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 let passwordRecoverySession: { userId: string; accessToken: string } | null = null;
 const passwordRecoverySubscribers = new Set<() => void>();
 let passwordRecoveryAttempt = 0;
+// Code recovery never replaces the primary login or persists tokens to storage.
+let recoveryCodeSession: Session | null = null;
+let recoveryCodeEmail = '';
+let recoveryCodeVersion = 0;
+export function hasRecoveryCodeSession(session: Session | null): boolean {
+  return Boolean(session && recoveryCodeSession && !deletedAccountIds.has(session.user.id)
+    && recoveryCodeSession.user.id === session.user.id
+    && recoveryCodeSession.access_token === session.access_token
+    && typeof recoveryCodeSession.expires_at === 'number'
+    && recoveryCodeSession.expires_at > Date.now() / 1000);
+}
+export function getRecoveryCodeState(): { email: string; session: Session | null; version: number } {
+  const session = hasRecoveryCodeSession(recoveryCodeSession) ? recoveryCodeSession : null;
+  return { email: recoveryCodeEmail, session: session ? { ...session, user: { ...session.user } } : null, version: recoveryCodeVersion };
+}
+export function clearRecoveryCodeSession(expectedVersion?: number): void {
+  if (expectedVersion !== undefined && expectedVersion !== recoveryCodeVersion) return;
+  recoveryCodeVersion += 1;
+  recoveryCodeSession = null;
+  recoveryCodeEmail = '';
+  passwordRecoverySubscribers.forEach(listener => listener());
+}
+function consumeRecoveryCodeSession(session: Session, expectedVersion: number): void {
+  if (expectedVersion !== recoveryCodeVersion || !hasRecoveryCodeSession(session)) return;
+  recoveryCodeSession = null;
+  recoveryCodeEmail = '';
+  passwordRecoverySubscribers.forEach(listener => listener());
+}
 export function hasPasswordRecoverySession(session: Session | null): boolean {
   return Boolean(session && !deletedAccountIds.has(session.user.id)
     && passwordRecoverySession?.userId === session.user.id
@@ -245,6 +273,49 @@ function createRecoveryClient() {
     },
   });
 }
+export async function requestRecoveryCode(email: string, redirectTo: string, isCurrent: () => boolean = () => true): Promise<void> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !isCurrent()) throw new Error('The recovery request is no longer valid.');
+  const version = ++recoveryCodeVersion;
+  recoveryCodeSession = null;
+  recoveryCodeEmail = normalizedEmail;
+  passwordRecoverySubscribers.forEach(listener => listener());
+  const client = createRecoveryClient();
+  try {
+    const { error } = await client.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
+    if (error) throw error;
+    if (version !== recoveryCodeVersion || !isCurrent()) throw new Error('The recovery request is no longer current.');
+  } finally {
+    await client.auth.stopAutoRefresh();
+  }
+}
+export async function verifyRecoveryCode(email: string, token: string, isCurrent: () => boolean = () => true): Promise<Session> {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail) || !/^\d{6}$/.test(token) || !isCurrent()) {
+    throw new Error('Enter a valid recovery address and six-digit code.');
+  }
+  const version = ++recoveryCodeVersion;
+  recoveryCodeSession = null;
+  recoveryCodeEmail = normalizedEmail;
+  passwordRecoverySubscribers.forEach(listener => listener());
+  const client = createRecoveryClient();
+  try {
+    const { data, error } = await client.auth.verifyOtp({ email: normalizedEmail, token, type: 'recovery' });
+    if (error) throw error;
+    const session = data.session;
+    if (version !== recoveryCodeVersion || !isCurrent() || !session?.access_token || !session.refresh_token
+      || !session.user?.id || data.user?.id !== session.user.id || deletedAccountIds.has(session.user.id)
+      || session.user.email?.trim().toLowerCase() !== normalizedEmail
+      || typeof session.expires_at !== 'number' || session.expires_at <= Date.now() / 1000) {
+      throw new Error('The recovery code could not be verified for this account.');
+    }
+    recoveryCodeSession = { ...session, user: { ...session.user } };
+    passwordRecoverySubscribers.forEach(listener => listener());
+    return { ...session, user: { ...session.user } };
+  } finally {
+    await client.auth.stopAutoRefresh();
+  }
+}
 export async function verifyRecoverySession(tokens: { access_token: string; refresh_token: string }): Promise<Session> {
   const client = createRecoveryClient();
   try {
@@ -256,8 +327,10 @@ export async function verifyRecoverySession(tokens: { access_token: string; refr
     await client.auth.stopAutoRefresh();
   }
 }
-export async function updateRecoveryPassword(session: Session, password: string): Promise<void> {
+export async function updateRecoveryPassword(session: Session, password: string, origin?: 'code'): Promise<void> {
   if (deletedAccountIds.has(session.user.id)) throw new Error('The recovery account is no longer available.');
+  const codeVersion = recoveryCodeVersion;
+  if (origin === 'code' && !hasRecoveryCodeSession(session)) throw new Error('The recovery code is no longer valid.');
   const client = createRecoveryClient();
   try {
     const { data, error } = await client.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
@@ -265,10 +338,14 @@ export async function updateRecoveryPassword(session: Session, password: string)
     if (data.session?.user.id !== session.user.id || deletedAccountIds.has(session.user.id)) {
       throw new Error('The recovery session could not be verified for this account.');
     }
+    if (origin === 'code' && (codeVersion !== recoveryCodeVersion || !hasRecoveryCodeSession(session))) {
+      throw new Error('The recovery code is no longer current.');
+    }
     const { data: updated, error: updateError } = await client.auth.updateUser({ password });
     if (updateError) throw updateError;
-    if (updated.user?.id !== session.user.id) throw new Error('The password update could not be confirmed for this account.');
-    consumePasswordRecoverySession(session);
+    if (updated.user?.id !== session.user.id || deletedAccountIds.has(session.user.id)) throw new Error('The password update could not be confirmed for this account.');
+    if (origin === 'code') consumeRecoveryCodeSession(session, codeVersion);
+    else consumePasswordRecoverySession(session);
   } finally {
     await client.auth.stopAutoRefresh();
   }
