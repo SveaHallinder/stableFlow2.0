@@ -22,7 +22,7 @@ async function loadReceipt({ clipboardFailure } = {}) {
       copied.push(value);
       return true;
     } },
-    useAppData: () => ({ state: { stables: [{ id: 'A', name: 'QA Första' }, { id: 'B', name: 'QA Andra' }] } }),
+    useAppData: () => ({ state: { currentUserId: 'actor', stables: [{ id: 'A', name: 'QA Första' }, { id: 'B', name: 'QA Andra' }] } }),
     useToast: () => ({ showToast: (...args) => toasts.push(args) }),
     theme: { colors: {} }, console: { warn: (...args) => logs.push(args) },
   };
@@ -92,4 +92,18 @@ test('clipboard failure preserves selectable instructions and reports the failur
     assert.match(content(tree), /recipient@example\.test/);
     assert.ok(nodes(tree).some(node => node.props?.selectable && content(node).includes('recipient@example.test')));
   }
+});
+
+
+test('provider acceptance is distinguished from inbox delivery', async () => {
+  const { render } = await loadReceipt();
+  const text = content(render({ confirmation: { ...confirmation, createdByUserId: 'actor', emailDelivery: 'accepted' } }));
+  assert.match(text, /Mejltjänsten har tagit emot/);
+  assert.match(text, /(?:inkorgen|inkorgsleverans).*inte.*bekräftad/i);
+  assert.match(text, /FIRST1/);
+});
+
+test('a late confirmation from another account is not shown', async () => {
+  const { render } = await loadReceipt();
+  assert.equal(render({ confirmation: { ...confirmation, createdByUserId: 'another-actor', emailDelivery: 'accepted' } }), null);
 });

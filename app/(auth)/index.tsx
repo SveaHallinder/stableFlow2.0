@@ -61,6 +61,8 @@ export default function AuthScreen() {
   // stranding the user on the login form.
   const [pendingConfirmEmail, setPendingConfirmEmail] = React.useState<string | null>(null);
   const [resending, setResending] = React.useState(false);
+  const [confirmationCode, setConfirmationCode] = React.useState('');
+  const [verifyingCode, setVerifyingCode] = React.useState(false);
 
   const roleHintLines =
     signupIntent === 'create'
@@ -127,7 +129,7 @@ export default function AuthScreen() {
           }
           const message =
             error.code === 'email_not_confirmed'
-              ? 'Bekräfta din e-post via länken i mejlet innan du loggar in.'
+              ? 'Bekräfta din e-post med koden eller länken i mejlet.'
               : error.status === 0 || (error.status ?? 0) >= 500 || error.name === 'AuthRetryableFetchError'
               ? 'Kan inte nå servern. Kontrollera din internetanslutning.'
               : 'Fel e-post eller lösenord.';
@@ -288,8 +290,49 @@ export default function AuthScreen() {
     router.push('/(auth)/forgot-password');
   }, [router]);
 
+  const handleVerifyConfirmation = React.useCallback(async () => {
+    if (!pendingConfirmEmail || verifyingCode || resending) return;
+    const token = confirmationCode.trim();
+    if (!/^\d{6}$/.test(token)) {
+      toast.showToast('Ange den sexsiffriga bekräftelsekoden från mejlet.', 'error');
+      return;
+    }
+    setVerifyingCode(true);
+    try {
+      const { data, error } = await withPrimarySessionMutation(() => supabase.auth.verifyOtp({
+        email: pendingConfirmEmail,
+        token,
+        type: 'email',
+      }));
+      if (error || !data.session) {
+        console.warn('[auth confirm] Kunde inte bekräfta e-post', { code: error?.code, status: error?.status });
+        toast.showToast(error?.status === 429
+          ? 'För många försök. Vänta en stund innan du provar koden igen.'
+          : error?.code === 'otp_expired'
+          ? 'Koden är ogiltig eller har gått ut. Kontrollera koden eller skicka ett nytt mejl.'
+          : 'Kunde inte bekräfta din e-post. Kontrollera koden och försök igen.', 'error');
+        return;
+      }
+      // Auth hydration claims the email-bound stable or invitation already saved
+      // before signup. Never accept an invitation a second time here.
+      setConfirmationCode('');
+      setPendingConfirmEmail(null);
+      toast.showToast('Din e-post är bekräftad.', 'success');
+      router.replace('/');
+    } catch (error) {
+      console.warn('[auth confirm] Kunde inte slutföra bekräftelsen', {
+        name: error instanceof Error ? error.name : 'unknown',
+      });
+      toast.showToast(error instanceof PrimarySessionMutationUnsupportedError
+        ? PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE
+        : 'Kunde inte bekräfta din e-post. Dina uppgifter finns kvar. Försök igen.', 'error');
+    } finally {
+      setVerifyingCode(false);
+    }
+  }, [pendingConfirmEmail, confirmationCode, verifyingCode, resending, toast, router]);
+
   const handleResendConfirmation = React.useCallback(async () => {
-    if (!pendingConfirmEmail || resending) {
+    if (!pendingConfirmEmail || resending || verifyingCode) {
       return;
     }
     setResending(true);
@@ -313,10 +356,11 @@ export default function AuthScreen() {
     } finally {
       setResending(false);
     }
-  }, [pendingConfirmEmail, resending, toast]);
+  }, [pendingConfirmEmail, resending, verifyingCode, toast]);
 
   const handleBackToLogin = React.useCallback(() => {
     setPendingConfirmEmail(null);
+    setConfirmationCode('');
     setMode('login');
     setPassword('');
   }, []);
@@ -560,21 +604,50 @@ export default function AuthScreen() {
       <View style={styles.formHeader}>
         <Text style={[styles.title, isDesktop && styles.titleDesktop]}>Bekräfta din e-post</Text>
         <Text style={[styles.helperText, isDesktop && styles.helperTextDesktop]}>
-          {`Öppna bekräftelselänken i mejlet till ${pendingConfirmEmail ?? 'din e-post'} för att aktivera kontot. Logga sedan in med samma e-postadress.`}
+          {`Ange koden från mejlet till ${pendingConfirmEmail ?? 'din e-post'} för att aktivera kontot. Om mejlet innehåller en bekräftelselänk kan du även öppna den och sedan logga in.`}
         </Text>
       </View>
+      <TextInput
+        style={[styles.input, isDesktop && styles.inputDesktop]}
+        value={confirmationCode}
+        onChangeText={value => setConfirmationCode(value.replace(/\D/g, ''))}
+        placeholder="Sexsiffrig bekräftelsekod"
+        keyboardType="number-pad"
+        autoComplete="one-time-code"
+        textContentType="oneTimeCode"
+        maxLength={6}
+        editable={!verifyingCode && !resending}
+        accessibilityLabel="Bekräftelsekod"
+      />
       <TouchableOpacity
         style={[
           styles.primaryButton,
           isDesktop && styles.primaryButtonDesktop,
-          resending && styles.primaryButtonDisabled,
+          (verifyingCode || resending || confirmationCode.length !== 6) && styles.primaryButtonDisabled,
+        ]}
+        onPress={handleVerifyConfirmation}
+        activeOpacity={0.9}
+        disabled={verifyingCode || resending || confirmationCode.length !== 6}
+        accessibilityRole="button"
+        accessibilityLabel="Bekräfta e-post"
+        accessibilityState={{ disabled: verifyingCode || resending || confirmationCode.length !== 6 }}
+      >
+        <Text style={[styles.primaryButtonText, isDesktop && styles.primaryButtonTextDesktop]}>
+          {verifyingCode ? 'Bekräftar...' : 'Bekräfta e-post'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.primaryButton,
+          isDesktop && styles.primaryButtonDesktop,
+          (resending || verifyingCode) && styles.primaryButtonDisabled,
         ]}
         onPress={handleResendConfirmation}
         activeOpacity={0.9}
-        disabled={resending}
+        disabled={resending || verifyingCode}
         accessibilityRole="button"
         accessibilityLabel="Skicka bekräftelsemejl igen"
-        accessibilityState={{ disabled: resending }}
+        accessibilityState={{ disabled: resending || verifyingCode }}
       >
         <Text style={[styles.primaryButtonText, isDesktop && styles.primaryButtonTextDesktop]}>
           {resending ? 'Skickar...' : 'Skicka igen'}
@@ -582,6 +655,7 @@ export default function AuthScreen() {
       </TouchableOpacity>
       <TouchableOpacity
         onPress={handleBackToLogin}
+        disabled={verifyingCode || resending}
         activeOpacity={0.85}
         accessibilityRole="button"
         accessibilityLabel="Till inloggning"

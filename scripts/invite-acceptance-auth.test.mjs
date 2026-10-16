@@ -38,6 +38,7 @@ async function loadCallback(file, name, dependencies) {
     ts.forEachChild(node, visit);
   }
   visit(ast);
+  assert.ok(callback, `${name} must exist so users can finish authentication in the app`);
   const helpers = ast.statements.filter(node => ts.isFunctionDeclaration(node) && !node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword))
     .map(node => node.getText(ast)).join('\n');
   const primaryBindings = file === '../app/(auth)/index.tsx' || file === '../app/(auth)/confirm.tsx'
@@ -219,7 +220,7 @@ test('confirmation resend recovers from an exception and keeps the same recipien
   const messages = [];
   const logs = [];
   let attempts = 0;
-  const deps = { pendingConfirmEmail: 'recipient@example.test', resending: false,
+  const deps = { pendingConfirmEmail: 'recipient@example.test', resending: false, verifyingCode: false,
     setResending: value => busy.push(value), authRedirectUrl: () => 'http://localhost:8081/confirm',
     supabase: { auth: { resend: async args => {
       assert.equal(args.email, 'recipient@example.test');
@@ -236,6 +237,105 @@ test('confirmation resend recovers from an exception and keeps the same recipien
   assert.equal(attempts, 2);
   assert.equal(busy.at(-1), false);
   assert.equal(messages.at(-1)?.[1], 'success');
+});
+
+function emailCodeFixture(overrides = {}) {
+  const calls = [];
+  const messages = [];
+  const busy = [];
+  const logs = [];
+  const deps = {
+    pendingConfirmEmail: 'recipient@example.test', confirmationCode: ' 123456 ', verifyingCode: false, resending: false,
+    setVerifyingCode: value => busy.push(value),
+    setConfirmationCode: value => calls.push(['code', value]),
+    setPendingConfirmEmail: value => calls.push(['confirm', value]),
+    toast: { showToast: (message, type) => messages.push({ message, type }) },
+    router: { replace: route => calls.push(['navigate', route]) },
+    console: { warn: (...args) => logs.push(args) },
+    supabase: { auth: { verifyOtp: async args => {
+      calls.push(['verify', args]);
+      return { data: { session: { user: { id: 'confirmed-user' } } }, error: null };
+    } } },
+    ...overrides,
+  };
+  return { calls, messages, busy, logs, deps };
+}
+
+test('the email code confirms the signup through the installed SDK before entering the app', async () => {
+  const requests = [];
+  const sdk = createClient('https://offline-confirm.example.test', 'offline-anon', {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { fetch: async (input, init) => {
+      requests.push({ url: String(input), body: JSON.parse(init.body) });
+      return new globalThis.Response(JSON.stringify({ access_token: 'offline-access', refresh_token: 'offline-refresh',
+        expires_in: 3600, token_type: 'bearer', user: { id: 'offline-user', aud: 'authenticated',
+          email: 'recipient@example.test', app_metadata: {}, user_metadata: {} } }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+    } },
+  });
+  await sdk.auth.getSession();
+  const fixture = emailCodeFixture({ supabase: sdk });
+  await (await loadCallback('../app/(auth)/index.tsx', 'handleVerifyConfirmation', fixture.deps))();
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /\/auth\/v1\/verify$/);
+  const { email, token, type } = requests[0].body;
+  assert.deepEqual({ email, token, type }, { email: 'recipient@example.test', token: '123456', type: 'email' });
+  assert.deepEqual(fixture.calls, [['code', ''], ['confirm', null], ['navigate', '/']]);
+  assert.equal(fixture.messages.at(-1)?.type, 'success');
+  assert.equal(fixture.busy.at(-1), false);
+});
+
+for (const overrides of [{ confirmationCode: '12' }, { confirmationCode: 'abcdef' },
+  { pendingConfirmEmail: null }, { verifyingCode: true }, { resending: true }]) {
+  test(`email verification does not call Auth for ${JSON.stringify(overrides)}`, async () => {
+    const fixture = emailCodeFixture(overrides);
+    await (await loadCallback('../app/(auth)/index.tsx', 'handleVerifyConfirmation', fixture.deps))();
+    assert.equal(fixture.calls.some(([name]) => name === 'verify' || name === 'navigate'), false);
+  });
+}
+
+for (const error of [{ code: 'otp_expired', status: 403 }, { code: 'over_request_rate_limit', status: 429 }]) {
+  test(`email code ${error.code} leaves the code available for correction or resend`, async () => {
+    const fixture = emailCodeFixture({ supabase: { auth: { verifyOtp: async () => ({ data: {}, error: {
+      ...error, message: 'Private recipient@example.test 123456 token-detail',
+    } }) } } });
+    await (await loadCallback('../app/(auth)/index.tsx', 'handleVerifyConfirmation', fixture.deps))();
+    assert.equal(fixture.calls.length, 0);
+    assert.equal(fixture.messages.at(-1)?.type, 'error');
+    assert.match(fixture.messages.at(-1)?.message, error.status === 429 ? /för många försök/i : /ogiltig|gått ut/i);
+    assert.equal(fixture.busy.at(-1), false);
+    assert.match(fixture.logs.at(-1)?.[0], /^\[auth confirm\]/);
+    assert.doesNotMatch(JSON.stringify(fixture.logs), /recipient@example|123456|token-detail/);
+  });
+}
+
+test('email code verification cannot succeed without a returned session', async () => {
+  const fixture = emailCodeFixture({ supabase: { auth: { verifyOtp: async () => ({ data: { user: {} }, error: null }) } } });
+  await (await loadCallback('../app/(auth)/index.tsx', 'handleVerifyConfirmation', fixture.deps))();
+  assert.equal(fixture.calls.length, 0);
+  assert.equal(fixture.messages.at(-1)?.type, 'error');
+  assert.equal(fixture.busy.at(-1), false);
+});
+
+test('an email code storage failure releases the button without disclosing the code or recipient', async () => {
+  const fixture = emailCodeFixture({ supabase: { auth: { verifyOtp: async () => {
+    throw new Error('Private recipient@example.test 123456 token-detail');
+  } } } });
+  await (await loadCallback('../app/(auth)/index.tsx', 'handleVerifyConfirmation', fixture.deps))();
+  assert.equal(fixture.calls.length, 0);
+  assert.equal(fixture.messages.at(-1)?.type, 'error');
+  assert.equal(fixture.busy.at(-1), false);
+  assert.match(fixture.logs.at(-1)?.[0], /^\[auth confirm\]/);
+  assert.doesNotMatch(JSON.stringify(fixture.logs), /recipient@example|123456|token-detail/);
+});
+
+test('the signup email contains the code required by Expo Go without depending on a public callback', async () => {
+  const html = await readFile(new URL('../supabase/templates/confirmation.html', import.meta.url), 'utf8').catch(() => null);
+  assert.ok(html, 'A versioned confirmation email must supply the in-app verification code');
+  assert.match(html, /\{\{\s*\.Token\s*\}\}/);
+  assert.match(html, /StableFlow/);
+  assert.match(html, /Bekräfta/);
+  assert.doesNotMatch(html, /ConfirmationURL|localhost|stableflow:\/\/|href=/);
 });
 
 function confirmFixture() {

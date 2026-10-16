@@ -12,16 +12,16 @@ const plist = expoRequire('@expo/plist').default;
 const { AndroidConfig } = expoRequire('@expo/config-plugins');
 const config = JSON.parse(await readFile(new URL('../app.json', import.meta.url), 'utf8')).expo;
 
-async function loadAuthRedirect(platform, origin) {
+async function loadAuthRedirect(platform, origin, createURL = path => `${config.scheme}://${path}`) {
   const source = await readFile(new URL('../lib/authRedirect.ts', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('authRedirect.ts', source, ts.ScriptTarget.Latest, true);
   const declaration = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'authRedirectUrl');
   const callback = declaration.getText(ast).replace(/^export\s+/, '');
-  const { outputText } = ts.transpileModule(`export default ({ Platform, globalThis }) => (${callback});`, {
+  const { outputText } = ts.transpileModule(`export default ({ Platform, globalThis, createURL }) => (${callback});`, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });
   return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default({
-    Platform: { OS: platform }, globalThis: origin ? { location: { origin } } : {},
+    Platform: { OS: platform }, globalThis: origin ? { location: { origin } } : {}, createURL,
   });
 }
 
@@ -61,6 +61,23 @@ test('web confirmation and reset redirects keep the HTTPS origin', async () => {
   for (const path of ['confirm', 'reset']) {
     assert.equal(redirect(path), `${origin}/${path}`);
   }
+});
+
+test('Expo Go confirmation and reset return to the running project instead of an uninstalled custom scheme', async () => {
+  for (const platform of ['ios', 'android']) {
+    for (const origin of ['exp://192.0.2.10:8081', 'exps://pilot.example.exp.direct']) {
+      const redirect = await loadAuthRedirect(platform, undefined, path => `${origin}/--/${path}`);
+      for (const path of ['confirm', 'reset']) {
+        assert.equal(redirect(path), `${origin}/--/${path}`);
+      }
+    }
+  }
+});
+
+test('local web confirmation and reset keep the actual dev-server port', async () => {
+  const redirect = await loadAuthRedirect('web', 'http://localhost:8081');
+  assert.equal(redirect('confirm'), 'http://localhost:8081/confirm');
+  assert.equal(redirect('reset'), 'http://localhost:8081/reset');
 });
 
 // Expo Go requests a signed manifest. A placeholder EAS ID makes the CLI wait

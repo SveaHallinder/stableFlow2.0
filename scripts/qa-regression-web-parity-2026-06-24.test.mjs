@@ -26,7 +26,8 @@ test('ISSUE-102: authRedirectUrl is platform-aware and screens use it (no stable
   const helper = await readProjectFile('lib/authRedirect.ts');
   assert.match(helper, /export function authRedirectUrl\(path: 'confirm' \| 'reset'\)/);
   assert.match(helper, /globalThis\.location\?\.origin/);
-  assert.match(helper, /return `stableflow:\/\/\$\{path\}`/); // native fallback only
+  assert.match(helper, /import \{ createURL \} from 'expo-linking'/);
+  assert.match(helper, /return createURL\(path\)/); // Expo Go and installed builds
 
   for (const f of ['app/(auth)/index.tsx', 'app/(auth)/forgot-password.tsx', 'app/settings/account.tsx']) {
     const src = await readProjectFile(f);

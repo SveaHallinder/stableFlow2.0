@@ -765,7 +765,11 @@ export type CompleteCareEventInput = {
   note?: string;
 };
 
-export type InviteConfirmation = { email: string; inviteCode: string; codes: { stableId: string; code: string }[] };
+export type InviteConfirmation = {
+  email: string; inviteCode: string; codes: { stableId: string; code: string }[];
+  createdByUserId?: string;
+  emailDelivery?: 'accepted' | 'unconfirmed';
+};
 
 export type AddMemberInput = {
   name: string;
@@ -4838,15 +4842,21 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         pendingInviteDrafts.current.set(key, draft);
       }
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15_000);
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const saveDeadline = new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => { controller.abort(); reject(new Error('Invite save timed out')); }, 15_000);
+      });
       try {
         if (!isQaDemoMode) {
           if (!user) throw new Error('Session saknas.');
-          let { data, error } = await supabase.from('stable_invites').insert(draft.rows)
-            .select('*').abortSignal(controller.signal);
+          let { data, error } = await Promise.race([
+            supabase.from('stable_invites').insert(draft.rows).select('*').abortSignal(controller.signal), saveDeadline,
+          ]);
           if (error?.code === '23505') {
-            ({ data, error } = await supabase.from('stable_invites').select('*')
-              .in('id', draft.rows.map((row) => String(row.id))).abortSignal(controller.signal));
+            ({ data, error } = await Promise.race([
+              supabase.from('stable_invites').select('*')
+                .in('id', draft.rows.map((row) => String(row.id))).abortSignal(controller.signal), saveDeadline,
+            ]));
           }
           if (error || data?.length !== draft.rows.length || draft.rows.some((expected) => {
             const row = data?.find((item) => item.id === expected.id);
@@ -4854,11 +4864,43 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               field !== 'expires_at' && JSON.stringify(row[field]) !== JSON.stringify(value));
           })) throw error ?? new Error('Servern bekräftade inte alla inbjudningar.');
         }
+        clearTimeout(timeout);
         pendingInviteDrafts.current.delete(key);
+        // Creation and email acceptance are separate receipts. A failed/unknown
+        // email must never erase the saved invitation or turn it into a new insert.
+        let emailDelivery: InviteConfirmation['emailDelivery'] = 'unconfirmed';
+        if (!isQaDemoMode && user && stateRef.current.currentUserId === user.id) {
+          const mailController = new AbortController();
+          let mailTimeout: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<never>((_, reject) => {
+            mailTimeout = setTimeout(() => { mailController.abort(); reject(new Error('Invite email timed out')); }, 17_000);
+          });
+          try {
+            const send = async () => {
+              const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+              if (sessionError || sessionData.session?.user.id !== user.id ||
+                stateRef.current.currentUserId !== user.id) throw new Error('Invite account changed');
+              mailController.signal.throwIfAborted();
+              const ids = draft.rows.map((row) => String(row.id));
+              const { data, error } = await supabase.functions.invoke('send-invite', {
+                body: { invite_ids: ids }, signal: mailController.signal,
+                headers: { Authorization: `Bearer ${sessionData.session.access_token}` },
+              });
+              if (error || data?.accepted !== true || data?.actor_id !== user.id ||
+                !Array.isArray(data?.invite_ids) || data.invite_ids.length !== ids.length ||
+                new Set(data.invite_ids).size !== ids.length || ids.some((id) => !data.invite_ids.includes(id))) return false;
+              return stateRef.current.currentUserId === user.id && !mailController.signal.aborted;
+            };
+            if (await Promise.race([send(), deadline])) emailDelivery = 'accepted';
+          } catch {
+            console.warn('[invite email] Mejltjänstens kvittens saknas; inbjudan och koderna finns kvar.');
+          } finally { clearTimeout(mailTimeout); }
+        }
         return { success: true, data: { email: String(draft.rows[0].email), inviteCode: draft.code,
-          codes: draft.rows.map((row) => ({ stableId: String(row.stable_id), code: String(row.code) })) } };
+          codes: draft.rows.map((row) => ({ stableId: String(row.stable_id), code: String(row.code) })),
+          createdByUserId: user?.id, emailDelivery } };
       } catch (error) {
-        console.warn('[invite create] Kunde inte skapa inbjudan', error);
+        console.warn('[invite create] Kunde inte skapa inbjudan', error instanceof Error ? error.name : 'Unknown');
         return { success: false, reason: 'Inbjudan kunde inte skapas. Uppgifterna finns kvar. Försök igen.' };
       } finally { clearTimeout(timeout); }
     },

@@ -8,7 +8,7 @@ import { theme } from './theme';
 export function InviteReceipt({ confirmation }: { confirmation: InviteConfirmation | null }) {
   const { state } = useAppData();
   const toast = useToast();
-  if (!confirmation) return null;
+  if (!confirmation || (confirmation.createdByUserId && confirmation.createdByUserId !== state.currentUserId)) return null;
   const loginInstruction = confirmation.email
     ? `Logga in med ${confirmation.email}.`
     : 'Logga in med samma e-postadress som inbjudan skapades för.';
@@ -20,7 +20,9 @@ export function InviteReceipt({ confirmation }: { confirmation: InviteConfirmati
   return (
     <View style={styles.receipt} accessibilityLiveRegion="polite">
       <Text style={styles.title}>Inbjudan skapad</Text>
-      <Text style={styles.description}>Mejlleverans är inte bekräftad. Dela koden och instruktionerna direkt med mottagaren.</Text>
+      <Text style={styles.description}>{confirmation.emailDelivery === 'accepted'
+        ? 'Mejltjänsten har tagit emot inbjudan. Leverans till inkorgen är inte bekräftad. Koden kan också delas direkt.'
+        : 'Mejlleverans är inte bekräftad. Inbjudan och koden är sparade. Dela koden och instruktionerna direkt med mottagaren.'}</Text>
       <Text selectable style={styles.description}>{loginInstruction}</Text>
       <Text selectable style={styles.description}>{signupInstruction}</Text>
       <Text selectable style={styles.description}>{codeInstruction}</Text>
