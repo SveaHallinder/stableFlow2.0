@@ -123,6 +123,14 @@ export default function ContactsScreen() {
     });
   };
 
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace('/stable-horses');
+  }, [router]);
+
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
@@ -131,7 +139,7 @@ export default function ContactsScreen() {
           title="Kontakter"
           showSearch={false}
           left={
-            <HeaderIconButton style={styles.iconButton} accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+            <HeaderIconButton style={styles.iconButton} accessibilityLabel="Tillbaka" onPress={handleBack}>
               <Feather name="arrow-left" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }

@@ -1,52 +1,31 @@
-# StableFlow — staging/test setup runbook
+# StableFlow — staging och slutprov
 
-Target project: **`zbcghmpjslasnxqcodqa`** (reusing existing dev project).
-Goal: get the **real backend flow** working so other stable owners can test with their own stable.
+Aktuell status: [releaseöversikt 2026-10-10](docs/checkpoints/2026-10-10-release/README.md). Hela appen är ännu inte slutaccepterad. Extern publicering väntar.
 
-Legend: 🧑 = you run it (needs login/secret/dashboard) · 🤖 = Claude runs it.
+## Rätt miljö och godkänd ändringslista
 
----
+Befintligt StableFlow-projekt är **`zbcghmpjslasnxqcodqa`** och innehåller befintliga data. Kontrollera projektidentiteten före varje provideråtgärd. Ett annat anslutet Supabase-projekt får inte användas som ersättning.
 
-## Phase 1 — Connect the CLI  🧑
-Run in your terminal (not pasted into chat — keeps secrets out):
+Läs migrationshistoriken med `supabase migration list` endast när CLI redan är länkat till rätt projekt. Vid saknad inloggning sker den lokalt med `supabase login`; eventuell länkning använder `supabase link --project-ref zbcghmpjslasnxqcodqa`. Ange hemligheter i det lokala verktygets avsedda inmatning, aldrig i chatten, kommandoraden eller Git.
 
-```bash
-supabase login                                   # opens browser, authorizes
-supabase link --project-ref zbcghmpjslasnxqcodqa # enter the DB password when asked
-supabase migration list                          # paste the output back to Claude
+En lista över väntande migrationer är **inte** ett godkännande att installera dem. Använd en namngiven, granskad och uttryckligen godkänd ändringslista, grön CI på samma produktcommit samt dokumenterad ordning och efterkontroll. Kör varken generell `supabase db push`, hela `schema.sql` eller `seed_qa.sql` mot befintligt projekt som standardsteg. Paketet med 38 filer, sex migrationer och separat driftkonfiguration väntar fortfarande på godkännande.
+
+Deploy av en edge-funktion, Auth-konfiguration, Vault/secrets och Cron är separata driftändringar. Redan installerade versioner framgår av releaseunderlaget; installera inte om dem utan konkret behov. Kontrollera endast avsedda redirect-adresser och mallar. Stäng inte av e-postbekräftelse för att få ett prov grönt.
+
+## Lokala prov och verkliga testkonton
+
+`npm run test:e2e` använder den blockerande offlinekonfigurationen. Gröna syntetiska webbprov bekräftar inte mejlleverans, Hosted RLS, fysisk telefon eller push. Lokalt UI-prov finns i [design-qa.md](docs/design-qa.md).
+
+Den separata `scripts/e2e/staging-qa.spec.mjs` använder fem fördefinierade rollkonton. Den ska bara köras mot ett avgränsat, godkänt teststall med uttryckligt godkännande för konton och seeddata. Sviten avbryter före browserstart om `E2E_QA_PASSWORD` saknas eller bara innehåller blanksteg; inget lösenordsfallback finns. Förse testprocessen med ett nytt starkt testlösenord genom `E2E_QA_PASSWORD` från lokal hemlighetshantering, utan att skriva värdet i dokumentation, shellhistorik eller loggar. Bekräfta att variabeln är satt innan körning. Testkonton, lösenord och städning ska vara beslutade innan seed eller registrering utförs.
+
+Starta rätt lokala appmiljö utan QA-demo för verkliga backendprov och ange dess adress i `E2E_URL`. Kör sedan den avgränsade filen explicit:
+
+```sh
+./node_modules/.bin/playwright test scripts/e2e/staging-qa.spec.mjs --config scripts/e2e/playwright.config.mjs
 ```
 
-`migration list` shows which migrations are already applied remotely vs pending. That tells us
-exactly what to apply (no guessing, no clobbering).
+Kontrollera testernas förväntningar mot aktuell UI innan de används som slutacceptans. Skicka riktiga inbjudningar eller återställningsmejl bara till en godkänd mottagare och dokumentera faktisk mottagning, länköppning och avslutat flöde separat. Ingen riktig kontoradering ingår i standardprovet.
 
-## Phase 2 — Bring the DB up to date  🤖 (after Phase 1)
-Based on `migration list`, Claude applies the pending migrations (`supabase db push`, or the
-specific SQL). Then the Vault secret for push (`staging_setup.sql` lines 22-30) — needs your
-service-role key, so that one is 🧑.
+## Slutprov
 
-## Phase 3 — Auth config (dashboard)  🧑
-Supabase dashboard → Authentication → URL Configuration:
-- Add redirect URLs: `stableflow://confirm`, `stableflow://reset`
-- Note the **Confirm signup** email template format (`{{ .ConfirmationURL }}`) — Claude needs to
-  know if it sends `#access_token=` (legacy) or `?code=`/`token_hash` (modern) to fix `confirm.tsx`.
-- Decide: email confirmation ON (real) or OFF (faster pilot).
-
-## Phase 4 — QA test users + seed  🧑+🤖
-The real-backend Playwright suite (`staging-qa.spec.mjs`) needs 5 confirmed users (password
-`QaTest1234!`):
-`stableflow-{admin,staff,owner,rider,guest}@example.test`
-- 🧑 Create them: dashboard → Authentication → Add user (check "Auto Confirm User") ×5.
-- 🤖 Then Claude runs `seed_qa.sql` to wire their memberships/data.
-
-## Phase 5 — Verify the real flow  🤖
-- `npm run test:e2e` against staging (`staging-qa.spec.mjs`) → must go green.
-- Fix the 3 backend-dependent bugs the audit found (optimistic onboarding writes, arena gate
-  loop, confirm.tsx token format) — now reproducible with a real backend.
-- Real manual smoke: signup → confirm → create stable → onboard → daily use.
-
-## Phase 6 — Full pilot (edge functions)  🧑+🤖
-For invites/push/account-deletion to work:
-- 🤖 `supabase functions deploy send-invite delete-account send-push-notification`
-- 🧑 `supabase secrets set RESEND_API_KEY=… INVITE_FROM_EMAIL=… APP_URL=…`
-
-Only after Phase 5 is green do we invite real pilot stable owners.
+Följ de sex stegen i [releaseöversikten](docs/checkpoints/2026-10-10-release/README.md). Dator och användarens enda iPhone används för de verkliga proverna. Kostnader, betalmedlemskap och extern publicering är inte godkända av denna runbook. Rapportera utförda prov och kvarstående steg; ersätt inte ett saknat telefon- eller mejlprov med lokala testresultat.

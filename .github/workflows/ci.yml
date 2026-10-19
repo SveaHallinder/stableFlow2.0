@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stableflow-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI: 'true'
+      EXPO_NO_DOTENV: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_OFFLINE: '1'
+      EXPO_PUBLIC_SUPABASE_URL: https://ci.supabase.invalid
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: offline-ci-anon
+      EXPO_PUBLIC_QA_DEMO_MODE: '0'
+      E2E_URL: http://localhost:8081
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run all Node and local database tests
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0 || { echo '[ci database] The local database tests require a non-root runner.'; exit 1; }
+          command -v pg_config >/dev/null || { echo '[ci database] pg_config is required.'; exit 1; }
+          task_ci_pg_bin="$(pg_config --bindir)"
+          for task_ci_tool in initdb pg_ctl psql; do
+            test -x "$task_ci_pg_bin/$task_ci_tool" || { echo "[ci database] Missing PostgreSQL executable: $task_ci_tool"; exit 1; }
+          done
+          test -f "$(pg_config --sharedir)/extension/pgcrypto.control" || { echo '[ci database] The pgcrypto extension is required.'; exit 1; }
+          command -v python3 >/dev/null || { echo '[ci database] Python 3 is required.'; exit 1; }
+          python3 --version
+          npm test | tee "$RUNNER_TEMP/stableflow-node.log"
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const output = readFileSync(process.env.RUNNER_TEMP + '/stableflow-node.log', 'utf8');
+          const skipped = output.match(/^# skipped (\d+)$/m);
+          if (!skipped || Number(skipped[1]) !== 0) {
+            throw new Error('[ci node] All tests must execute; skipped tests are not accepted.');
+          }
+          JS
+      - name: Lint and export web app
+        run: |
+          npm run lint
+          npm run build:web
+      - name: Install the locked Chromium runtime
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: Generate route types, typecheck, and test offline UI
+        run: |
+          set -euo pipefail
+          node node_modules/expo/bin/cli start --web --localhost --port 8081 >"$RUNNER_TEMP/stableflow-metro.log" 2>&1 &
+          task_ci_metro_pid=$!
+          trap 'kill -INT "$task_ci_metro_pid" 2>/dev/null || true' EXIT
+          task_ci_ready=0
+          task_ci_deadline=$((SECONDS + 120))
+          while test "$SECONDS" -lt "$task_ci_deadline"; do
+            if test "$(curl --max-time 5 -s -o /dev/null -w '%{http_code}' "$E2E_URL" || true)" = 200 && test -s .expo/types/router.d.ts; then
+              task_ci_ready=1
+              break
+            fi
+            if ! kill -0 "$task_ci_metro_pid" 2>/dev/null; then
+              echo '[ci web] Metro exited before the app and route types were ready.'
+              cat "$RUNNER_TEMP/stableflow-metro.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          if test "$task_ci_ready" -ne 1; then
+            echo '[ci web] Metro did not serve HTTP 200 and generate route types within 120 seconds.'
+            cat "$RUNNER_TEMP/stableflow-metro.log"
+            exit 1
+          fi
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const routes = readFileSync('.expo/types/router.d.ts', 'utf8');
+          if (!routes.includes('/reset')) {
+            throw new Error('[ci web] Generated route types must include /reset before typechecking.');
+          }
+          JS
+          node node_modules/typescript/bin/tsc --noEmit
+          npm run test:e2e
+      - name: Keep verification logs and UI failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: verification-evidence
+          path: |
+            ${{ runner.temp }}/stableflow-*.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

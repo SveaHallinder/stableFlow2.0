@@ -7,7 +7,7 @@ async function bootDemo(page) {
   await page.goto(`${BASE_URL}/?qaDemo=1`, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   // Wait for the Idag header
-  await expect(page.getByText('Stallstatus först')).toBeVisible({ timeout: 30000 });
+  await expect(page.getByText('Läget i stallet')).toBeVisible({ timeout: 30000 });
 }
 
 test.describe('Phase 3 — Feed e2e against qaDemo state', () => {

@@ -3,6 +3,7 @@ import type { InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
+import { getHorseAge, parseHorseBirthYear } from '@/lib/horseAge';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
@@ -48,11 +49,12 @@ export default function OnboardingHorses() {
   const [draft, setDraft] = React.useState({
     name: '',
     gender: 'unknown' as NonNullable<Horse['gender']>,
-    age: '',
+    birthYear: '',
     note: '',
   });
   const [ownerMode, setOwnerMode] = React.useState<'self' | 'invite'>('self');
   const [ownerDraft, setOwnerDraft] = React.useState({ name: '', email: '' });
+  const draftAge = getHorseAge({ birthYear: parseHorseBirthYear(draft.birthYear ?? '') });
 
   React.useEffect(() => {
     if (hydrating) return;
@@ -95,10 +97,9 @@ export default function OnboardingHorses() {
         return;
       }
     }
-    const trimmedAge = draft.age.trim();
-    const ageValue = trimmedAge ? Number(trimmedAge) : undefined;
-    if (trimmedAge && Number.isNaN(ageValue)) {
-      toast.showToast('Ålder måste vara en siffra.', 'error');
+    const birthYear = parseHorseBirthYear(draft.birthYear ?? '');
+    if (draft.birthYear?.trim() && birthYear === undefined) {
+      toast.showToast(`Ange ett födelseår i hela år mellan 1900 och ${new Date().getFullYear()}.`, 'error');
       return;
     }
     savingHorseRef.current = true;
@@ -111,7 +112,7 @@ export default function OnboardingHorses() {
       stableId: activeStableId,
       ownerUserId: ownerMode === 'self' ? currentUserId || undefined : undefined,
       gender: draft.gender,
-      age: ageValue,
+      birthYear,
       note: draft.note.trim() || undefined,
     });
     if (result.success) {
@@ -139,7 +140,7 @@ export default function OnboardingHorses() {
       }
       newHorseIdRef.current = null;
       toast.showToast('Häst sparad.', 'success');
-      setDraft({ name: '', gender: 'unknown', age: '', note: '' });
+      setDraft({ name: '', gender: 'unknown', birthYear: '', note: '' });
       setOwnerDraft({ name: '', email: '' });
       setOwnerMode('self');
     } else {
@@ -152,7 +153,7 @@ export default function OnboardingHorses() {
     actions,
     activeStableId,
     currentUserId,
-    draft.age,
+    draft.birthYear,
     draft.gender,
     draft.name,
     draft.note,
@@ -262,14 +263,22 @@ export default function OnboardingHorses() {
             );
           })}
         </View>
+        <Text style={styles.sectionLabel}>Födelseår (valfritt)</Text>
         <TextInput editable={!savingHorse}
-          placeholder="Ålder (valfritt)"
+          accessibilityLabel="Födelseår (valfritt)"
+          placeholder="T.ex. 2019"
           placeholderTextColor={palette.mutedText}
-          value={draft.age}
-          onChangeText={(text) => setDraft((prev) => ({ ...prev, age: text }))}
+          value={draft.birthYear ?? ''}
+          onChangeText={(text) => {
+            setDraft((prev) => ({ ...prev, birthYear: text }));
+            setHorseSaveError(null);
+          }}
           style={styles.input}
           keyboardType="number-pad"
         />
+        <Text style={styles.listMeta}>
+          {draftAge !== undefined ? `${draftAge} år i år · åldern uppdateras automatiskt.` : 'Åldern beräknas automatiskt från födelseåret.'}
+        </Text>
         <TextInput editable={!savingHorse}
           placeholder="Anteckning (valfritt)"
           placeholderTextColor={palette.mutedText}
@@ -341,6 +350,9 @@ export default function OnboardingHorses() {
                     ? genderOptions.find((option) => option.id === horse.gender)?.label
                     : 'Ingen kön angiven'}
                 </Text>
+                {horse.birthYear !== undefined ? (
+                  <Text style={styles.listMeta}>Född {horse.birthYear} · {getHorseAge(horse)} år i år</Text>
+                ) : null}
                 {deletingHorseId === horse.id ? <Text>Tar bort hästen…</Text> : null}
                 {horseDeleteError?.id === horse.id ? (
                   <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseDeleteError.reason}</Text>

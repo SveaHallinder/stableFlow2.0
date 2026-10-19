@@ -1,0 +1,231 @@
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { readFile,writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { dirname,join } from 'node:path';
+import { fileURLToPath,URL } from 'node:url';
+import { setImmediate } from 'node:timers/promises';
+import { createClient,processLock } from '@supabase/supabase-js';
+import ts from 'typescript';
+const {Headers,Request,Response}=globalThis;
+const root=dirname(dirname(fileURLToPath(import.meta.url))),MODE=process.argv.includes('--baseline')?'baseline':process.argv.includes('--rev1')?'revision1':process.argv.includes('--rev2')?'revision2':process.argv.includes('--rev3')?'revision3':'source';
+const read=path=>readFile(join(root,MODE,path),'utf8');
+const compile=async source=>import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText).toString('base64'));
+const bodyOf=(text,tsx=false)=>{const tree=ts.createSourceFile('source.'+(tsx?'tsx':'ts'),text,ts.ScriptTarget.Latest,true,tsx?ts.ScriptKind.TSX:ts.ScriptKind.TS);return tree.statements.filter(n=>!ts.isImportDeclaration(n)).map(n=>n.getText(tree)).join('\n').replace(/\bexport /g,'');};
+const libraryBody=bodyOf(await read('lib/notifications.ts')),hookBody=bodyOf(await read('hooks/usePushNotifications.ts'));
+const shared=await compile(await read('supabase/functions/_shared/push-receipts.ts'));
+const senderBody=bodyOf(await read('supabase/functions/send-push-notification/index.ts'));
+const authBody=bodyOf(await read('context/AuthContext.tsx'),true);
+const primaryText=await read('lib/supabase.ts'),primaryTree=ts.createSourceFile('supabase.ts',primaryText,ts.ScriptTarget.Latest,true);
+const primaryDefinitions=primaryTree.statements.filter(n=>(ts.isFunctionDeclaration(n)&&['withSessionLock','withPrimarySessionMutation','assertPrimarySessionMutationSupported'].includes(n.name?.text))||(ts.isClassDeclaration(n)&&n.name?.text==='PrimarySessionMutationUnsupportedError')||(ts.isVariableStatement(n)&&n.declarationList.declarations.some(d=>d.name.getText(primaryTree)==='PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE'))).map(n=>n.getText(primaryTree)).join('\n').replace(/\bexport /g,'');
+const hasPrimaryGate=primaryDefinitions.includes('function withPrimarySessionMutation');
+const primaryFactory=hasPrimaryGate?(await compile('export default ({Platform,selectedSessionLock,authStorageKey})=>{'+primaryDefinitions+';return {withPrimarySessionMutation,assertPrimarySessionMutationSupported:typeof assertPrimarySessionMutationSupported==="function"?assertPrimarySessionMutationSupported:()=>{},PrimarySessionMutationUnsupportedError:typeof PrimarySessionMutationUnsupportedError==="function"?PrimarySessionMutationUnsupportedError:Error,message:typeof PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE==="string"?PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:""};};')).default:()=>({withPrimarySessionMutation:async operation=>operation(),assertPrimarySessionMutationSupported:()=>{},PrimarySessionMutationUnsupportedError:Error,message:''});
+const authKey='sb-ownership-overlay-fixture-auth-token';
+const confirmText=await read('app/(auth)/confirm.tsx'),confirmTree=ts.createSourceFile('confirm.tsx',confirmText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let confirmCallback;
+function findConfirm(n){if(ts.isVariableDeclaration(n)&&n.name.getText(confirmTree)==='applyUrl')confirmCallback=n.initializer.arguments[0].getText(confirmTree);ts.forEachChild(n,findConfirm);}findConfirm(confirmTree);
+const parseConfirm=confirmTree.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='parseParamsFromUrl').getText(confirmTree);
+const loginText=await read('app/(auth)/index.tsx'),loginTree=ts.createSourceFile('login.tsx',loginText,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let actualLogin;
+function findLogin(n){if(ts.isAwaitExpression(n)&&n.expression.getText(loginTree).includes('supabase.auth.signInWithPassword'))actualLogin=n.expression.getText(loginTree);ts.forEachChild(n,findLogin);}findLogin(loginTree);
+const uuid=n=>'00000000-0000-4000-8000-'+String(n).padStart(12,'0'),A=uuid(1),B=uuid(2),C=uuid(3),T='synthetic-private-current-token',OTHER='synthetic-private-other-token',PRIVATE='synthetic-private-message-author-pass-alert',BASE='https://ownership-overlay-fixture.invalid';
+const encode=x=>Buffer.from(JSON.stringify(x)).toString('base64url'),access=user=>[encode({alg:'HS256',typ:'JWT'}),encode({sub:user,role:'authenticated',aud:'authenticated',iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+3600}),Buffer.from('synthetic-signature').toString('base64url')].join('.');
+const actor=headers=>{const token=new Headers(headers).get('authorization')?.slice(7);return token==='synthetic-service-key'?'service':token&&token.includes('.')?JSON.parse(Buffer.from(token.split('.')[1],'base64url').toString()).sub:null;};
+const hash=token=>createHash('sha256').update(token).digest('hex');
+const response=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});
+const reject=(code='40001')=>response({code,message:PRIVATE,details:T},409);
+const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
+let unmocked=0;globalThis.fetch=async()=>{unmocked++;throw new Error('External fetch forbidden');};
+async function fixture(options={}){
+ let seq=20,tokenCount=0,claims=0;const next=()=>uuid(++seq),calls=[],provider=[],logs=[],rows=[{id:uuid(8),user_id:A,token:OTHER,registration_generation:uuid(9),platform:'ios'}],bindings=new Map([[hash(OTHER),{user_id:A,token_id:uuid(8),registration_generation:uuid(9),binding_generation:uuid(10)}]]),tokens=[],gates={},attempts=new Set(),timers=new Map();let timerId=0;
+ const binding=token=>{const key=hash(token);if(!bindings.has(key))bindings.set(key,{binding_generation:next()});return bindings.get(key);};
+ const active=reg=>{const row=rows.find(x=>x.id===reg.token_id),b=row&&bindings.get(hash(row.token));return b&&b.user_id===reg.user_id&&b.token_id===reg.token_id&&b.registration_generation===reg.registration_generation;};
+ const fetch=async(input,init={})=>{
+  const url=new URL(String(input));assert.equal(url.origin,BASE);const uid=actor(init.headers),path=url.pathname,params=init.body?JSON.parse(init.body):null;
+  calls.push({path,method:init.method,actor:uid,params});
+  if(path==='/auth/v1/user'){if(options.holdUser?.()&&!gates.user){gates.user=deferred();await gates.user.promise;}return response({id:uid,role:'authenticated',aud:'authenticated'});}
+  if(path==='/auth/v1/token'){if(options.holdLogin){gates.login=deferred();await gates.login.promise;}const id=params.email.startsWith('b@')?B:A;return response({access_token:access(id),refresh_token:'synthetic-refresh',expires_in:3600,user:{id,role:'authenticated',aud:'authenticated'}});}
+  if(path==='/auth/v1/logout')return options.logoutError?response({message:PRIVATE},500):new Response(null,{status:204});
+  const name=path.replace('/rest/v1/','');
+  if(name.startsWith('rpc/')){
+   const rpc=name.slice(4);if(options.rpcError===rpc)return reject();
+   if(rpc==='push_device_state'){if(params.p_expected_user_id!==uid)return reject('42501');if(options.holdState&&!gates.state){gates.state=deferred();gates.stateEntered=deferred();gates.stateEntered.resolve();await gates.state.promise;}return response(options.badState??{binding_generation:binding(params.p_token).binding_generation});}
+   if(rpc==='push_device_claim'){
+    claims++;if(options.holdClaim===claims){gates.claim=deferred();gates.claimEntered=deferred();gates.claimEntered.resolve();await gates.claim.promise;}
+    if(params.p_expected_user_id!==uid)return reject('42501');const b=binding(params.p_token);if(b.binding_generation!==params.p_expected_binding_generation)return reject();
+    let row=rows.find(r=>r.user_id===uid&&r.token===params.p_token);if(!row){row={id:next(),user_id:uid,token:params.p_token};rows.push(row);}row.registration_generation=next();row.platform=params.p_platform;
+    const ack={user_id:uid,token_id:row.id,registration_generation:row.registration_generation,binding_generation:next()};bindings.set(hash(params.p_token),ack);
+    return response(options.badClaim??ack);
+   }
+   if(rpc==='push_device_release'){
+    if(options.holdRelease){gates.release=deferred();await gates.release.promise;}
+    if(params.p_expected_user_id!==uid)return reject('42501');const b=binding(params.p_token);const matched=b.user_id===uid&&b.token_id===params.p_token_id&&b.registration_generation===params.p_registration_generation&&b.binding_generation===params.p_binding_generation;
+    if(matched){for(let i=rows.length-1;i>=0;i--)if(rows[i].id===b.token_id&&rows[i].user_id===uid)rows.splice(i,1);bindings.set(hash(params.p_token),{binding_generation:next()});}
+    return response(options.badRelease??{user_id:uid,released:matched});
+   }
+   if(rpc==='push_device_active_registrations')return response(options.badActive??{registrations:params.p_registrations.filter(active)});
+   if(rpc==='push_receipts_prepare'){
+    if(options.holdPrepare&&!gates.prepare){gates.prepare=deferred();await gates.prepare.promise;}
+    if(MODE!=='baseline'&&params.p_registrations.some(reg=>!active(reg)))return reject();
+    const started=!attempts.has(params.p_attempt_id);attempts.add(params.p_attempt_id);return response({attempt_id:params.p_attempt_id,started});
+   }
+   if(rpc==='push_receipts_record_tickets')return response({attempt_id:params.p_attempt_id,recorded_count:params.p_results.length});
+   assert.fail('Unexpected RPC '+rpc);
+  }
+  if(name==='push_tokens'&&init.method==='POST'){
+   assert.equal(params.user_id,uid);const existing=rows.find(r=>r.user_id===uid&&r.token===params.token);if(existing)Object.assign(existing,params);else rows.push({...params,id:next(),registration_generation:next()});return new Response(null,{status:201});
+  }
+  if(name==='push_tokens'&&init.method==='DELETE'){
+   if(options.rpcError==='push_device_release')return reject();const token=url.searchParams.get('token').slice(3),user=url.searchParams.get('user_id').slice(3);for(let i=rows.length-1;i>=0;i--)if(rows[i].token===token&&rows[i].user_id===uid&&user===uid)rows.splice(i,1);return new Response(null,{status:204});
+  }
+  assert.equal(init.method,'GET');const tables={push_tokens:uid==='service'?rows:rows.filter(x=>x.user_id===uid),notification_preferences:options.prefs??[{user_id:B,messages:false,assignments:false,reminders:false}],conversation_members:[{conversation_id:'safe-conversation',user_id:options.recipient??A}],conversations:[{id:'safe-conversation',is_group:false}],blocked_users:options.blocks??[],profiles:[{id:C,full_name:PRIVATE}],stable_members:[{stable_id:'safe-stable',user_id:A},{stable_id:'safe-stable',user_id:B},{stable_id:'safe-stable',user_id:C}]};let selected=tables[name];assert.ok(selected,'Unexpected table '+name);
+  for(const[key,value]of url.searchParams){if(key==='select')continue;if(value.startsWith('eq.'))selected=selected.filter(x=>String(x[key])===value.slice(3));if(value.startsWith('neq.'))selected=selected.filter(x=>String(x[key])!==value.slice(4));if(value.startsWith('in.('))selected=selected.filter(x=>value.slice(4,-1).split(',').includes(String(x[key])));}
+  return response(new Headers(init.headers).get('accept')==='application/vnd.pgrst.object+json'?(selected[0]??null):selected);
+ };
+ const primitive=options.lockPrimitive??processLock,primaryApi=primaryFactory({Platform:{OS:options.platform??'ios'},selectedSessionLock:primitive,authStorageKey:authKey}),primaryMutation=primaryApi.withPrimarySessionMutation;
+ const create=key=>createClient(BASE,key,{auth:{storageKey:authKey,persistSession:!!options.sharedStorage,storage:options.sharedStorage,autoRefreshToken:false,detectSessionInUrl:false,lock:options.authLock??primitive},global:{fetch}}),sdk=create('synthetic-public-key');
+ const setUser=async id=>{if(!id){await sdk.auth.signOut();return;}const r=await sdk.auth.setSession({access_token:access(id),refresh_token:'synthetic-refresh'});assert.equal(r.error,null);};await setUser(A);
+ const deps={Platform:{OS:'ios'},Device:{isDevice:true},Constants:{expoConfig:{extra:{eas:{projectId:'synthetic-project'}}}},Notifications:{setNotificationHandler(){},getExpoPushTokenAsync:async()=>{tokenCount++;if(options.holdToken===tokenCount){const gate=deferred();tokens.push(gate);await gate.promise;}return {data:options.nullToken?null:T};}},supabase:sdk,console:{warn:(...x)=>logs.push(x)}};
+ if(options.virtualTimers){deps.setTimeout=(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;};deps.clearTimeout=id=>timers.delete(id);}
+ const libraryFactory=(await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+libraryBody+';return {registerPushToken,deregisterPushToken};};')).default;
+ const api=libraryFactory(deps);
+ async function route({type='message',recipient=A,severity='important',request=uuid(900)}={}){
+  let handler;const transport=async(input,init)=>{assert.equal(String(input),'https://exp.host/--/api/v2/push/send');const messages=JSON.parse(init.body);provider.push(...messages);return response({data:messages.map((_,i)=>({status:'ok',id:'ticket-'+request+'-'+i}))});};
+  const deps={createClient:()=>create('synthetic-service-key'),Deno:{env:{get:key=>key==='SUPABASE_SERVICE_ROLE_KEY'?'synthetic-service-key':BASE},serve:fn=>{handler=fn;}},isUuid:shared.isUuid,registration:shared.registration,activePushRegistrations:shared.activePushRegistrations,sendPushTargets:(sdk,id,targets)=>shared.sendPushTargets(sdk,id,targets,transport),Response,console:{error:(...x)=>logs.push(x)}};
+  (await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+senderBody+'};')).default(deps);
+  const record=type==='message'?{conversation_id:'safe-conversation',author_id:C,text:PRIVATE}:type==='assignment'?{assignee_id:recipient,label:PRIVATE,date:PRIVATE,time:PRIVATE}:{stable_id:'safe-stable',created_by_user_id:C,severity,title:PRIVATE,body:PRIVATE};
+  const result=await handler(new Request('https://local-edge.invalid',{method:'POST',headers:{Authorization:'Bearer synthetic-service-key','Content-Type':'application/json'},body:JSON.stringify({request_id:request,type,record})}));return {status:result.status,body:await result.json()};
+ }
+ async function hook(userId){
+  const slots=[],effects=[],listeners=[],routes=[],promises=[];let cursor=0,id=userId;
+  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+  const deps={Platform:{OS:'ios'},supabase:sdk,console:{warn:(...x)=>logs.push(x)},useRef:current=>{const i=cursor++;slots[i]??={current};return slots[i];},useMemo:(fn,d)=>{const i=cursor++;if(!same(slots[i]?.deps,d))slots[i]={deps:d,value:fn()};return slots[i].value;},useEffect:(fn,d)=>{const i=cursor++,old=slots[i];if(!same(old?.deps,d)){const slot={deps:d};slots[i]=slot;effects.push(()=>{old?.cleanup?.();slot.cleanup=fn();});}},Notifications:{addNotificationResponseReceivedListener:fn=>{const listener={fn,removed:false,remove(){this.removed=true;}};listeners.push(listener);return listener;}},router:{push:path=>routes.push(path)},registerPushToken:(...args)=>{const promise=api.registerPushToken(...args);promises.push(promise);return promise;}};
+  deps.useLayoutEffect=deps.useEffect;
+  const fn=(await compile('export default ({'+Object.keys(deps).join(',')+'})=>{'+hookBody+';return usePushNotifications;};')).default(deps);
+  const render=()=>{cursor=0;fn(id);while(effects.length)effects.shift()();};render();
+  return {setUser:uid=>{id=uid;render();},unmount:()=>{for(const slot of slots)slot.cleanup?.();},listeners,routes,promises};
+ }
+ let authDriver;
+ async function auth(){
+  if(authDriver)return authDriver;
+  const slots=[],effects=[];let cursor=0,value;
+  const same=(a,b)=>a&&b&&a.length===b.length&&a.every((x,i)=>Object.is(x,b[i]));
+  const memo=(fn,d)=>{const i=cursor++;if(!same(slots[i]?.deps,d))slots[i]={deps:d,value:fn()};return slots[i].value;};
+  const React={createContext:()=>({Provider:{}}),createElement:(type,props)=>{value=props.value;return {type,props};},useState:initial=>{const i=cursor++;slots[i]??={value:typeof initial==='function'?initial():initial};return [slots[i].value,next=>{slots[i].value=typeof next==='function'?next(slots[i].value):next;}];},useRef:current=>{const i=cursor++;slots[i]??={current};return slots[i];},useMemo:memo,useCallback:(fn,d)=>memo(()=>fn,d),useEffect:(fn,d)=>{const i=cursor++,old=slots[i];if(!same(old?.deps,d)){const slot={deps:d};slots[i]=slot;effects.push(()=>{old?.cleanup?.();slot.cleanup=fn();});}}};
+  const args={React,assertPrimarySessionMutationSupported:primaryApi.assertPrimarySessionMutationSupported,withPrimarySessionMutation:primaryMutation,isQaDemoMode:false,createQaDemoSession(){throw new Error('No demo Auth');},supabase:sdk,deregisterPushToken:api.deregisterPushToken,clearDeletedAccountSession:async()=>true,markDeletedAccountSession(){},console:{warn:(...x)=>logs.push(x)}};
+  const Provider=(await compile('export default ({'+Object.keys(args).join(',')+'})=>{'+authBody+';return AuthProvider;};')).default(args);
+  const flush=()=>{cursor=0;Provider({children:null});while(effects.length)effects.shift()();};flush();await tick();await tick();flush();assert.equal(value.user?.id,A);
+  authDriver={flush,get value(){return value;},unmount:()=>{for(const slot of slots)slot.cleanup?.();}};return authDriver;
+ }
+ const confirmErrors=[],confirmRoutes=[];
+ async function primarySetUser(id){
+  const args={supabase:sdk,PrimarySessionMutationUnsupportedError:primaryApi.PrimarySessionMutationUnsupportedError,PRIMARY_SESSION_MUTATION_UNSUPPORTED_MESSAGE:primaryApi.message,withPrimarySessionMutation:primaryMutation,router:{replace:x=>confirmRoutes.push(x)},setError:x=>confirmErrors.push(x),setVerifying(){},console:{warn:(...x)=>logs.push(x)}};
+  const fn=(await compile('export default ({'+Object.keys(args).join(',')+'})=>{'+parseConfirm+';return '+confirmCallback+';};')).default(args);
+  return fn('stableflow://confirm#access_token='+access(id)+'&refresh_token=synthetic-refresh');
+ }
+ async function primaryLogin(id){const args={supabase:sdk,withPrimarySessionMutation:primaryMutation,trimmedEmail:(id===B?'b':'a')+'@example.invalid',password:'synthetic-password'};return (await compile('export default async ({'+Object.keys(args).join(',')+'})=>'+actualLogin+';')).default(args);}
+ return {api,freshApi:()=>libraryFactory(deps),auth,primarySetUser,primaryLogin,primaryMutation,primaryApi,confirmErrors,confirmRoutes,get tokenAcquisitions(){return tokenCount;},signOut:async()=>{const a=await auth();return a.value.signOut();},sdk,setUser,calls,provider,logs,rows,bindings,route,hook,gates,tokens,timers,fire:ms=>{for(const[id,t]of timers)if(t.ms===ms){timers.delete(id);t.fn();}}};
+}
+const tick=async()=>{await setImmediate();},cases=[];
+async function check(name,fn){try{cases.push({name,passed:true,detail:await fn()});}catch(e){cases.push({name,passed:false,error:String(e.stack)});}}
+await check('P1 diagnostic old failed-cleanup token vs candidate active owner and generic payload',async()=>{
+ const f=await fixture({rpcError:'push_device_release'});assert.equal(await f.api.registerPushToken(A),true);await f.api.deregisterPushToken(A);await f.setUser(null);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);const r=await f.route();assert.equal(r.status,200);
+ const current=f.provider.filter(x=>x.to===T);if(MODE==='baseline'){assert.equal(current.length,1);assert.match(JSON.stringify(current),new RegExp(PRIVATE));return {diagnostic:'P1 reproduced; no fix accepted'};}
+ assert.equal(current.length,0);assert.equal(f.provider.length,1);assert.equal(f.provider[0].to,OTHER);assert.doesNotMatch(JSON.stringify(f.provider),new RegExp(PRIVATE));assert.ok(f.rows.some(x=>x.user_id===A&&x.token===OTHER));assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);
+});
+if(MODE!=='baseline'){
+await check('successful release clears only captured device and ordinary own-account routing remains available',async()=>{
+ const f=await fixture({prefs:[]});assert.equal(await f.api.registerPushToken(A),true);const r=await f.route();assert.equal(r.body.sent,2);assert.ok(f.provider.some(x=>x.to===T&&x.data.recipientUserId===A&&x.data.screen==='messages'));await f.api.deregisterPushToken(A);assert.ok(!f.rows.some(x=>x.user_id===A&&x.token===T));assert.ok(f.rows.some(x=>x.token===OTHER));
+});
+await check('reload cache-miss cleanup uses own row and unchanged read-state epoch, without touching other devices',async()=>{
+ const f=await fixture();assert.equal(await f.api.registerPushToken(A),true);await f.freshApi().deregisterPushToken(A);assert.ok(!f.rows.some(x=>x.user_id===A&&x.token===T));assert.ok(f.rows.some(x=>x.token===OTHER));assert.ok(f.calls.some(x=>x.path==='/rest/v1/push_tokens'&&x.method==='GET'));assert.deepEqual(f.logs,[]);
+ const empty=await fixture();await empty.freshApi().deregisterPushToken(A);assert.ok(empty.rows.some(x=>x.token===OTHER));assert.equal(empty.calls.filter(x=>x.path.endsWith('push_device_release')).length,0);
+});
+await check('B opt-out is respected after transfer while inactive A row remains in old per-user table',async()=>{
+ const f=await fixture({recipient:B});assert.equal(await f.api.registerPushToken(A),true);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);const r=await f.route();assert.equal(r.body.sent,0);assert.equal(f.provider.length,0);
+});
+await check('captured account mismatch after native token acquisition cannot dispatch any ownership RPC',async()=>{
+ const f=await fixture({holdToken:1});const p=f.api.registerPushToken(A);await tick();await f.setUser(B);f.tokens[0].resolve();assert.equal(await p,false);assert.equal(f.calls.filter(x=>x.path.includes('/rpc/')).length,0);
+});
+await check('hook A/B/A and unmount invalidate old token acquisition before DB work',async()=>{
+ const f=await fixture({holdToken:1});const h=await f.hook(A);await tick();await f.setUser(B);h.setUser(B);await Promise.all(h.promises.slice(1));await f.setUser(A);h.setUser(A);await Promise.all(h.promises.slice(2));const before=f.calls.filter(x=>x.path.includes('/rpc/')).length;f.tokens[0].resolve();assert.equal(await h.promises[0],false);assert.equal(f.calls.filter(x=>x.path.includes('/rpc/')).length,before);h.unmount();
+ const u=await fixture({holdToken:1});const uh=await u.hook(A);await tick();uh.unmount();u.tokens[0].resolve();assert.equal(await uh.promises[0],false);assert.equal(u.calls.filter(x=>x.path.includes('/rpc/')).length,0);
+});
+await check('server CAS rejects already dispatched old A claim after B bind even when SDK changes back A',async()=>{
+ const f=await fixture({holdClaim:1});const p=f.api.registerPushToken(A);await tick();assert.ok(f.gates.claim);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);await f.setUser(A);f.gates.claim.resolve();assert.equal(await p,false);assert.equal(f.bindings.get(hash(T)).user_id,B);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);
+});
+await check('registration deadline stops late claim acknowledgement and uses no stale client cache',async()=>{
+ const f=await fixture({holdClaim:1,virtualTimers:true});const p=f.api.registerPushToken(A);await tick();assert.ok(f.gates.claim);f.fire(15000);assert.equal(await p,false);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);f.gates.claim.resolve();await tick();assert.equal(f.bindings.get(hash(T)).user_id,B);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);
+});
+await check('invalid state/claim ACK and hostile RPC error fail closed without private logs',async()=>{
+ for(const options of [{badState:{}},{badState:{binding_generation:'not-uuid'}},{badClaim:{user_id:B}},{rpcError:'push_device_state'},{rpcError:'push_device_claim'}]){const f=await fixture(options);assert.equal(await f.api.registerPushToken(A),false);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);}
+});
+await check('active binding RPC error/malformed/foreign/duplicate acknowledgement has no provider fallback',async()=>{
+ for(const options of [{rpcError:'push_device_active_registrations'},{badActive:{}},{badActive:{registrations:[{token_id:uuid(99),user_id:A,registration_generation:uuid(98)}]}},{badActive:{registrations:[{token_id:uuid(8),user_id:A,registration_generation:uuid(9)},{token_id:uuid(8),user_id:A,registration_generation:uuid(9)}]}}]){const f=await fixture(options);const r=await f.route();assert.equal(r.status,500);assert.equal(f.provider.length,0);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);}
+});
+await check('fullreceipt prepare model rejects active lookup snapshot if B binding changes before reservation',async()=>{
+ const f=await fixture({holdPrepare:true});assert.equal(await f.api.registerPushToken(A),true);const p=f.route();await tick();assert.ok(f.gates.prepare);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);f.gates.prepare.resolve();assert.equal((await p).status,500);assert.equal(f.provider.length,0);
+});
+await check('best-effort release deadline leaves logout usable and late release cannot remove B or another device',async()=>{
+ const f=await fixture({holdRelease:true,virtualTimers:true});assert.equal(await f.api.registerPushToken(A),true);const auth=await f.auth(),p=auth.value.signOut();await tick();assert.ok(f.gates.release);f.fire(5000);await p;assert.equal((await f.sdk.auth.getSession()).data.session,null);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);f.gates.release.resolve();await tick();assert.equal(f.bindings.get(hash(T)).user_id,B);assert.ok(f.rows.some(x=>x.token===OTHER));assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);
+});
+await check('release malformed or false ACK is logged safely and does not throw/block logout',async()=>{
+ for(const options of [{badRelease:{user_id:B,released:true}},{badRelease:{user_id:A,released:'true'}},{badRelease:{user_id:A,released:false}},{rpcError:'push_device_release'}]){const f=await fixture(options);assert.equal(await f.api.registerPushToken(A),true);await f.api.deregisterPushToken(A);await f.setUser(null);assert.equal((await f.sdk.auth.getSession()).data.session,null);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);}
+});
+await check('generic message/pass/important/urgent alerts omit all private fields and preserve recipient UID and request identity',async()=>{
+ const f=await fixture({prefs:[]});assert.equal(await f.api.registerPushToken(A),true);for(const[type,severity]of [['message','important'],['assignment','important'],['alert','important'],['alert','urgent']]){await f.route({type,severity,request:uuid(1000+f.provider.length)});}assert.doesNotMatch(JSON.stringify(f.provider),new RegExp(PRIVATE));assert.ok(f.provider.every(x=>Object.keys(x.data).sort().join(',')==='recipientUserId,screen'));
+ const request=uuid(4000);await f.route({request});const count=f.provider.length;await f.route({request});assert.equal(f.provider.length,count);
+});
+await check('recipient-side blocks and info/feed suppression are preserved',async()=>{
+ const f=await fixture({blocks:[{blocker_user_id:A,blocked_user_id:C}]});assert.equal((await f.route()).body.sent,0);assert.equal((await f.route({type:'post'})).body.sent,0);assert.equal((await f.route({type:'alert',severity:'info'})).body.sent,0);assert.equal(f.provider.length,0);
+});
+await check('actual hook tap fences missing/foreign UID, A/B/A captured listener, unmount and SDK identity; own generic tap routes',async()=>{
+ const f=await fixture({prefs:[]});const h=await f.hook(A);await Promise.all(h.promises);const event=data=>({notification:{request:{content:{data}}}}),old=h.listeners.at(-1).fn;
+ await old(event({screen:'messages'}));await old(event({screen:'messages',recipientUserId:B}));assert.equal(h.routes.length,0);
+ await old(event({screen:'messages',recipientUserId:A}));assert.deepEqual(h.routes,['/messages']);h.routes.length=0;
+ await f.setUser(B);h.setUser(B);await Promise.all(h.promises);await f.setUser(A);h.setUser(A);await Promise.all(h.promises);await old(event({screen:'messages',recipientUserId:A}));assert.equal(h.routes.length,0);
+ const current=h.listeners.at(-1).fn;await f.setUser(B);await current(event({screen:'messages',recipientUserId:A}));assert.equal(h.routes.length,0);await f.setUser(A);h.unmount();await current(event({screen:'messages',recipientUserId:A}));assert.equal(h.routes.length,0);assert.ok(h.listeners.every(x=>x.removed));
+});
+await check('actual settings activation callback passes captured scope through async native registration and rejects A/B/A',async()=>{
+ const text=await read('app/settings/notifications.tsx'),tree=ts.createSourceFile('settings.tsx',text,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);let callback;function visit(node){if(ts.isVariableDeclaration(node)&&node.name.getText(tree)==='handleRequestPermission')callback=node.initializer.arguments[0].getText(tree);ts.forEachChild(node,visit);}visit(tree);assert.ok(callback);
+ const f=await fixture({holdToken:1}),scope={userId:A},ref={current:scope},attempt={current:null},deps={preferenceScope:scope,currentScopeRef:ref,permissionAttemptRef:attempt,permissionCheckRef:{current:null},permissionStatus:'denied',Platform:{OS:'ios'},requestPermission:async()=>true,registerPushToken:f.api.registerPushToken,setPermissionStatus(){},setPermissionError(){},console:{warn:(...x)=>f.logs.push(x)}};
+ const fn=(await compile('export default ({'+Object.keys(deps).join(',')+'})=>('+callback+');')).default(deps);const p=fn();await tick();ref.current={userId:B};ref.current={userId:A};f.tokens[0].resolve();await p;assert.equal(f.calls.filter(x=>x.path.includes('/rpc/')).length,0);
+});
+await check('REV2 stale A logout waiting for release cannot sign out newly active B',async()=>{
+ const f=await fixture({holdRelease:true,virtualTimers:true});assert.equal(await f.api.registerPushToken(A),true);const auth=await f.auth(),oldSignOut=auth.value.signOut;
+ const pending=oldSignOut();await tick();assert.ok(f.gates.release);await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);
+ f.gates.release.resolve();await pending;auth.flush();assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(auth.value.user?.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').length,0);assert.equal(f.bindings.get(hash(T)).user_id,B);auth.unmount();
+});
+await check('REV2 direct cached A1 cleanup retains snapshot captured before awaited A/B/A session check',async()=>{
+ const f=await fixture({prefs:[]});assert.equal(await f.api.registerPushToken(A),true);const old=f.bindings.get(hash(T)).binding_generation;
+ const ordinary=f.sdk.auth.getSession.bind(f.sdk.auth),gate=deferred();let first=true;f.sdk.auth.getSession=async()=>{if(first){first=false;return gate.promise;}return ordinary();};
+ const pending=f.api.deregisterPushToken(A);await tick();await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);await f.setUser(A);assert.equal(await f.api.registerPushToken(A),true);const current=f.bindings.get(hash(T)).binding_generation;assert.notEqual(current,old);
+ gate.resolve(await ordinary());await pending;f.sdk.auth.getSession=ordinary;const release=f.calls.filter(x=>x.path.endsWith('push_device_release')).at(-1);assert.equal(release.params.p_binding_generation,old);assert.equal(f.bindings.get(hash(T)).binding_generation,current);assert.ok(f.rows.some(x=>x.user_id===A&&x.token===T));
+});
+await check('REV2 actual Auth listener invalidates A1 cache-miss cleanup across batched A/B/A without intermediate render',async()=>{
+ const f=await fixture({holdToken:1});const auth=await f.auth(),pending=auth.value.signOut();await tick();assert.equal(f.tokens.length,1);
+ await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);await f.setUser(A);assert.equal(await f.api.registerPushToken(A),true);const current=f.bindings.get(hash(T)).binding_generation;
+ f.tokens[0].resolve();await pending;auth.flush();assert.equal(auth.value.user?.id,A);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,A);assert.equal(f.bindings.get(hash(T)).binding_generation,current);assert.equal(f.calls.filter(x=>x.path.endsWith('push_device_release')||x.path==='/auth/v1/logout').length,0);auth.unmount();
+});
+await check('REV2 late SDK logout error cannot clear B local UI after actual A SDK call completed',async()=>{
+ const f=await fixture({logoutError:true}),auth=await f.auth();assert.equal(await f.api.registerPushToken(A),true);const ordinary=f.sdk.auth.signOut.bind(f.sdk.auth);
+ f.sdk.auth.signOut=async(...args)=>{const result=await ordinary(...args);await f.setUser(B);return result;};
+ await assert.rejects(auth.value.signOut());auth.flush();assert.equal(auth.value.user?.id,B);assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,B);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1).actor,A);assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);auth.unmount();
+});
+await check('REV2 current own account remains locally logoutable after SDK signout error',async()=>{
+ const f=await fixture({logoutError:true}),auth=await f.auth();await assert.rejects(auth.value.signOut());auth.flush();assert.equal(auth.value.user,null);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1).actor,A);assert.ok(f.rows.some(x=>x.token===OTHER));auth.unmount();
+});
+await check('REV2 unmount during cleanup prevents stale global SDK signout',async()=>{
+ const f=await fixture({holdRelease:true,virtualTimers:true});assert.equal(await f.api.registerPushToken(A),true);const auth=await f.auth(),pending=auth.value.signOut();await tick();assert.ok(f.gates.release);auth.unmount();f.gates.release.resolve();await pending;
+ assert.equal((await f.sdk.auth.getSession()).data.session?.user.id,A);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').length,0);assert.ok(f.rows.some(x=>x.token===OTHER));
+});
+await check('REV2 null token and uncertain release cleanup do not block current A logout or delete other devices',async()=>{
+ for(const options of [{nullToken:true},{rpcError:'push_device_release'}]){const f=await fixture(options),auth=await f.auth();if(!options.nullToken)assert.equal(await f.api.registerPushToken(A),true);await auth.value.signOut();auth.flush();assert.equal((await f.sdk.auth.getSession()).data.session,null);assert.equal(auth.value.user,null);assert.equal(f.calls.filter(x=>x.path==='/auth/v1/logout').at(-1).actor,A);assert.ok(f.rows.some(x=>x.token===OTHER));assert.doesNotMatch(JSON.stringify(f.logs),/synthetic-private/);auth.unmount();}
+});
+await check('REV2 cache-miss read-state wait cannot release A2 after account epoch changes',async()=>{
+ const f=await fixture();assert.equal(await f.api.registerPushToken(A),true);const auth=await f.auth();const fresh=f.freshApi(),ref={current:{userId:A}},captured=ref.current;
+ const ordinary=f.sdk.rpc.bind(f.sdk),gate=deferred();let entered=false;f.sdk.rpc=(name,args)=>{const query=ordinary(name,args);if(name!=='push_device_state'||entered)return query;entered=true;const original=query.then.bind(query);query.then=(yes,no)=>gate.promise.then(()=>original(yes,no));return query;};
+ const pending=fresh.deregisterPushToken(A,()=>ref.current===captured);await tick();assert.equal(entered,true);ref.current={userId:B};await f.setUser(B);assert.equal(await f.api.registerPushToken(B),true);ref.current={userId:A};await f.setUser(A);assert.equal(await f.api.registerPushToken(A),true);const current=f.bindings.get(hash(T)).binding_generation;gate.resolve();await pending;
+ assert.equal(f.bindings.get(hash(T)).binding_generation,current);assert.equal(f.calls.filter(x=>x.path.endsWith('push_device_release')).length,0);f.sdk.rpc=ordinary;auth.unmount();
+});
+
+}
+assert.equal(unmocked,0);const result={mode:MODE,total:cases.length,passed:cases.filter(x=>x.passed).length,cases,unmockedExternalFetchAttempts:unmocked,boundary:'Actual full AuthProvider + candidate functions/hook/settings callback + installed Supabase SDK; Actual primary mutation helper + actual UI confirmation/login expressions; React hooks/token/native/transport/SQL CAS are synthetic; token/native/transport/SQL CAS are synthetic. No SQL/provider/Hosted/native acceptance.'};await writeFile(join(root,'reports',MODE==='baseline'?'baseline-p1-diagnostic.json':MODE==='revision1'?'revision1-targeted-negative.json':MODE==='revision2'?'revision2-targeted-negative.json':MODE==='revision3'?'revision3-targeted-negative.json':'candidate-runtime.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify({mode:MODE,total:result.total,passed:result.passed,failures:cases.filter(x=>!x.passed)},null,2));if(result.passed!==result.total)process.exitCode=1;

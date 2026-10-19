@@ -7,6 +7,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -54,6 +55,7 @@ export default function MembersScreen() {
     }
   }, []);
   const isDesktopWeb = useIsDesktopWeb();
+  const { width } = useWindowDimensions();
   const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const handleExit = React.useCallback(() => {
     if (router.canGoBack()) {
@@ -89,10 +91,8 @@ export default function MembersScreen() {
   }, [state.currentStableId, stableFilter]);
 
   React.useEffect(() => {
-    if (initialQuery && initialQuery !== query) {
-      setQuery(initialQuery);
-    }
-  }, [initialQuery, query]);
+    setQuery(initialQuery);
+  }, [initialQuery]);
 
   const membershipByStable = React.useMemo(() => {
     return new Map(currentUser?.membership?.map((entry) => [entry.stableId, entry]) ?? []);
@@ -312,7 +312,7 @@ export default function MembersScreen() {
               keyboardShouldPersistTaps="handled"
             >
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
-                <View style={[styles.desktopPanel, stickyPanelStyle]}>
+                <View style={[styles.desktopPanel, isDesktopWeb && styles.desktopPanelDesktop, stickyPanelStyle]}>
                   <Card tone="muted" style={styles.filterCard}>
                     <Text style={styles.panelTitle}>Filter</Text>
                     {stables.length > 1 ? (
@@ -435,7 +435,7 @@ export default function MembersScreen() {
                     {memberError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{memberError}</Text>}
                     {memberRows.length === 0 ? (
                       <Text style={styles.emptyText}>Inga medlemmar matchar filtret.</Text>
-                    ) : isDesktopWeb ? (
+                    ) : isDesktopWeb && width >= 1280 ? (
                       <View style={styles.table}>
                         <View style={styles.tableHeaderRow}>
                           <Text style={[styles.tableHeaderCell, styles.colName]}>Namn</Text>
@@ -623,6 +623,7 @@ const styles = StyleSheet.create({
   desktopLayout: { gap: 16 },
   desktopLayoutDesktop: { flexDirection: 'row', alignItems: 'flex-start', gap: 24 },
   desktopPanel: { width: '100%' },
+  desktopPanelDesktop: { width: 260, flexShrink: 0 },
   desktopList: { flex: 1, minWidth: 0 },
   pageHeader: { marginBottom: 0 },
   pageHeaderDesktop: {
@@ -767,5 +768,5 @@ const styles = StyleSheet.create({
   colRole: { flex: 1.5, minWidth: 0, gap: 2 },
   colHorses: { flex: 2, minWidth: 0 },
   colContact: { flex: 2, minWidth: 0, gap: 1 },
-  colActions: { flex: 1.5, minWidth: 0, alignItems: 'flex-end' },
+  colActions: { flex: 1.5, minWidth: 128, alignItems: 'flex-end' },
 });

@@ -58,3 +58,32 @@ test('date and time validation accepts leap days and rejects overflow', () => {
   for (const value of ['00:00', '23:59', '07:05']) assert.equal(validators.isValidTime(value), true, value);
   for (const value of ['24:00', '12:60', '7:05', '']) assert.equal(validators.isValidTime(value), false, value);
 });
+
+for (const name of ['createAssignment', 'updateAssignment']) {
+  for (const target of ['member', 'outsider', null]) {
+    test(`${name}: explicit responsible member ${target ?? 'open'} is validated and persisted`, async () => {
+      const existing = { id: 'assignment', stableId: 'stable', date: '2026-10-20', slot: 'Morning', label: 'Morgon', time: '07:00', status: 'assigned', assigneeId: 'user' };
+      const writes = [];
+      const action = await loadAction(name, {
+        ...validators,
+        stateRef: { current: { currentStableId: 'stable', currentUserId: 'user', assignments: [existing], users: {
+          member: { membership: [{ stableId: 'stable', role: 'rider' }] },
+          outsider: { membership: [{ stableId: 'other-stable', role: 'rider' }] },
+        } } },
+        ensurePermission: () => ({ success: true }),
+        persistAssignmentInsert: async row => { writes.push(row); return { error: null }; },
+        persistAssignmentUpdate: async (_id, row) => { writes.push(row); return { error: null }; },
+        persistAssignmentHistory: async () => {}, dispatch: () => {}, generateId: () => 'new-assignment',
+        slotTitles: { Morning: 'Morgon' }, slotDefaultTimes: { Morning: '07:00' }, slotIcons: { Morning: 'sun' },
+      });
+      const result = await action({ id: existing.id, date: existing.date, slot: 'Morning', assigneeId: target });
+      assert.equal(result.success, target !== 'outsider');
+      assert.equal(writes.length, target === 'outsider' ? 0 : 1);
+      if (writes.length) {
+        assert.equal(writes[0].assigneeId, target ?? undefined);
+        assert.equal(writes[0].status, target ? 'assigned' : 'open');
+        assert.equal(writes[0].assignedVia, target ? 'manual' : undefined);
+      }
+    });
+  }
+}

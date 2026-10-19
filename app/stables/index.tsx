@@ -1,11 +1,12 @@
 import { DataSyncStatus } from '@/components/DataSyncStatus';
 import { InviteReceipt } from '@/components/InviteReceipt';
+import { PrivateImage } from '@/components/PrivateImage';
 import type { ActionResult, InviteConfirmation } from '@/context/AppDataContext';
 import React from 'react';
 import { generateId } from '@/lib/ids';
 import { confirmAction } from '@/lib/confirm';
+import { getHorseAge, parseHorseBirthYear } from '@/lib/horseAge';
 import {
-  Image,
   Platform,
   ScrollView,
   Share,
@@ -30,7 +31,8 @@ import { useAppData, resolveStableSettings } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
 import { roleLabels as sharedRoleLabels, roleOrder as sharedRoleOrder } from '@/lib/roleLabels';
-import type { UserRole, Horse, PaddockImage, StableEventVisibility, StableSettings } from '@/context/AppDataContext';
+import { getPaddockHorses, getPaddockHorseNames, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
+import type { UserRole, Horse, Paddock, PaddockImage, StableEventVisibility, StableSettings } from '@/context/AppDataContext';
 
 const palette = theme.colors;
 
@@ -117,7 +119,7 @@ export default function StablesScreen() {
     stableId: string;
     ownerUserId?: string;
     gender: Horse['gender'];
-    age: string;
+    birthYear: string;
     note: string;
     image: Horse['image'] | null;
   }>({
@@ -126,10 +128,11 @@ export default function StablesScreen() {
     stableId: currentStableId,
     ownerUserId: undefined,
     gender: 'unknown',
-    age: '',
+    birthYear: '',
     note: '',
     image: null,
   });
+  const horseDraftAge = getHorseAge({ birthYear: parseHorseBirthYear(horseDraft.birthYear ?? '') });
   const [inviteDraft, setInviteDraft] = React.useState<{
     name: string;
     email: string;
@@ -184,13 +187,21 @@ export default function StablesScreen() {
   const [paddockDraft, setPaddockDraft] = React.useState<{
     id?: string;
     name: string;
-    horsesText: string;
+    horseIds: string[];
+    legacyHorseNames: Paddock['horseNames'];
+    expectedRevision: number | null;
+    linksReady: boolean;
+    stableId: string;
     season: 'summer' | 'winter' | 'yearRound';
     image: PaddockImage | null;
   }>({
     id: undefined,
     name: '',
-    horsesText: '',
+    horseIds: [],
+    legacyHorseNames: [],
+    expectedRevision: null,
+    linksReady: true,
+    stableId: currentStableId,
     season: 'yearRound',
     image: null,
   });
@@ -314,7 +325,8 @@ export default function StablesScreen() {
   const canManageHorses = permissions.canManageHorses;
   const canSaveStable = isAdmin && !creatingStable;
   const canDelegate = !savingInvite && canManageMembers && stables.length > 0;
-  const canEditPaddocks = canManagePaddocks && !paddockPending;
+  const canEditPaddocks = canManagePaddocks && state.paddockLinksReady && !paddockPending;
+  const canEditPaddockDraft = canEditPaddocks && paddockDraft.linksReady;
   const canEditHorses = canManageHorses && !savingHorse;
   const canEditMembers = canManageMembers && !savingInvite;
   const joinCode = currentStable?.joinCode?.trim() ?? '';
@@ -328,17 +340,17 @@ export default function StablesScreen() {
   const horseStableId = horseDraft.stableId || currentStableId;
   const horseGroups = React.useMemo(
     () => {
-      const all = activeHorses.map((horse) => horse.name);
+      const all = activeHorses.map((horse) => horse.id);
       const mine = activeHorses
         .filter((horse) => horse.ownerUserId === currentUserId)
-        .map((horse) => horse.name);
+        .map((horse) => horse.id);
       const unassigned = activeHorses
         .filter((horse) => !horse.ownerUserId)
-        .map((horse) => horse.name);
+        .map((horse) => horse.id);
       return [
-        { id: 'all', label: 'Alla', horseNames: all },
-        { id: 'mine', label: 'Mina', horseNames: mine },
-        { id: 'unassigned', label: 'Utan ansvarig', horseNames: unassigned },
+        { id: 'all', label: 'Alla', horseIds: all },
+        { id: 'mine', label: 'Mina', horseIds: mine },
+        { id: 'unassigned', label: 'Utan ansvarig', horseIds: unassigned },
       ];
     },
     [activeHorses, currentUserId],
@@ -351,68 +363,51 @@ export default function StablesScreen() {
     [horseStableId, users],
   );
 
-  const parseHorses = React.useCallback((value: string) => {
-    return value
-      .split(/[\n,;]+/g)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }, []);
-
-  const paddockHorseNames = React.useMemo(
-    () => parseHorses(paddockDraft.horsesText),
-    [paddockDraft.horsesText, parseHorses],
-  );
   const paddockHorseSet = React.useMemo(
-    () => new Set(paddockHorseNames.map((name) => name.toLowerCase())),
-    [paddockHorseNames],
+    () => new Set(paddockDraft.horseIds),
+    [paddockDraft.horseIds],
   );
 
   const togglePaddockHorse = React.useCallback(
-    (name: string) => {
+    (horseId: string) => {
       setPaddockDraft((prev) => {
-        const current = parseHorses(prev.horsesText);
-        const normalized = name.toLowerCase();
-        const exists = current.some((item) => item.toLowerCase() === normalized);
-        const next = exists
-          ? current.filter((item) => item.toLowerCase() !== normalized)
-          : [...current, name];
-        return { ...prev, horsesText: next.join('\n') };
+        const exists = prev.horseIds.includes(horseId);
+        return { ...prev, horseIds: exists ? prev.horseIds.filter((id) => id !== horseId) : [...prev.horseIds, horseId] };
       });
     },
-    [parseHorses],
+    [],
   );
 
   const togglePaddockHorseGroup = React.useCallback(
-    (names: string[]) => {
-      if (names.length === 0) {
+    (horseIds: string[]) => {
+      if (horseIds.length === 0) {
         return;
       }
       setPaddockDraft((prev) => {
-        const current = parseHorses(prev.horsesText);
-        const currentSet = new Set(current.map((item) => item.toLowerCase()));
-        const groupSet = new Set(names.map((name) => name.toLowerCase()));
-        const allSelected = Array.from(groupSet).every((name) => currentSet.has(name));
+        const currentSet = new Set(prev.horseIds);
+        const groupSet = new Set(horseIds);
+        const allSelected = horseIds.every((id) => currentSet.has(id));
         const next = allSelected
-          ? current.filter((item) => !groupSet.has(item.toLowerCase()))
+          ? prev.horseIds.filter((id) => !groupSet.has(id))
           : [
-              ...current,
-              ...names.filter((name) => !currentSet.has(name.toLowerCase())),
+              ...prev.horseIds,
+              ...horseIds.filter((id) => !currentSet.has(id)),
             ];
-        return { ...prev, horsesText: next.join('\n') };
+        return { ...prev, horseIds: next };
       });
     },
-    [parseHorses],
+    [],
   );
 
   const fillPaddockHorses = React.useCallback(() => {
     setPaddockDraft((prev) => ({
       ...prev,
-      horsesText: activeHorses.map((horse) => horse.name).join('\n'),
+      horseIds: activeHorses.map((horse) => horse.id),
     }));
   }, [activeHorses]);
 
   const clearPaddockHorses = React.useCallback(() => {
-    setPaddockDraft((prev) => ({ ...prev, horsesText: '' }));
+    setPaddockDraft((prev) => ({ ...prev, horseIds: [] }));
   }, []);
 
   const formStableRef = React.useRef('');
@@ -434,7 +429,11 @@ export default function StablesScreen() {
     setPaddockDraft((prev) => ({
       ...prev,
       name: '',
-      horsesText: '',
+      horseIds: [],
+      legacyHorseNames: [],
+      expectedRevision: null,
+      linksReady: true,
+      stableId: currentStableId,
       image: null,
       season: 'yearRound',
       id: undefined,
@@ -548,9 +547,9 @@ export default function StablesScreen() {
       toast.showToast('Hästens namn krävs.', 'error');
       return;
     }
-    const parsedAge = horseDraft.age ? Number(horseDraft.age) : undefined;
-    if (horseDraft.age && Number.isNaN(parsedAge)) {
-      toast.showToast('Ålder måste vara ett nummer.', 'error');
+    const birthYear = parseHorseBirthYear(horseDraft.birthYear ?? '');
+    if (horseDraft.birthYear?.trim() && birthYear === undefined) {
+      toast.showToast(`Ange ett födelseår i hela år mellan 1900 och ${new Date().getFullYear()}.`, 'error');
       return;
     }
     savingHorseRef.current = true;
@@ -564,7 +563,7 @@ export default function StablesScreen() {
       ownerUserId: horseDraft.ownerUserId,
       image: horseDraft.image,
       gender: horseDraft.gender,
-      age: parsedAge,
+      birthYear,
       note: horseDraft.note,
     });
     savingHorseRef.current = false;
@@ -578,7 +577,7 @@ export default function StablesScreen() {
         stableId: currentStableId,
         ownerUserId: undefined,
         gender: 'unknown',
-        age: '',
+        birthYear: '',
         note: '',
         image: null,
       });
@@ -589,7 +588,7 @@ export default function StablesScreen() {
   }, [
     actions,
     currentStableId,
-    horseDraft.age,
+    horseDraft.birthYear,
     horseDraft.gender,
     horseDraft.id,
     horseDraft.image,
@@ -631,7 +630,7 @@ export default function StablesScreen() {
         stableId: target.stableId,
         ownerUserId: target.ownerUserId,
         gender: target.gender ?? 'unknown',
-        age: target.age ? `${target.age}` : '',
+        birthYear: target.birthYear !== undefined ? `${target.birthYear}` : '',
         note: target.note ?? '',
         image: target.image ?? null,
       });
@@ -661,7 +660,7 @@ export default function StablesScreen() {
           toast.showToast('Häst borttagen.', 'success');
           if (horseDraft.id === horseId) {
             setHorseDraft({ id: undefined, name: '', stableId: currentStableId, ownerUserId: undefined,
-              gender: 'unknown', age: '', note: '', image: null });
+              gender: 'unknown', birthYear: '', note: '', image: null });
           }
         } else {
           setHorseDeleteError({ id: horseId, reason: result.reason });
@@ -739,8 +738,8 @@ export default function StablesScreen() {
     }
   }, [currentStable, joinCode, toast]);
 
-  const formatPaddockCaption = React.useCallback((names: string[]) => {
-    if (!names.length) return 'Inga hästar angivna';
+  const formatPaddockCaption = React.useCallback((names: string[], linksUnconfirmed = false) => {
+    if (!names.length) return linksUnconfirmed ? 'Hästkopplingar ej bekräftade' : 'Inga hästar angivna';
     if (names.length <= 2) return names.join(', ');
     return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
   }, []);
@@ -772,7 +771,7 @@ export default function StablesScreen() {
   }, [toast]);
 
   const handleSavePaddock = React.useCallback(async () => {
-    if (savingPaddockRef.current) return;
+    if (savingPaddockRef.current || !canEditPaddockDraft) return;
     if (!paddockDraft.name.trim()) {
       toast.showToast('Hagen behöver ett namn/nummer.', 'error');
       return;
@@ -784,22 +783,29 @@ export default function StablesScreen() {
     const payload = {
       id: paddockDraft.id ?? newPaddockIdRef.current,
       name: paddockDraft.name,
-      horseNames: parseHorses(paddockDraft.horsesText),
-      stableId: currentStableId,
+      horseIds: [...paddockDraft.horseIds],
+      expectedRevision: paddockDraft.expectedRevision,
+      stableId: paddockDraft.stableId,
       image: paddockDraft.image,
       season: paddockDraft.season,
     };
-    const result = await actions.upsertPaddock(payload);
-    savingPaddockRef.current = false;
-    setPaddockPending(null);
-    if (result.success) {
-      newPaddockIdRef.current = null;
-      toast.showToast(paddockDraft.id ? 'Hage uppdaterad.' : 'Hage sparad.', 'success');
-      setPaddockDraft({ id: undefined, name: '', horsesText: '', image: null, season: 'yearRound' });
-    } else {
-      setPaddockError(result.reason);
+    try {
+      const result = await actions.upsertPaddock(payload);
+      if (result.success) {
+        newPaddockIdRef.current = null;
+        toast.showToast(paddockDraft.id ? 'Hage uppdaterad.' : 'Hage sparad.', 'success');
+        setPaddockDraft({ id: undefined, name: '', horseIds: [], legacyHorseNames: [], expectedRevision: null,
+          linksReady: true, stableId: currentStableId, image: null, season: 'yearRound' });
+      } else {
+        setPaddockError(result.reason);
+      }
+    } catch (error) {
+      setPaddockError(error instanceof Error ? error.message : 'Hagen kunde inte sparas. Dina val finns kvar.');
+    } finally {
+      savingPaddockRef.current = false;
+      setPaddockPending(null);
     }
-  }, [actions, currentStableId, paddockDraft, parseHorses, toast]);
+  }, [actions, canEditPaddockDraft, currentStableId, paddockDraft, toast]);
 
   const handleEditPaddock = React.useCallback(
     (id: string) => {
@@ -810,7 +816,11 @@ export default function StablesScreen() {
       setPaddockDraft({
         id: target.id,
         name: target.name,
-        horsesText: target.horseNames.join('\n'),
+        horseIds: [...target.horseIds],
+        legacyHorseNames: target.linksReady ? [] : [...target.horseNames],
+        expectedRevision: target.revision,
+        linksReady: target.linksReady,
+        stableId: target.stableId,
         image: target.image ?? null,
         season: target.season ?? 'yearRound',
       });
@@ -818,29 +828,34 @@ export default function StablesScreen() {
     [paddocks],
   );
 
-  const handleDeletePaddock = React.useCallback(async (id: string) => {
-    if (savingPaddockRef.current) return;
+  const handleDeletePaddock = React.useCallback(async (id: string, revision: number, linksReady: boolean) => {
+    if (savingPaddockRef.current || !canEditPaddocks || !linksReady) return;
+    const expectedRevision = paddockDraft.id === id ? paddockDraft.expectedRevision : revision;
+    if (expectedRevision === null || (paddockDraft.id === id && !paddockDraft.linksReady)) return;
     savingPaddockRef.current = true;
     try {
       const confirmed = await confirmAction({ title: 'Ta bort hage?', message: 'Detta går inte att ångra.', confirmLabel: 'Ta bort', destructive: true });
       if (!confirmed) return;
       setPaddockPending('delete');
       setPaddockError(null);
-      const result = await actions.deletePaddock(id);
+      const result = await actions.deletePaddock(id, expectedRevision);
       if (result.success) {
         toast.showToast('Hage borttagen.', 'success');
         if (paddockDraft.id === id) {
           newPaddockIdRef.current = null;
-          setPaddockDraft({ id: undefined, name: '', horsesText: '', image: null, season: 'yearRound' });
+          setPaddockDraft({ id: undefined, name: '', horseIds: [], legacyHorseNames: [], expectedRevision: null,
+            linksReady: true, stableId: currentStableId, image: null, season: 'yearRound' });
         }
       } else {
         setPaddockError(result.reason);
       }
+    } catch (error) {
+      setPaddockError(error instanceof Error ? error.message : 'Hagen kunde inte tas bort. Dina uppgifter finns kvar.');
     } finally {
       savingPaddockRef.current = false;
       setPaddockPending(null);
     }
-  }, [actions, paddockDraft.id, toast]);
+  }, [actions, canEditPaddocks, currentStableId, paddockDraft.id, paddockDraft.expectedRevision, paddockDraft.linksReady, toast]);
 
   const resetRideTypeDraft = React.useCallback(() => {
     newRideTypeIdRef.current = null;
@@ -1016,7 +1031,7 @@ export default function StablesScreen() {
     router.replace(fallbackRoute);
   }, [router]);
 
-  if (!isAdminAny) {
+  if (horsesOnly ? !canManageHorses : !isAdminAny) {
     const restrictedContent = (
       <>
         <ScreenHeader
@@ -1551,10 +1566,10 @@ export default function StablesScreen() {
                           style={styles.paddockMain}
                           activeOpacity={0.85}
                           onPress={() => handleEditPaddock(paddock.id)}
-                          disabled={!canEditPaddocks}
+                          disabled={!canEditPaddocks || !paddock.linksReady}
                         >
                           {paddock.image?.uri ? (
-                            <Image source={{ uri: paddock.image.uri }} style={styles.paddockThumb} />
+                            <PrivateImage compact source={{ uri: paddock.image.uri }} style={styles.paddockThumb} />
                           ) : (
                             <View style={styles.paddockThumbPlaceholder}>
                               <Feather name="image" size={14} color={palette.mutedText} />
@@ -1563,7 +1578,7 @@ export default function StablesScreen() {
                           <View style={{ flex: 1, gap: 4 }}>
                             <View style={styles.rowBetween}>
                               <Text style={styles.paddockName}>{paddock.name}</Text>
-                              <Text style={styles.paddockCount}>{paddock.horseNames.length}</Text>
+                              <Text style={styles.paddockCount}>{!state.paddockLinksReady || hasUnconfirmedPaddockLinks([paddock], horses) ? '—' : getPaddockHorses(paddock, horses).length}</Text>
                             </View>
                             <View style={styles.metaRow}>
                               <View style={styles.seasonPill}>
@@ -1575,29 +1590,43 @@ export default function StablesScreen() {
                                       : 'Året runt'}
                                 </Text>
                               </View>
-                              <Text style={styles.paddockCaption}>{formatPaddockCaption(paddock.horseNames)}</Text>
+                              <Text style={styles.paddockCaption}>{paddock.linksReady
+                                ? formatPaddockCaption(getPaddockHorseNames(paddock, horses), !state.paddockLinksReady || hasUnconfirmedPaddockLinks([paddock], horses))
+                                : `Tidigare uppgifter (ej bekräftade): ${getPaddockHorseNames(paddock, horses).join(', ') || '—'}`}</Text>
                             </View>
+                            {!state.paddockLinksReady || hasUnconfirmedPaddockLinks([paddock], horses) ? (
+                              <Text style={styles.paddockCaption}>Hästkopplingarna väntar på godkänd konvertering eller behöver kontrolleras.</Text>
+                            ) : null}
                           </View>
                         </TouchableOpacity>
                         {canManagePaddocks ? (
                           <TouchableOpacity
                             style={styles.removeButton}
-                            disabled={!canEditPaddocks}
+                            disabled={!canEditPaddocks || !paddock.linksReady}
                             accessibilityRole="button"
                             accessibilityLabel={`Ta bort ${paddock.name}`}
-                            onPress={() => handleDeletePaddock(paddock.id)}
+                            onPress={() => handleDeletePaddock(paddock.id, paddock.revision, paddock.linksReady)}
                           >
                             <Feather name="trash-2" size={14} color={palette.error} />
                           </TouchableOpacity>
                         ) : null}
                       </View>
                     ))}
-                    {paddocks.length === 0 ? <Text style={styles.emptyText}>Inga hagar ännu.</Text> : null}
+                    {paddocks.length === 0 && state.paddockLinksReady ? <Text style={styles.emptyText}>Inga hagar ännu.</Text> : null}
                   </View>
                 </View>
                 <View style={[styles.splitColumn, isDesktopWeb && styles.splitColumnWide]}>
                   <View style={styles.stableForm}>
                     <Text style={styles.formLabel}>{paddockDraft.id ? 'Redigera hage' : 'Ny hage/karta'}</Text>
+                    {!state.paddockLinksReady ? (
+                      <Text style={styles.formHint}>Hästkopplingarna är inte aktiverade ännu. Hagar kan inte skapas, ändras eller tas bort.</Text>
+                    ) : null}
+                    {!paddockDraft.linksReady ? (
+                      <>
+                        <Text style={styles.formHint}>Hästkopplingarna väntar på godkänd konvertering. Tidigare uppgifter är inte bekräftade.</Text>
+                        <TextInput value={paddockDraft.legacyHorseNames.join('\n')} editable={false} multiline style={styles.input} />
+                      </>
+                    ) : null}
                     {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
                     {paddockPending ? <Text accessibilityLiveRegion="polite">{paddockPending === 'delete' ? 'Tar bort hagen…' : 'Sparar hagen…'}</Text> : null}
                     <TextInput
@@ -1606,7 +1635,7 @@ export default function StablesScreen() {
                       value={paddockDraft.name}
                       onChangeText={(text) => setPaddockDraft((prev) => ({ ...prev, name: text }))}
                       style={styles.input}
-                      editable={canEditPaddocks}
+                      editable={canEditPaddockDraft}
                     />
                     <Text style={styles.formLabel}>Säsong</Text>
                     <View style={styles.chipRow}>
@@ -1621,10 +1650,10 @@ export default function StablesScreen() {
                             key={option.id}
                             style={[styles.accessChip, active && styles.accessChipActive]}
                             onPress={() =>
-                              canEditPaddocks && setPaddockDraft((prev) => ({ ...prev, season: option.id }))
+                              canEditPaddockDraft && setPaddockDraft((prev) => ({ ...prev, season: option.id }))
                             }
                             activeOpacity={0.85}
-                            disabled={!canEditPaddocks}
+                            disabled={!canEditPaddockDraft}
                           >
                             <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>{option.label}</Text>
                           </TouchableOpacity>
@@ -1637,39 +1666,39 @@ export default function StablesScreen() {
                         <TouchableOpacity
                           style={[
                             styles.inlineActionButton,
-                            (!canEditPaddocks || activeHorses.length === 0) && styles.inlineActionButtonDisabled,
+                            (!canEditPaddockDraft || activeHorses.length === 0) && styles.inlineActionButtonDisabled,
                           ]}
                           onPress={fillPaddockHorses}
                           activeOpacity={0.85}
-                          disabled={!canEditPaddocks || activeHorses.length === 0}
+                          disabled={!canEditPaddockDraft || activeHorses.length === 0}
                         >
                           <Text style={styles.inlineActionText}>Fyll alla</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[
                             styles.inlineActionButton,
-                            (!canEditPaddocks || paddockDraft.horsesText.trim().length === 0) &&
+                            (!canEditPaddockDraft || paddockDraft.horseIds.length === 0) &&
                               styles.inlineActionButtonDisabled,
                           ]}
                           onPress={clearPaddockHorses}
                           activeOpacity={0.85}
-                          disabled={!canEditPaddocks || paddockDraft.horsesText.trim().length === 0}
+                          disabled={!canEditPaddockDraft || paddockDraft.horseIds.length === 0}
                         >
                           <Text style={styles.inlineActionText}>Rensa</Text>
                         </TouchableOpacity>
                       </View>
                     </View>
-                    {horseGroups.some((group) => group.horseNames.length > 0) ? (
+                    {horseGroups.some((group) => group.horseIds.length > 0) ? (
                       <>
                         <Text style={styles.formHint}>Grupper</Text>
                         <View style={styles.chipRow}>
                           {horseGroups.map((group) => {
                             const allSelected =
-                              group.horseNames.length > 0 &&
-                              group.horseNames.every((name) =>
-                                paddockHorseSet.has(name.toLowerCase()),
+                              group.horseIds.length > 0 &&
+                              group.horseIds.every((horseId) =>
+                                paddockHorseSet.has(horseId),
                               );
-                            const disabled = group.horseNames.length === 0 || !canEditPaddocks;
+                            const disabled = group.horseIds.length === 0 || !canEditPaddockDraft;
                             return (
                               <TouchableOpacity
                                 key={group.id}
@@ -1678,7 +1707,7 @@ export default function StablesScreen() {
                                   allSelected && styles.accessChipActive,
                                   disabled && styles.accessChipDisabled,
                                 ]}
-                                onPress={() => canEditPaddocks && togglePaddockHorseGroup(group.horseNames)}
+                                onPress={() => canEditPaddockDraft && togglePaddockHorseGroup(group.horseIds)}
                                 activeOpacity={0.85}
                                 disabled={disabled}
                               >
@@ -1699,17 +1728,23 @@ export default function StablesScreen() {
                     {activeHorses.length > 0 ? (
                       <View style={styles.chipRow}>
                         {activeHorses.map((horse) => {
-                          const active = paddockHorseSet.has(horse.name.toLowerCase());
+                          const active = paddockHorseSet.has(horse.id);
+                          const label = [horse.name, horse.boxNumber ? `Box ${horse.boxNumber}` : '',
+                            horse.ownerUserId ? userNameById[horse.ownerUserId] : '',
+                            activeHorses.some((other) => other.id !== horse.id && other.name === horse.name) ? horse.id : '',
+                          ].filter(Boolean).join(' · ');
                           return (
                             <TouchableOpacity
                               key={horse.id}
                               style={[styles.accessChip, active && styles.accessChipActive]}
-                              onPress={() => canEditPaddocks && togglePaddockHorse(horse.name)}
+                              onPress={() => canEditPaddockDraft && togglePaddockHorse(horse.id)}
+                              accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ selected: active }}
+                              {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
                               activeOpacity={0.85}
-                              disabled={!canEditPaddocks}
+                              disabled={!canEditPaddockDraft}
                             >
                               <Text style={[styles.accessChipText, active && styles.accessChipTextActive]}>
-                                {horse.name}
+                                {label}
                               </Text>
                             </TouchableOpacity>
                           );
@@ -1718,18 +1753,10 @@ export default function StablesScreen() {
                     ) : (
                       <Text style={styles.emptyText}>Inga hästar att välja ännu.</Text>
                     )}
-                    <TextInput
-                      placeholder={'En per rad eller komma-separerat\nEx.\nCinder\nAtlas'}
-                      placeholderTextColor={palette.mutedText}
-                      value={paddockDraft.horsesText}
-                      onChangeText={(text) => setPaddockDraft((prev) => ({ ...prev, horsesText: text }))}
-                      style={[styles.input, { minHeight: 70 }]}
-                      editable={canEditPaddocks}
-                      multiline
-                    />
+                    <Text style={styles.formHint}>Valda hästar: {activeHorses.filter((horse) => paddockHorseSet.has(horse.id)).map((horse) => horse.name).join(', ') || 'Inga hästar valda'}</Text>
                     <Text style={styles.formLabel}>Bild/karta</Text>
                     {paddockDraft.image?.uri ? (
-                      <Image source={{ uri: paddockDraft.image.uri }} style={styles.paddockPreview} />
+                      <PrivateImage source={{ uri: paddockDraft.image.uri }} style={styles.paddockPreview} />
                     ) : (
                       <View style={styles.paddockPreviewPlaceholder}>
                         <Feather name="map" size={16} color={palette.mutedText} />
@@ -1740,10 +1767,10 @@ export default function StablesScreen() {
                     )}
                     <View style={styles.imageRow}>
                       <TouchableOpacity
-                        style={[styles.imageButton, !canEditPaddocks && styles.primaryButtonDisabled]}
+                        style={[styles.imageButton, !canEditPaddockDraft && styles.primaryButtonDisabled]}
                         onPress={handlePickPaddockImage}
                         activeOpacity={0.85}
-                        disabled={!canEditPaddocks}
+                        disabled={!canEditPaddockDraft}
                       >
                         <Feather name="upload" size={14} color={palette.primaryText} />
                         <Text style={styles.imageButtonText}>Välj bild</Text>
@@ -1753,7 +1780,7 @@ export default function StablesScreen() {
                           style={styles.imageButtonDanger}
                           onPress={() => setPaddockDraft((prev) => ({ ...prev, image: null }))}
                           activeOpacity={0.85}
-                          disabled={!canEditPaddocks}
+                          disabled={!canEditPaddockDraft}
                         >
                           <Feather name="x" size={14} color={palette.error} />
                           <Text style={styles.imageButtonDangerText}>Ta bort</Text>
@@ -1761,10 +1788,10 @@ export default function StablesScreen() {
                       ) : null}
                     </View>
                     <TouchableOpacity
-                      style={[styles.primaryButton, !canEditPaddocks && styles.primaryButtonDisabled]}
+                      style={[styles.primaryButton, !canEditPaddockDraft && styles.primaryButtonDisabled]}
                       onPress={handleSavePaddock}
                       activeOpacity={0.9}
-                      disabled={!canEditPaddocks}
+                      disabled={!canEditPaddockDraft}
                     >
                       <Text style={styles.primaryButtonText}>{paddockDraft.id ? 'Uppdatera hage' : 'Spara hage'}</Text>
                     </TouchableOpacity>
@@ -1795,9 +1822,11 @@ export default function StablesScreen() {
                     />
                     <View style={styles.horseList}>
                       {filteredHorses.map((horse) => {
+                        const age = getHorseAge(horse);
                         const meta = [
                           horse.gender ? genderLabel[horse.gender] : null,
-                          horse.age ? `${horse.age} år` : null,
+                          horse.birthYear !== undefined ? `Född ${horse.birthYear}` : null,
+                          age !== undefined ? `${age} år` : null,
                         ]
                           .filter(Boolean)
                           .join(' • ');
@@ -1811,7 +1840,7 @@ export default function StablesScreen() {
                               disabled={!canEditHorses}
                             >
                               {horse.image ? (
-                                <Image source={horse.image} style={styles.horseAvatar} />
+                                <PrivateImage compact source={horse.image} style={styles.horseAvatar} />
                               ) : (
                                 <View style={styles.horseAvatarPlaceholder}>
                                   <Feather name="image" size={14} color={palette.mutedText} />
@@ -1934,15 +1963,23 @@ export default function StablesScreen() {
                           );
                         })}
                       </View>
+                      <Text style={styles.formLabel}>Födelseår (valfritt)</Text>
                       <TextInput
-                        placeholder="Ålder (valfritt)"
+                        accessibilityLabel="Födelseår (valfritt)"
+                        placeholder="T.ex. 2019"
                         placeholderTextColor={palette.mutedText}
-                        value={horseDraft.age}
-                        onChangeText={(text) => setHorseDraft((prev) => ({ ...prev, age: text }))}
+                        value={horseDraft.birthYear ?? ''}
+                        onChangeText={(text) => {
+                          setHorseDraft((prev) => ({ ...prev, birthYear: text }));
+                          setHorseSaveError(null);
+                        }}
                         style={styles.input}
                         editable={canEditHorses}
-                        keyboardType="numeric"
+                        keyboardType="number-pad"
                       />
+                      <Text style={styles.formLabel}>
+                        {horseDraftAge !== undefined ? `${horseDraftAge} år i år · åldern uppdateras automatiskt.` : 'Åldern beräknas automatiskt från födelseåret.'}
+                      </Text>
                       <TextInput
                         placeholder="Anteckning (t.ex. temperament, viktiga behov)"
                         placeholderTextColor={palette.mutedText}
@@ -1954,7 +1991,7 @@ export default function StablesScreen() {
                       />
                       <Text style={styles.formLabel}>Bild</Text>
                       {horseDraft.image ? (
-                        <Image source={horseDraft.image} style={styles.horsePreview} />
+                        <PrivateImage source={horseDraft.image} style={styles.horsePreview} />
                       ) : (
                         <View style={styles.horsePreviewPlaceholder}>
                           <Feather name="camera" size={16} color={palette.mutedText} />
@@ -2434,7 +2471,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(62,155,95,0.12)',
+    backgroundColor: palette.accentSoft,
   },
   rideTypeCodeText: { fontSize: 12, fontWeight: '700', color: palette.primary },
   rideTypeLabel: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
@@ -2486,8 +2523,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   stableRowActive: {
-    borderColor: 'rgba(62,155,95,0.3)',
-    backgroundColor: 'rgba(62,155,95,0.08)',
+    borderColor: palette.primary,
+    backgroundColor: theme.tints.primary,
   },
   stableName: { fontSize: 15, fontWeight: '700', color: palette.primaryText },
   stableLocation: { fontSize: 12, color: palette.secondaryText },
@@ -2508,7 +2545,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(62,155,95,0.14)',
+    backgroundColor: theme.tints.primary,
     color: palette.primary,
     fontSize: 12,
     fontWeight: '700',
@@ -2531,8 +2568,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   settingsOptionCardActive: {
-    borderColor: 'rgba(62,155,95,0.35)',
-    backgroundColor: 'rgba(62,155,95,0.08)',
+    borderColor: palette.primary,
+    backgroundColor: theme.tints.primary,
   },
   settingsOptionCardDisabled: { opacity: 0.6 },
   settingsOptionTitle: { fontSize: 14, fontWeight: '700', color: palette.primaryText },
@@ -2725,8 +2762,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   roleChipActive: {
-    backgroundColor: 'rgba(62,155,95,0.14)',
-    borderColor: 'rgba(62,155,95,0.3)',
+    backgroundColor: theme.tints.primary,
+    borderColor: palette.primary,
   },
   roleChipText: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   roleChipTextActive: { color: palette.primary },
@@ -2740,8 +2777,8 @@ const styles = StyleSheet.create({
   },
   accessChipDisabled: { opacity: 0.5 },
   accessChipActive: {
-    backgroundColor: 'rgba(62,155,95,0.1)',
-    borderColor: 'rgba(62,155,95,0.26)',
+    backgroundColor: theme.tints.primary,
+    borderColor: palette.primary,
   },
   accessChipText: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   accessChipTextActive: { color: palette.primary },

@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Platform } from 'react-native';
 
 export type WeatherData = {
   location: string;
@@ -9,6 +8,7 @@ export type WeatherData = {
   wind: number;
   summary: string;
   updatedAt: string;
+  symbol: number;
 };
 
 // SMHI weather symbol → Swedish description
@@ -44,6 +44,7 @@ const WEATHER_DESCRIPTIONS: Record<number, string> = {
 
 // Known Swedish locations → SMHI grid coordinates (lat, lon)
 const LOCATION_COORDS: Record<string, [number, number]> = {
+  åkersberga: [59.4794, 18.2997],
   stockholm: [59.33, 18.07],
   göteborg: [57.71, 11.97],
   malmö: [55.6, 13.0],
@@ -66,19 +67,62 @@ const LOCATION_COORDS: Record<string, [number, number]> = {
   trollhättan: [58.28, 12.29],
 };
 
-const DEFAULT_COORDS: [number, number] = [59.33, 18.07]; // Stockholm fallback
-
-function resolveCoords(location?: string): [number, number] {
-  if (!location) return DEFAULT_COORDS;
-  const key = location.toLowerCase().trim();
+function resolveCoords(location?: string): [number, number] | undefined {
+  if (!location?.trim()) return undefined;
+  const normalize = (value: string) => value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const key = normalize(location);
   for (const [name, coords] of Object.entries(LOCATION_COORDS)) {
-    if (key.includes(name)) return coords;
+    if (key === normalize(name)) return coords;
   }
-  return DEFAULT_COORDS;
 }
 
-function findParam(params: Array<{ name: string; values: number[] }>, name: string): number | undefined {
-  return params.find((p) => p.name === name)?.values[0];
+type SMHIForecast = {
+  createdTime: string;
+  timeSeries: Array<{
+    time: string;
+    data: { air_temperature: number; wind_speed: number; symbol_code: number };
+  }>;
+};
+
+const CACHE_TTL = 60 * 60 * 1000;
+const forecastCache = new Map<string, { forecast: SMHIForecast; expiresAt: number }>();
+
+function readForecast(forecast: SMHIForecast, location: string): WeatherData {
+  const now = Date.now();
+  const created = Date.parse(forecast?.createdTime);
+  if (!Number.isFinite(created) || now - created > 2 * CACHE_TTL || created - now > 5 * 60 * 1000) {
+    throw new Error('SMHI returned an outdated forecast.');
+  }
+  const upcoming = Array.isArray(forecast.timeSeries)
+    ? forecast.timeSeries.filter((entry) => Number.isFinite(Date.parse(entry.time)) && Date.parse(entry.time) >= now)
+      .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    : [];
+  const current = upcoming[0];
+  const temperature = current?.data?.air_temperature;
+  const wind = current?.data?.wind_speed;
+  const symbol = current?.data?.symbol_code;
+  if (!current || Date.parse(current.time) - now > 90 * 60 * 1000
+    || typeof temperature !== 'number' || !Number.isFinite(temperature) || temperature === 9999
+    || typeof wind !== 'number' || !Number.isFinite(wind) || wind < 0 || wind === 9999
+    || !Number.isInteger(symbol) || !WEATHER_DESCRIPTIONS[symbol]) {
+    throw new Error('SMHI returned invalid weather parameters.');
+  }
+  // The forecast starts now, so these are the next 24 hours, not today's past temperatures.
+  const temperatures = upcoming.filter((entry) => Date.parse(entry.time) <= now + 24 * CACHE_TTL)
+    .map((entry) => entry.data?.air_temperature)
+    .filter((value) => typeof value === 'number' && Number.isFinite(value) && value !== 9999);
+  return {
+    location,
+    temperature: Math.round(temperature),
+    high: Math.round(Math.max(...temperatures)),
+    low: Math.round(Math.min(...temperatures)),
+    wind: Math.round(wind),
+    summary: WEATHER_DESCRIPTIONS[symbol],
+    symbol,
+    updatedAt: new Intl.DateTimeFormat('sv-SE', {
+      timeZone: 'Europe/Stockholm', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(created)),
+  };
 }
 
 export type WeatherStatus = 'loading' | 'ready' | 'error';
@@ -86,92 +130,80 @@ export type WeatherStatus = 'loading' | 'ready' | 'error';
 export type WeatherState = {
   data: WeatherData | null;
   status: WeatherStatus;
+  error?: string;
+  retry: () => void;
 };
 
 export function useWeather(stableLocation?: string): WeatherState {
   const [data, setData] = useState<WeatherData | null>(null);
   const [status, setStatus] = useState<WeatherStatus>('loading');
+  const [error, setError] = useState<string>();
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
-    // SMHI's open data API does not send CORS headers, so a direct browser
-    // fetch can never succeed on web — it only logs noisy CORS/network errors.
-    // Skip it and surface 'error' so the panel hides cleanly.
-    if (Platform.OS === 'web') {
+    const coords = resolveCoords(stableLocation);
+    const locationLabel = stableLocation?.trim();
+    setData(null);
+    setError(undefined);
+    if (!coords || !locationLabel) {
       setStatus('error');
+      setError(locationLabel ? 'Ort ej hittad' : 'Ange stallets ort');
       return;
     }
 
-    setStatus('loading');
-    const [lat, lon] = resolveCoords(stableLocation);
-    const locationLabel = stableLocation?.trim() || 'Stockholm';
+    const [lat, lon] = coords;
+    const key = `${lat},${lon}`;
+    const url = `https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/${lon.toFixed(4)}/lat/${lat.toFixed(4)}/data.json?parameters=air_temperature,wind_speed,symbol_code`;
+    let controller: AbortController | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-    const url = `https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/${lon.toFixed(4)}/lat/${lat.toFixed(4)}/data.json`;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-    fetch(url, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) throw new Error(`SMHI ${res.status}`);
-        return res.json();
-      })
-      .then((json) => {
-        if (cancelled) return;
-
-        const timeSeries: Array<{
-          validTime: string;
-          parameters: Array<{ name: string; values: number[] }>;
-        }> = json.timeSeries ?? [];
-
-        if (timeSeries.length === 0) {
-          setStatus('error');
-          return;
+    const load = async () => {
+      setData(null);
+      setStatus('loading');
+      setError(undefined);
+      try {
+        const cached = forecastCache.get(key);
+        let forecast: SMHIForecast;
+        if (cached && cached.expiresAt > Date.now()) {
+          forecast = cached.forecast;
+        } else {
+          controller = new AbortController();
+          timeoutId = setTimeout(() => controller?.abort(), 10_000);
+          const response = await fetch(url, { signal: controller.signal });
+          if (!response.ok) throw new Error(`SMHI returned HTTP ${response.status}.`);
+          forecast = await response.json();
         }
-
-        // Current (first entry)
-        const now = timeSeries[0];
-        const temp = findParam(now.parameters, 't') ?? 0;
-        const wind = findParam(now.parameters, 'ws') ?? 0;
-        const symbol = findParam(now.parameters, 'Wsymb2') ?? 1;
-
-        // Get today's high/low from all entries for current day
-        const todayStr = now.validTime.slice(0, 10);
-        const todayEntries = timeSeries.filter((ts) => ts.validTime.startsWith(todayStr));
-        const temps = todayEntries.map((ts) => findParam(ts.parameters, 't') ?? temp);
-        const high = Math.round(Math.max(...temps));
-        const low = Math.round(Math.min(...temps));
-
-        const updatedTime = new Date(now.validTime);
-        const hh = String(updatedTime.getHours()).padStart(2, '0');
-        const mm = String(updatedTime.getMinutes()).padStart(2, '0');
-
-        setData({
-          location: locationLabel,
-          temperature: Math.round(temp),
-          high,
-          low,
-          wind: Math.round(wind),
-          summary: WEATHER_DESCRIPTIONS[symbol] ?? 'Okänt',
-          updatedAt: `${hh}:${mm}`,
-        });
+        if (cancelled) return;
+        const weather = readForecast(forecast, locationLabel);
+        if (!cached || cached.expiresAt <= Date.now()) {
+          forecastCache.set(key, { forecast, expiresAt: Date.now() + CACHE_TTL });
+        }
+        setData(weather);
         setStatus('ready');
-      })
-      .catch(() => {
-        // Weather is non-critical (e.g. SMHI unreachable, or CORS-blocked on
-        // web). Surface an error status so the panel can hide instead of
-        // hanging on a perpetual "Laddar väder..." state.
-        if (!cancelled) setStatus('error');
-      })
-      .finally(() => {
+      } catch (reason) {
+        if (cancelled) return;
+        forecastCache.delete(key);
+        setData(null);
+        setStatus('error');
+        setError('Ej tillgängligt');
+        console.warn('[weather] Could not load the SMHI forecast.', reason instanceof Error ? reason.message : 'Invalid response');
+      } finally {
         clearTimeout(timeoutId);
-      });
+      }
+    };
+
+    void load();
+    const refreshId = setInterval(() => void load(), CACHE_TTL);
 
     return () => {
       cancelled = true;
+      controller?.abort();
+      clearTimeout(timeoutId);
+      clearInterval(refreshId);
     };
-  }, [stableLocation]);
+  }, [stableLocation, retryCount]);
 
-  return { data, status };
+  return { data, status, error, retry: () => setRetryCount(count => count + 1) };
 }

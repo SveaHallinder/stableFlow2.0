@@ -12,6 +12,7 @@ import type {
   RideLogEntry,
   StableMembership,
 } from '@/context/AppDataContext';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 
 export type TodayMode = 'admin' | 'worker' | 'horseOwner' | 'reader';
 
@@ -111,7 +112,8 @@ export type TodayInsight = {
 export type TodayHorseSummary = {
   horse: Horse;
   status?: HorseDayStatus;
-  paddock?: Paddock;
+  paddocks: Paddock[];
+  paddockLinksUnconfirmed: boolean;
   latestRide?: RideLogEntry;
   gaps: string[];
 };
@@ -140,22 +142,13 @@ type DeriveTodayOverviewInput = {
   permissions: PermissionSet;
 };
 
-const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function findPaddockForHorse(paddocks: Paddock[], horse: Horse) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
-
 function findLatestRide(rideLogs: RideLogEntry[], horseId: string) {
   return rideLogs
     .filter((log) => log.horseId === horseId)
     .sort((a, b) => b.date.localeCompare(a.date))[0];
 }
 
-function getHorseGaps(status: HorseDayStatus | undefined, paddock: Paddock | undefined) {
+function getHorseGaps(status: HorseDayStatus | undefined, paddocks: Paddock[], linksUnconfirmed: boolean) {
   const gaps: string[] = [];
   if (!status) {
     gaps.push('dagstatus');
@@ -165,8 +158,8 @@ function getHorseGaps(status: HorseDayStatus | undefined, paddock: Paddock | und
     if (!status.water) gaps.push('vatten');
     if (!status.checked) gaps.push('koll');
   }
-  if (!paddock) {
-    gaps.push('hage');
+  if (!paddocks.length) {
+    gaps.push(linksUnconfirmed ? 'hagkoppling ej bekräftad' : 'hage');
   }
   return gaps;
 }
@@ -176,17 +169,19 @@ function makeHorseSummary(
   statuses: HorseDayStatus[],
   paddocks: Paddock[],
   rideLogs: RideLogEntry[],
+  paddockLinksUnconfirmed: boolean,
 ) {
   const status = statuses.find((entry) => entry.horseId === horse.id);
-  const paddock = findPaddockForHorse(paddocks, horse);
+  const horsePaddocks = getHorsePaddocks(horse, paddocks);
   const latestRide = findLatestRide(rideLogs, horse.id);
 
   return {
     horse,
     status,
-    paddock,
+    paddocks: horsePaddocks,
+    paddockLinksUnconfirmed,
     latestRide,
-    gaps: getHorseGaps(status, paddock),
+    gaps: getHorseGaps(status, horsePaddocks, paddockLinksUnconfirmed),
   };
 }
 
@@ -240,6 +235,8 @@ export function deriveTodayOverview({
     }));
   const stableHorses = state.horses.filter((horse) => horse.stableId === currentStableId);
   const stablePaddocks = state.paddocks.filter((paddock) => paddock.stableId === currentStableId);
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, stableHorses);
   const todayStatuses = state.horseDayStatuses.filter(
     (status) => status.stableId === currentStableId && status.date === todayIso,
   );
@@ -253,10 +250,10 @@ export function deriveTodayOverview({
     (horse) => horse.ownerUserId === currentUserId || linkedHorseIds.has(horse.id),
   );
   const horseSummaries = stableHorses.map((horse) =>
-    makeHorseSummary(horse, todayStatuses, stablePaddocks, stableRideLogs),
+    makeHorseSummary(horse, todayStatuses, stablePaddocks, stableRideLogs, paddockLinksUnconfirmed),
   );
   const myHorseSummaries = myHorses.map((horse) =>
-    makeHorseSummary(horse, todayStatuses, stablePaddocks, stableRideLogs),
+    makeHorseSummary(horse, todayStatuses, stablePaddocks, stableRideLogs, paddockLinksUnconfirmed),
   );
   const horseStatusGaps = horseSummaries.filter((summary) => summary.gaps.length > 0);
   const myHorseGaps = myHorseSummaries.filter((summary) => summary.gaps.length > 0);

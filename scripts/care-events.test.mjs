@@ -98,7 +98,10 @@ test('Phase 5 — Horse profile, contacts page and Vård filter wired', async ()
   assert.match(contactsPage, /actions\.deleteExternalContact/);
 
   // Calendar has Vård filter
-  assert.match(calendar, /\['Pass', 'Riddagar', 'Ridhus', 'Tävling', 'Vård'\]/);
+  const filterList = calendar.match(/const filters = \[([^\]]+)\]/)?.[1];
+  assert.ok(filterList, 'Calendar filter list must exist');
+  const labels = [...filterList.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  assert.deepEqual(labels.sort(), ['Pass', 'Riddagar', 'Ridhus', 'Tävling', 'Vård'].sort());
   assert.match(calendar, /function CareEventsSection/);
   assert.match(calendar, /activeFilter === 'Vård'/);
 

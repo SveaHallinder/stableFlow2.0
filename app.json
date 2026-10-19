@@ -5,22 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
-    "splash": {
-      "image": "./assets/images/logo.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F8FAFD"
-    },
     "scheme": "stableflow",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.stableflow.app",
-      "splash": {
-        "image": "./assets/images/logo.png",
-        "resizeMode": "contain",
-        "backgroundColor": "#F8FAFD"
-      },
       "infoPlist": {
         "CFBundleDisplayName": "StableFlow",
         "NSCameraUsageDescription": "Behövs för att ta bilder på hagar och stallmiljö.",
@@ -46,31 +35,31 @@
       "expo-font",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-splash-screen",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/logo.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#F8FAFD"
+        }
+      ],
       [
         "expo-notifications",
         {
           "icon": "./assets/images/logo.png",
           "color": "#2D6CF6"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker",
+      "expo-status-bar"
     ],
     "runtimeVersion": "1.0.0",
-    "updates": {
-      "url": "https://u.expo.dev/YOUR_EAS_PROJECT_ID"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "YOUR_EAS_PROJECT_ID"
-      }
-    },
     "experiments": {
       "typedRoutes": true
     },
     "android": {
       "package": "com.stableflow.app",
-      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"],
-      "useNextNotificationsApi": true
+      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
     }
   }
 }

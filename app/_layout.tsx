@@ -6,9 +6,25 @@ import { AppDataProvider, useAppData } from '@/context/AppDataContext';
 import { ToastProvider } from '@/components/ToastProvider';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useFonts } from 'expo-font';
+import { systemPalette } from '@/design/system';
 
 export default function RootLayout() {
   useFrameworkReady();
+  const [fontsLoaded, fontError] = useFonts({
+    Inter: require('@/assets/fonts/Inter-Regular.ttf'),
+    'Inter-Medium': require('@/assets/fonts/Inter-Medium.ttf'),
+    'Inter-SemiBold': require('@/assets/fonts/Inter-SemiBold.ttf'),
+    'Inter-Bold': require('@/assets/fonts/Inter-Bold.ttf'),
+  });
+
+  React.useEffect(() => {
+    if (fontError) console.warn('[design fonts] Could not load Inter; using the system font.', fontError.message);
+  }, [fontError]);
+
+  if (!fontsLoaded && !fontError) {
+    return <View style={loadingStyles.container}><ActivityIndicator color="#0099FF" /></View>;
+  }
 
   return (
     <ErrorBoundary>
@@ -93,7 +109,7 @@ const errorStyles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: '#3E9B5F',
+    backgroundColor: systemPalette.primary,
   },
   buttonText: {
     fontSize: 14,
@@ -112,6 +128,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { session, loading, initializationError, retryInitialization } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const isResetRoute = segments[0] === '(auth)' && segments[1] === 'reset';
 
   React.useEffect(() => {
     if (loading || initializationError) {
@@ -124,15 +141,15 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       router.replace('/(auth)');
       return;
     }
-    if (session && (inAuthGroup || isNotFound)) {
+    if (session && (inAuthGroup || isNotFound) && !isResetRoute) {
       router.replace('/(tabs)');
     }
-  }, [loading, initializationError, router, segments, session]);
+  }, [loading, initializationError, router, segments, session, isResetRoute]);
 
   if (loading) {
     return (
       <View style={loadingStyles.container}>
-        <ActivityIndicator size="large" color="#3E9B5F" />
+        <ActivityIndicator size="large" color={systemPalette.primary} />
         <Text style={loadingStyles.text}>Laddar...</Text>
       </View>
     );
@@ -178,9 +195,10 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const searchParams = useGlobalSearchParams();
   const router = useRouter();
+  const isResetRoute = segments[0] === '(auth)' && segments[1] === 'reset';
 
   React.useEffect(() => {
-    if (loading || hydrating || refreshing || refreshError || !session) {
+    if (loading || hydrating || refreshing || refreshError || !session || isResetRoute) {
       return;
     }
     const rootSegment = segments[0];
@@ -214,6 +232,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     refreshing,
     refreshError,
     session,
+    isResetRoute,
     segments,
     router,
     derived.canManageOnboardingAny,
@@ -221,7 +240,7 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     searchParams.fromOnboarding,
   ]);
 
-  if (session && refreshError && !state.currentStableId) {
+  if (session && refreshError && !state.currentStableId && !isResetRoute) {
     return (
       <View style={errorStyles.container}>
         <Text style={errorStyles.title}>Kunde inte hämta stallet</Text>
@@ -239,13 +258,13 @@ function OnboardingGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  const waitingForStable = Boolean(session && hydrating && !state.currentUserId);
+  const waitingForStable = Boolean(session && hydrating && !state.currentUserId && !isResetRoute);
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} pointerEvents={waitingForStable ? 'none' : 'auto'}>{children}</View>
       {waitingForStable && (
-        <View style={[StyleSheet.absoluteFillObject, loadingStyles.container]}>
-          <ActivityIndicator size="large" color="#3E9B5F" />
+        <View style={[StyleSheet.absoluteFill, loadingStyles.container]}>
+          <ActivityIndicator size="large" color={systemPalette.primary} />
           <Text style={loadingStyles.text}>Hämtar ditt stall…</Text>
         </View>
       )}

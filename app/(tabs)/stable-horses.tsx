@@ -11,9 +11,7 @@ import { StableSwitcher } from '@/components/StableSwitcher';
 import { theme } from '@/components/theme';
 import {
   useAppData,
-  type Horse,
   type HorseDayStatus,
-  type Paddock,
   type RideLogEntry,
 } from '@/context/AppDataContext';
 import { color, radius } from '@/design/tokens';
@@ -26,18 +24,13 @@ import {
 } from '@/lib/horseAccess';
 import { toISODate } from '@/lib/schedule';
 import { deriveFeedFocus } from '@/lib/today';
+import { getHorsePaddocks, hasUnconfirmedPaddockLinks } from '@/lib/paddockLinks';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import HorseIcon from '@/assets/images/figma/profile-horse.svg';
 
 const palette = theme.colors;
 
 const normalizeName = (value: string) => value.trim().toLowerCase();
-
-function getHorsePaddock(horse: Horse, paddocks: Paddock[]) {
-  const horseName = normalizeName(horse.name);
-  return paddocks.find((paddock) =>
-    paddock.horseNames.some((name) => normalizeName(name) === horseName),
-  );
-}
 
 function formatStatus(status?: HorseDayStatus) {
   if (!status) {
@@ -87,6 +80,8 @@ export default function HorsesScreen() {
     () => state.paddocks.filter((paddock) => paddock.stableId === currentStableId),
     [state.paddocks, currentStableId],
   );
+  const paddockLinksUnconfirmed = state.paddockLinksReady !== true ||
+    hasUnconfirmedPaddockLinks(stablePaddocks, stableHorses);
   const todayStatuses = React.useMemo(
     () =>
       state.horseDayStatuses.filter(
@@ -142,7 +137,7 @@ export default function HorsesScreen() {
           showsVerticalScrollIndicator={false}
         >
           <DataSyncStatus />
-          <Card elevated tone={isDesktopWeb ? 'default' : 'muted'} style={styles.summaryCard}>
+          <Card tone="default" style={styles.summaryCard}>
             <View style={styles.summaryHeader}>
               <View style={styles.summaryTitleBlock}>
                 <Text style={styles.summaryEyebrow}>Stallets hästar</Text>
@@ -153,16 +148,18 @@ export default function HorsesScreen() {
                 </Text>
                 <Text style={styles.summaryText}>
                   {stableHorses.length
-                    ? `${myHorseCount} kopplade till dig. Se hage, box och dagens status.`
+                    ? `${myHorseCount} ${myHorseCount === 1 ? 'kopplad' : 'kopplade'} till dig. Hage, box och status finns nedan.`
                     : currentStableId
-                      ? 'Lägg till hästar i onboarding eller stallinställningar.'
-                      : 'Slutför setup för att se dagens stallstatus.'}
+                      ? canEditHorses
+                        ? 'Registrera stallets första häst för att samla hage, box och dagens status.'
+                        : 'Be någon med Redigera i stallet att registrera hästarna.'
+                      : 'Välj ett stall för att se hästar och dagens status.'}
                 </Text>
               </View>
               {!canEditHorses ? (
                 <View style={styles.readOnlyPill}>
                   <Feather name="lock" size={13} color={palette.secondaryText} />
-                  <Text style={styles.readOnlyText}>Läs</Text>
+                  <Text style={styles.readOnlyText}>Läsläge</Text>
                 </View>
               ) : null}
             </View>
@@ -170,16 +167,16 @@ export default function HorsesScreen() {
               <TouchableOpacity
                 accessibilityRole="button"
                 accessibilityLabel="Hantera hästar"
-                style={styles.manageButton}
+                style={[styles.manageButton, stableHorses.length > 0 && styles.manageButtonPrimary]}
                 onPress={() => router.push('/stables?section=horses')}
               >
-                <Feather name="edit-2" size={14} color={palette.primaryText} />
-                <Text style={styles.secondaryButtonText}>Hantera hästar</Text>
+                <Feather name="edit-2" size={16} color={stableHorses.length ? palette.inverseText : palette.primaryText} />
+                <Text style={[styles.secondaryButtonText, stableHorses.length > 0 && styles.primaryButtonText]}>Hantera hästar</Text>
               </TouchableOpacity>
             ) : null}
             {!canEditHorses ? (
               <View style={styles.notice}>
-                <Text style={styles.noticeText}>Du kan läsa detta, men inte ändra.</Text>
+                <Text style={styles.noticeText}>Du kan läsa hästarnas grunduppgifter. För att ändra dem behöver du Redigera.</Text>
               </View>
             ) : null}
           </Card>
@@ -194,6 +191,8 @@ export default function HorsesScreen() {
                 value={search}
                 onChangeText={setSearch}
                 autoCorrect={false}
+                autoCapitalize="none"
+                returnKeyType="search"
                 style={styles.searchInput}
               />
               {search ? (
@@ -231,7 +230,10 @@ export default function HorsesScreen() {
             <View style={styles.horseList}>
               {visibleHorses.map((horse) => {
                 const status = todayStatuses.find((entry) => entry.horseId === horse.id);
-                const paddock = getHorsePaddock(horse, stablePaddocks);
+                const horsePaddocks = getHorsePaddocks(horse, stablePaddocks);
+                const paddockLabel = horsePaddocks.length
+                  ? horsePaddocks.map((paddock) => paddock.name).join(', ')
+                  : paddockLinksUnconfirmed ? 'Hage ej bekräftad' : 'Ingen hage satt';
                 const latestRide = getLatestRide(stableRideLogs, horse.id);
                 const responsibleUsers = getResponsibleUsersForHorse(state, horse.id);
                 const isMine = isHorseOwner(state, horse.id, currentUserId);
@@ -241,14 +243,14 @@ export default function HorsesScreen() {
                   .filter((item) => item?.plan);
                 const checkedFeeds = plannedFeeds.filter((item) => item?.check?.checkedAt);
                 return (
-                  <Card key={horse.id} elevated tone="default" style={styles.horseCard}>
+                  <Card key={horse.id} tone="default" style={styles.horseCard}>
                     <View style={styles.horseTopRow}>
                       <View style={styles.horseAvatar}>
-                        <Feather name="activity" size={20} color={palette.primary} />
+                        <HorseIcon />
                       </View>
                       <View style={styles.horseTitleBlock}>
                         <View style={styles.horseNameRow}>
-                          <Text style={styles.horseName}>{horse.name}</Text>
+                          <Text accessibilityRole="header" style={styles.horseName}>{horse.name}</Text>
                           {isMine ? (
                             <View style={styles.minePill}>
                               <Text style={styles.minePillText}>Min</Text>
@@ -261,7 +263,7 @@ export default function HorsesScreen() {
                           ) : null}
                         </View>
                         <Text style={styles.horseMeta}>
-                          {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddock?.name ?? 'Ingen hage satt']
+                          {[horse.boxNumber ? `Box ${horse.boxNumber}` : null, paddockLabel]
                             .filter(Boolean)
                             .join(' · ')}
                         </Text>
@@ -269,11 +271,11 @@ export default function HorsesScreen() {
                     </View>
 
                     <View style={styles.statusGrid}>
-                      <View style={styles.statusItem}>
+                      <View style={[styles.statusItem, isDesktopWeb && styles.statusItemDesktop]}>
                         <Text style={styles.statusLabel}>Dagens status</Text>
                         <Text style={styles.statusValue}>{formatStatus(status)}</Text>
                       </View>
-                      <View style={styles.statusItem}>
+                      <View style={[styles.statusItem, isDesktopWeb && styles.statusItemDesktop]}>
                         <Text style={styles.statusLabel}>Dag/natt</Text>
                         <Text style={styles.statusValue}>
                           {status
@@ -281,7 +283,7 @@ export default function HorsesScreen() {
                             : 'Ej satt'}
                         </Text>
                       </View>
-                      <View style={styles.statusItem}>
+                      <View style={[styles.statusItem, isDesktopWeb && styles.statusItemDesktop]}>
                         <Text style={styles.statusLabel}>Foder</Text>
                         <Text style={styles.statusValue}>
                           {plannedFeeds.length
@@ -289,25 +291,25 @@ export default function HorsesScreen() {
                             : 'Ingen foderplan satt'}
                         </Text>
                       </View>
-                      <View style={styles.statusItem}>
+                      <View style={[styles.statusItem, isDesktopWeb && styles.statusItemDesktop]}>
                         <Text style={styles.statusLabel}>Ridning/vård</Text>
                         <Text style={styles.statusValue}>
                           {latestRide
                             ? `Senast ${latestRide.date}${latestRide.length ? ` · ${latestRide.length}` : ''}`
                             : responsibleUsers.length
-                              ? `${responsibleUsers.length} ansvariga`
+                              ? `${responsibleUsers.length} ${responsibleUsers.length === 1 ? 'ansvarig' : 'ansvariga'}`
                               : 'Ingen logg ännu'}
                         </Text>
                       </View>
                     </View>
 
                     <View style={styles.cardActions}>
-                      <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/paddocks')}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hagar" style={styles.secondaryButton} onPress={() => router.push('/paddocks')}>
                         <Feather name="map" size={14} color={palette.primaryText} />
                         <Text style={styles.secondaryButtonText}>Hagar</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.primaryButton} onPress={() => router.push(`/horses/${horse.id}`)}>
-                        <Text style={styles.primaryButtonText}>Profil</Text>
+                      <TouchableOpacity accessibilityRole="button" style={styles.profileButton} onPress={() => router.push(`/horses/${horse.id}`)}>
+                        <Text style={styles.profileButtonText}>Profil</Text>
                       </TouchableOpacity>
                       {canEditHorses || canUpdateStatus ? (
                         <TouchableOpacity
@@ -325,27 +327,31 @@ export default function HorsesScreen() {
               })}
             </View>
           ) : (
-            <Card elevated tone="default" style={styles.emptyCard}>
-              <Feather name="activity" size={22} color={palette.primary} />
+            <Card tone="default" style={styles.emptyCard}>
+              <HorseIcon />
               <Text style={styles.emptyTitle}>
                 {stableHorses.length
                   ? normalizeName(search)
                     ? 'Inga hästar matchar sökningen.'
                     : 'Inga hästar i filtret.'
-                  : 'Du har ingen häst kopplad ännu.'}
+                  : currentStableId ? 'Inga hästar i stallet ännu.' : 'Välj ett stall för att se hästarna.'}
               </Text>
               <Text style={styles.emptyText}>
                 {stableHorses.length
                   ? normalizeName(search)
                     ? 'Prova ett annat namn eller visa alla hästar i stallet.'
-                    : `Mina: ${myHorseCount}. Ansvar: ${responsibleHorseCount}.`
-                  : 'När en häst skapas eller kopplas till dig visas hage, box och dagens status här.'}
+                    : `Visa alla hästar för att se hela stallets lista. Mina: ${myHorseCount}. Ansvar: ${responsibleHorseCount}.`
+                  : currentStableId
+                    ? canEditHorses
+                      ? 'Lägg till den första hästen i hästhanteringen. När den är registrerad visas hage, box och dagens status här.'
+                      : 'När hästarna är registrerade i stallet visas deras hage, box och dagens status här.'
+                    : 'Välj stall ovan. Då visas hästarna du har tillgång till.'}
               </Text>
               {stableHorses.length ? (
                 <TouchableOpacity
                   accessibilityRole="button"
                   accessibilityLabel="Visa alla hästar"
-                  style={styles.manageButton}
+                  style={[styles.manageButton, styles.emptyAction]}
                   onPress={() => {
                     setSearch('');
                     setFilter('all');
@@ -354,7 +360,8 @@ export default function HorsesScreen() {
                   <Text style={styles.secondaryButtonText}>Visa alla hästar</Text>
                 </TouchableOpacity>
               ) : canEditHorses ? (
-                <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/stables?section=horses')}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Lägg till häst" style={[styles.primaryButton, styles.emptyAction]} onPress={() => router.push('/stables?section=horses')}>
+                  <Feather name="plus" size={16} color={palette.inverseText} />
                   <Text style={styles.primaryButtonText}>Lägg till häst</Text>
                 </TouchableOpacity>
               ) : null}
@@ -375,7 +382,7 @@ const styles = StyleSheet.create({
     backgroundColor: color.bg,
   },
   pageHeader: {
-    marginBottom: 8,
+    marginBottom: 0,
   },
   pageHeaderDesktop: {
     maxWidth: 1100,
@@ -388,10 +395,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: 21,
+    paddingTop: 24,
     paddingBottom: 120,
-    gap: 16,
+    gap: 20,
   },
   scrollContentDesktop: {
     maxWidth: 1100,
@@ -403,10 +410,11 @@ const styles = StyleSheet.create({
     gap: 18,
   },
   summaryCard: {
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    gap: 14,
-    borderRadius: radius.xl,
+    padding: 0,
+    gap: 12,
+    borderRadius: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -420,19 +428,21 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   summaryEyebrow: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: palette.primary,
-    textTransform: 'uppercase',
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
+    color: palette.secondaryText,
   },
   summaryTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
   },
   summaryText: {
-    fontSize: 14,
-    lineHeight: 20,
+    fontSize: 13,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 19,
     color: palette.secondaryText,
   },
   readOnlyPill: {
@@ -446,7 +456,8 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     fontSize: 12,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.secondaryText,
   },
   notice: {
@@ -457,21 +468,24 @@ const styles = StyleSheet.create({
   },
   noticeText: {
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     color: palette.secondaryText,
   },
   filterRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.full,
+    backgroundColor: palette.surfaceTint,
   },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 10,
+    paddingHorizontal: 14,
     backgroundColor: palette.surface,
     borderRadius: radius.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: palette.border,
   },
   iconButton: { width: 44, height: 44 },
@@ -479,38 +493,40 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     minHeight: 44,
-    fontSize: 14,
+    fontSize: 15,
+    fontFamily: theme.fonts.regular,
     color: palette.primaryText,
   },
   filterChip: {
+    flex: 1,
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radius.full,
-    backgroundColor: palette.surface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
+    backgroundColor: 'transparent',
+    alignItems: 'center',
   },
   filterChipActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
   },
   filterChipText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   filterChipTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   horseList: {
     gap: 12,
   },
   horseCard: {
-    padding: 16,
-    gap: 14,
-    borderRadius: radius.xl,
+    padding: 14,
+    gap: 12,
+    borderRadius: radius.sm,
+    backgroundColor: palette.surface,
   },
   horseTopRow: {
     flexDirection: 'row',
@@ -532,17 +548,22 @@ const styles = StyleSheet.create({
   },
   horseNameRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: 8,
   },
   horseName: {
     flexShrink: 1,
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.medium,
+    lineHeight: 23,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   horseMeta: {
-    fontSize: 13,
+    fontSize: 12,
+    fontFamily: theme.fonts.regular,
+    lineHeight: 18,
     color: palette.secondaryText,
   },
   minePill: {
@@ -553,37 +574,48 @@ const styles = StyleSheet.create({
   },
   minePillText: {
     fontSize: 11,
-    fontWeight: '700',
-    color: palette.primary,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primaryText,
   },
   statusGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
+    gap: 8,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.border,
   },
   statusItem: {
-    flex: 1,
-    minWidth: 150,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: radius.md,
+    flexGrow: 1,
+    flexBasis: '45%',
+    minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    borderRadius: radius.sm,
     backgroundColor: palette.surfaceTint,
   },
+  statusItemDesktop: {
+    flexBasis: 0,
+    minWidth: 150,
+  },
   statusLabel: {
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.secondaryText,
-    textTransform: 'uppercase',
+    lineHeight: 16,
   },
   statusValue: {
     marginTop: 4,
     fontSize: 13,
+    fontFamily: theme.fonts.regular,
     lineHeight: 18,
     color: palette.primaryText,
   },
   cardActions: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   manageButton: {
     alignSelf: 'flex-start',
@@ -595,49 +627,80 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: palette.surfaceTint,
   },
+  manageButtonPrimary: {
+    justifyContent: 'center',
+    backgroundColor: palette.primary,
+  },
   secondaryButton: {
     flex: 1,
     minHeight: 44,
-    borderRadius: radius.full,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 7,
     backgroundColor: palette.surfaceTint,
   },
+  profileButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.primary,
+  },
+  profileButtonText: {
+    fontSize: 13,
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
+    color: palette.primary,
+  },
   secondaryButtonText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.primaryText,
   },
   primaryButton: {
     flex: 1,
     minHeight: 44,
-    borderRadius: radius.full,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: palette.primary,
   },
   primaryButtonText: {
     fontSize: 13,
-    fontWeight: '700',
+    fontFamily: theme.fonts.medium,
+    fontWeight: '500',
     color: palette.inverseText,
   },
   emptyCard: {
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingVertical: 28,
+    paddingHorizontal: 20,
+    paddingVertical: 24,
     gap: 10,
-    borderRadius: radius.xl,
+    borderRadius: radius.lg,
+  },
+  emptyAction: {
+    flex: 0,
+    flexDirection: 'row',
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    gap: 8,
   },
   emptyTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: 17,
+    fontFamily: theme.fonts.regular,
+    fontWeight: '400',
     color: palette.primaryText,
     textAlign: 'center',
   },
   emptyText: {
     fontSize: 14,
+    fontFamily: theme.fonts.regular,
     lineHeight: 20,
     color: palette.secondaryText,
     textAlign: 'center',

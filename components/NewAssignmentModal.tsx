@@ -15,6 +15,7 @@ import { systemPalette } from '@/design/system';
 import type { ActionResult, AssignmentSlot } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
+import { DateTimeField } from '@/components/DateTimeField';
 
 type DateOption = {
   label: string;
@@ -27,6 +28,7 @@ export type AssignmentModalSubmit = {
   slot?: AssignmentSlot;
   note?: string;
   assignToCurrentUser?: boolean;
+  assigneeId?: string | null;
   noteProvided: boolean;
   labelOverride?: string;
   time?: string;
@@ -34,6 +36,7 @@ export type AssignmentModalSubmit = {
 
 type NewAssignmentModalProps = {
   visible: boolean;
+  scopeKey: string;
   onClose: () => void;
   onSubmit: (input: AssignmentModalSubmit) => Promise<ActionResult<unknown>>;
   dateOptions: DateOption[];
@@ -43,6 +46,8 @@ type NewAssignmentModalProps = {
   initialLabel?: string;
   initialTime?: string;
   initialAssignToMe?: boolean;
+  members?: { id: string; name: string }[];
+  initialAssigneeId?: string | null;
   mode?: 'create' | 'edit';
   onDelete?: () => Promise<ActionResult>;
 };
@@ -55,6 +60,7 @@ const slots: { label: string; value: AssignmentSlot }[] = [
 
 export function NewAssignmentModal({
   visible,
+  scopeKey,
   onClose,
   onSubmit,
   dateOptions,
@@ -64,6 +70,8 @@ export function NewAssignmentModal({
   initialLabel,
   initialTime,
   initialAssignToMe,
+  members,
+  initialAssigneeId,
   mode = 'create',
   onDelete,
 }: NewAssignmentModalProps) {
@@ -79,6 +87,7 @@ export function NewAssignmentModal({
   const [label, setLabel] = React.useState(defaultLabel);
   const [time, setTime] = React.useState(defaultTime);
   const [assignToMe, setAssignToMe] = React.useState(initialAssignToMe ?? false);
+  const [assigneeId, setAssigneeId] = React.useState<string | null>(initialAssigneeId ?? null);
   const [labelTouched, setLabelTouched] = React.useState(false);
   const [timeTouched, setTimeTouched] = React.useState(false);
   const wasVisible = React.useRef(false);
@@ -111,6 +120,7 @@ export function NewAssignmentModal({
       setLabel(nextLabel);
       setTime(nextTime);
       setAssignToMe(initialAssignToMe ?? false);
+      setAssigneeId(initialAssigneeId ?? null);
       setLabelTouched(false);
       setTimeTouched(false);
       setError('');
@@ -122,6 +132,7 @@ export function NewAssignmentModal({
     initialSlot,
     initialNote,
     initialAssignToMe,
+    initialAssigneeId,
     initialLabel,
     initialTime,
   ]);
@@ -174,6 +185,7 @@ export function NewAssignmentModal({
       slot: selectedSlot,
       note: cleanedNote,
       assignToCurrentUser: assignToMe,
+      assigneeId: members ? assigneeId : undefined,
       noteProvided: noteChanged,
       labelOverride: labelTouched ? label.trim() : undefined,
       time: timeTouched ? time.trim() : undefined,
@@ -253,7 +265,12 @@ export function NewAssignmentModal({
 
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Tid</Text>
-            <TextInput
+            <DateTimeField
+              mode="time"
+              label="Pass: tid"
+              scopeKey={scopeKey}
+              active={visible}
+              allowClear
               editable={pending === null}
               value={time}
               onChangeText={(value) => {
@@ -281,6 +298,21 @@ export function NewAssignmentModal({
             />
           </View>
 
+          {members ? <View>
+            <Text style={styles.assignToggleLabel}>Ansvarig</Text>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Låt passet vara öppet" aria-pressed={assigneeId === null}
+              disabled={pending !== null} style={[styles.assignToggle, assigneeId === null && styles.assignToggleActive]}
+              onPress={() => setAssigneeId(null)}>
+              <Text style={[styles.assignToggleLabel, assigneeId === null && styles.assignToggleLabelActive]}>Låt passet vara öppet</Text>
+            </TouchableOpacity>
+            {members.map(member => <TouchableOpacity key={member.id} accessibilityRole="button"
+              accessibilityLabel={`Tilldela ${member.name}`} aria-pressed={assigneeId === member.id}
+              disabled={pending !== null} style={[styles.assignToggle, assigneeId === member.id && styles.assignToggleActive]}
+              onPress={() => setAssigneeId(member.id)}>
+              <Text style={[styles.assignToggleLabel, assigneeId === member.id && styles.assignToggleLabelActive]}>{member.name}</Text>
+            </TouchableOpacity>)}
+            <Text style={styles.assignToggleLabel}>Saknas någon? Personen behöver först acceptera sin inbjudan och skapa konto.</Text>
+          </View> : <>
           <TouchableOpacity
             disabled={pending !== null}
             style={[styles.assignToggle, assignToMe && styles.assignToggleActive]}
@@ -290,6 +322,7 @@ export function NewAssignmentModal({
               {assignToMe ? 'Tilldelas mig direkt' : 'Låt passet vara öppet'}
             </Text>
           </TouchableOpacity>
+          </>}
 
           {showDelete ? (
             <TouchableOpacity

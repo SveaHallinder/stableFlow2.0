@@ -47,7 +47,8 @@ export default function JoinStableScreen() {
     setInvitesError(null);
     try {
       const userResult = await supabase.auth.getUser();
-      const email = userResult.data.user?.email ?? '';
+      if (userResult.error) throw userResult.error;
+      const email = userResult.data.user?.email?.trim().toLowerCase() ?? '';
       if (!email) {
         setPendingInvites([]);
         return;
@@ -58,10 +59,7 @@ export default function JoinStableScreen() {
         .eq('email', email)
         .is('accepted_at', null);
       if (fetchError) {
-        console.warn('Kunde inte hämta inbjudningar', fetchError);
-        setInvitesError('Kunde inte hämta inbjudningar.');
-        setPendingInvites([]);
-        return;
+        throw fetchError;
       }
       const now = Date.now();
       const invites =
@@ -79,7 +77,7 @@ export default function JoinStableScreen() {
           .select('id, name')
           .in('id', stableIds);
         if (stableError) {
-          console.warn('Kunde inte hämta stallnamn', stableError);
+          console.warn('[invite load] Kunde inte hämta stallnamn', stableError);
         } else {
           stableRows?.forEach((row) => stableNameById.set(row.id, row.name));
         }
@@ -96,6 +94,9 @@ export default function JoinStableScreen() {
           createdAt: row.created_at,
         })),
       );
+    } catch (error) {
+      console.warn('[invite load] Kunde inte hämta inbjudningar', error);
+      setInvitesError('Kunde inte hämta inbjudningar. Kontrollera anslutningen och försök igen.');
     } finally {
       setLoadingInvites(false);
     }
@@ -173,9 +174,9 @@ export default function JoinStableScreen() {
     const previousStableIds = new Set(state.stables.map((stable) => stable.id));
     const result = await actions.acceptPendingInvites();
     if (!result.success) {
+      await loadInvites();
       setInvitesError(result.reason);
       setAcceptingInvites(false);
-      await loadInvites();
       return;
     }
     const acceptedCount = result.data?.count ?? 0;
@@ -185,9 +186,9 @@ export default function JoinStableScreen() {
       stableId: joinedStableId || undefined,
     });
     if (!refreshResult.success) {
+      await loadInvites();
       setInvitesError(refreshResult.reason);
       setAcceptingInvites(false);
-      await loadInvites();
       return;
     }
     const countLabel = acceptedCount === 1 ? 'inbjudan' : 'inbjudningar';
@@ -196,8 +197,8 @@ export default function JoinStableScreen() {
     router.replace('/(tabs)');
   }, [actions, loadInvites, pendingInvites.length, resolveJoinedStableId, router, state.stables, toast]);
 
-  const isBusy = submitting || refreshing;
-  const inviteButtonDisabled = acceptingInvites || refreshing;
+  const isBusy = submitting || acceptingInvites || refreshing;
+  const inviteButtonDisabled = acceptingInvites || submitting || refreshing || loadingInvites;
   const hasPendingInvites = pendingInvites.length > 0;
 
   return (
@@ -220,7 +221,7 @@ export default function JoinStableScreen() {
           maxLength={24}
           style={styles.input}
         />
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text> : null}
         <TouchableOpacity
           style={[styles.primaryButton, isBusy && styles.primaryButtonDisabled]}
           onPress={handleJoin}
@@ -243,7 +244,7 @@ export default function JoinStableScreen() {
             <Text style={styles.inlineButtonText}>Uppdatera</Text>
           </TouchableOpacity>
         </View>
-        {invitesError ? <Text style={styles.errorText}>{invitesError}</Text> : null}
+        {invitesError ? <Text accessibilityRole="alert" style={styles.errorText}>{invitesError}</Text> : null}
         {hasPendingInvites ? (
           <TouchableOpacity
             style={[styles.acceptAllButton, inviteButtonDisabled && styles.acceptAllButtonDisabled]}
