@@ -83,6 +83,11 @@ async function persistFixture(answers, nextStable = stable, input = { name: next
     supabase: { from(table) {
       const query = {};
       for (const method of ['insert', 'update', 'upsert', 'select', 'eq', 'abortSignal']) query[method] = (...args) => { if (method !== 'abortSignal') calls.push({ table, method, args }); return query; };
+      query.then = resolve => {
+        calls.push({ table, method: 'ack', args: [] });
+        const response = answers[0]?.error ? answers.shift() : { error: null };
+        return Promise.resolve(response).then(resolve);
+      };
       query.single = async () => answers.shift();
       return query;
     } },
@@ -169,4 +174,16 @@ test('farm creation retry can correct its name while preserving remote arena set
   assert.equal(stableCreates, 1);
   assert.deepEqual(calls.filter(call => call.method === 'update').map(call => call.args[0]), [{ name: 'Korrigerat gårdnamn' }]);
   assert.ok(calls.some(call => call.method === 'eq' && call.args[0] === 'created_by' && call.args[1] === 'owner'));
+});
+
+
+test('owner bootstrap confirms its insert before selecting membership under member-only SELECT RLS', async () => {
+  const { result, calls } = await persistFixture([{ data: stableRow }, { data: memberRow }, { data: chatRow }]);
+  assert.equal(result.success, true);
+  const memberCalls = calls.filter(call => call.table === 'stable_members');
+  assert.ok(memberCalls.findIndex(call => call.method === 'ack') >= 0);
+  assert.ok(memberCalls.findIndex(call => call.method === 'ack') < memberCalls.findIndex(call => call.method === 'select'));
+  assert.deepEqual(memberCalls.filter(call => call.method === 'eq').map(call => call.args), [
+    ['stable_id', stable.id], ['user_id', 'owner'],
+  ]);
 });

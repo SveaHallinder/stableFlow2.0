@@ -4725,12 +4725,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         }
         if (isNew) {
           const member = { stable_id: stable.id, user_id: ownerId, role: 'admin', access: 'owner', rider_role: 'owner' };
-          let memberResult = await supabase.from('stable_members').insert(member).select('*')
+          // SELECT requires existing membership. Confirm INSERT separately so the
+          // member-only SELECT policy can see the owner row in the next request.
+          const memberInsert = await supabase.from('stable_members').insert(member).abortSignal(controller.signal);
+          if (memberInsert.error && memberInsert.error.code !== '23505') throw memberInsert.error;
+          const memberResult = await supabase.from('stable_members').select('*').eq('stable_id', stable.id).eq('user_id', ownerId)
             .abortSignal(controller.signal).single();
-          if (memberResult.error?.code === '23505') {
-            memberResult = await supabase.from('stable_members').select('*').eq('stable_id', stable.id).eq('user_id', ownerId)
-              .abortSignal(controller.signal).single();
-          }
           if (memberResult.error) throw memberResult.error;
           if (!memberResult.data || Object.entries(member).some(([key, value]) => memberResult.data[key] !== value)) {
             throw new Error('Servern bekräftade inte ägarbehörigheten.');

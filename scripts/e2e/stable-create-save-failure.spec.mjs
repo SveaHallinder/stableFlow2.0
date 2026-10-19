@@ -22,6 +22,7 @@ for (const surface of ['stables', 'admin', 'create-stable', 'farm']) {
     const stableWrites = [];
     const farmWrites = [];
     let memberships = 0;
+    let ownerMembership;
     let chats = 0;
     await page.route('**/rest/v1/**', async route => {
       const request = route.request();
@@ -29,6 +30,7 @@ for (const surface of ['stables', 'admin', 'create-stable', 'farm']) {
       const table = url.pathname.split('/').pop();
       if (url.pathname.endsWith('/rpc/get_member_directory')) return route.continue();
       if (request.method() === 'GET') {
+        if (table === 'stable_members' && stableRow && url.searchParams.get('stable_id') === `eq.${stableRow.id}`) return route.fulfill({ json: ownerMembership ?? null });
         if (table === 'stables' && stableRow && url.searchParams.get('id') === `eq.${stableRow.id}`) return route.fulfill({ json: stableRow });
         if (table === 'farms' && farmRow && url.searchParams.get('id') === `eq.${farmRow.id}`) return route.fulfill({ json: farmRow });
         return route.continue();
@@ -50,7 +52,9 @@ for (const surface of ['stables', 'admin', 'create-stable', 'farm']) {
       }
       if (table === 'stable_members' && body.stable_id === stableRow?.id) {
         memberships++;
-        return route.fulfill({ json: memberships === 1 ? null : body });
+        expect(request.headers().prefer ?? '').not.toContain('return=representation');
+        if (memberships > 1) ownerMembership = body;
+        return route.fulfill({ status: 201, body: '' });
       }
       if (table === 'conversations' && body.stable_id === stableRow?.id) {
         chats++;
