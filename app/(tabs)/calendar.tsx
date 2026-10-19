@@ -340,6 +340,7 @@ export default function CalendarScreen() {
     time?: string;
     note?: string;
     assignToMe?: boolean;
+    assigneeId?: string;
   }>({ visible: false, mode: 'create' });
   const [claimingAssignmentIds, setClaimingAssignmentIds] = React.useState<Set<string>>(
     () => new Set(),
@@ -1097,6 +1098,7 @@ export default function CalendarScreen() {
         time: assignment.time,
         note: stripAssignmentNoteMetadata(assignment.note),
         assignToMe: assignment.assigneeId === currentUserId && assignment.status === 'assigned',
+        assigneeId: assignment.assigneeId,
       });
     },
     [assignments, currentUserId, router, toast],
@@ -1136,13 +1138,13 @@ export default function CalendarScreen() {
       const result = await actions.createAssignment(input);
       if (result.success && result.data) {
         const message = result.data.assigneeId
-          ? `${result.data.label} ${result.data.time} lades till på dig.`
+          ? `${result.data.label} ${result.data.time} tilldelades ${result.data.assigneeId === currentUserId ? 'dig' : users[result.data.assigneeId]?.name ?? 'medlemmen'}.`
           : `${result.data.label} ${result.data.time} finns nu som ledigt pass.`;
         toast.showToast(message, 'success');
       }
       return result;
     },
-    [actions, toast],
+    [actions, toast, currentUserId, users],
   );
 
   const handleUpdateAssignment = React.useCallback(
@@ -2899,6 +2901,7 @@ export default function CalendarScreen() {
                 ? (input.note && input.note.length > 0 ? input.note : '')
                 : undefined,
               assignToCurrentUser: assignChanged ? resolvedAssign : undefined,
+              assigneeId: input.assigneeId !== (assignmentModal.assigneeId ?? null) ? input.assigneeId : undefined,
             });
           } else {
             return handleCreateAssignment({
@@ -2915,6 +2918,7 @@ export default function CalendarScreen() {
                   ? assignmentModal.note.trim()
                   : undefined,
               assignToCurrentUser: resolvedAssign,
+              assigneeId: input.assigneeId,
             });
           }
         }}
@@ -2930,6 +2934,10 @@ export default function CalendarScreen() {
         initialTime={assignmentModal.time}
         initialNote={assignmentModal.note}
         initialAssignToMe={assignmentModal.assignToMe}
+        initialAssigneeId={assignmentModal.assigneeId}
+        members={canManageAssignments ? Object.values(users).filter(person => person.membership.some(entry =>
+          entry.stableId === currentStableId && ['admin', 'staff', 'rider'].includes(entry.role)))
+          .sort((a, b) => a.name.localeCompare(b.name, 'sv')).map(person => ({ id: person.id, name: person.id === currentUserId ? `${person.name} (jag)` : person.name })) : undefined}
       />
     </LinearGradient>
   );

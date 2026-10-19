@@ -377,6 +377,7 @@ export type CreateAssignmentInput = {
   time?: string;
   note?: string;
   assignToCurrentUser?: boolean;
+  assigneeId?: string | null;
   labelOverride?: string;
 };
 
@@ -400,6 +401,7 @@ export type UpdateAssignmentInput = {
   time?: string;
   note?: string;
   assignToCurrentUser?: boolean;
+  assigneeId?: string | null;
   labelOverride?: string;
 };
 
@@ -6602,8 +6604,14 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       const cleanedTime = input.time?.trim();
       const label = cleanedLabel || slotTitles[slot] || 'Pass';
       const time = cleanedTime || slotDefaultTimes[slot];
-      const status: AssignmentStatus = input.assignToCurrentUser ? 'assigned' : 'open';
-      const assigneeId = input.assignToCurrentUser ? current.currentUserId : undefined;
+      const assigneeId = input.assigneeId !== undefined
+        ? input.assigneeId ?? undefined
+        : input.assignToCurrentUser ? current.currentUserId : undefined;
+      if (input.assigneeId && !current.users[input.assigneeId]?.membership.some(entry =>
+        entry.stableId === stableId && ['admin', 'staff', 'rider'].includes(entry.role))) {
+        return { success: false, reason: 'Välj en medlem som har accepterat sin inbjudan till detta stall.' };
+      }
+      const status: AssignmentStatus = assigneeId ? 'assigned' : 'open';
 
       const assignment: Assignment = {
         id: input.requestId ?? generateId(),
@@ -6616,7 +6624,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         note: input.note,
         status,
         assigneeId,
-        assignedVia: input.assignToCurrentUser ? 'manual' : undefined,
+        assignedVia: assigneeId ? 'manual' : undefined,
       };
 
       const saved = await persistAssignmentInsert(assignment);
@@ -6894,7 +6902,19 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         updates.note = input.note.trim() ? input.note.trim() : undefined;
       }
 
-      if (input.assignToCurrentUser !== undefined) {
+      if (input.assigneeId !== undefined) {
+        if (existing.status === 'completed') {
+          return { success: false, reason: 'Ett slutfört pass kan inte tilldelas på nytt.' };
+        }
+        if (input.assigneeId && !current.users[input.assigneeId]?.membership.some(entry =>
+          entry.stableId === (input.stableId ?? existing.stableId) && ['admin', 'staff', 'rider'].includes(entry.role))) {
+          return { success: false, reason: 'Välj en medlem som har accepterat sin inbjudan till detta stall.' };
+        }
+        updates.assigneeId = input.assigneeId ?? undefined;
+        updates.status = input.assigneeId ? 'assigned' : 'open';
+        updates.assignedVia = input.assigneeId ? 'manual' : undefined;
+        updates.declinedByUserIds = existing.declinedByUserIds?.filter(id => id !== input.assigneeId);
+      } else if (input.assignToCurrentUser !== undefined) {
         if (input.assignToCurrentUser) {
           updates.status = 'assigned';
           updates.assigneeId = current.currentUserId;

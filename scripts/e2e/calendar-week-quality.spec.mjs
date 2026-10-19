@@ -221,3 +221,13 @@ test('Recurring total cap retains the date range and a shorter retry succeeds', 
   await expect(title).toHaveCount(0);
   expect((await qaAssignments(page)).filter(assignment => assignment.label === 'QA begränsad omgång')).toHaveLength(1);
 });
+
+test('owner can assign a new pass to a joined member', async ({ page }) => {
+  await page.goto('/calendar?qaDemo=1&view=all');
+  await page.getByLabel('Nytt pass', { exact: true }).click();
+  await page.getByPlaceholder('Ex. Mockning, Harva ridhus').fill('QA tilldelat medlemspass');
+  await page.getByRole('button', { name: 'Tilldela QA Medlem', exact: true }).click();
+  await page.getByText('Skapa pass', { exact: true }).last().click();
+  await expect.poll(async () => (await qaAssignments(page)).find(row => row.label === 'QA tilldelat medlemspass')?.assigneeId)
+    .toBe('00000000-0000-4000-8000-000000000002');
+});
