@@ -18,7 +18,7 @@ Inga dependencies behöver installeras. Typsnitt och logotyp kommer från appens
 
 Behåll hästsymbolen, Inter, blått och vitt. Använd signaturblått `#0099FF`, rent vitt, svart text och neutralt grå ytor. Knappar på klart blått har mörk text för kontrast. Blågrå bakgrund, pastellgradienter och flerfärgade dekorativa ikonytor är borttagna. Ikonerna kommer från det redan installerade Ionicons-setet i `@expo/vector-icons`; Hästar använder originalets geometriska hästsymbol. Aktiv flik använder en fylld ikon och tydlig formmarkering.
 
-**Färg & ikoner** i förhandsvisningens överkant låter dig jämföra signaturblått, svart/vitt och varmt vitt utan att tappa formulärutkast eller ändra appen. Endast signaturblått är standard; en omladdning återställer valet.
+**Vald färgriktning:** användaren har valt originalets klara blått `#0099FF` och rent vitt. De tillfälliga svartvita och varmvita alternativen är borttagna. Valet gäller färgerna i förhandsvisningen; det innebär inte ett godkännande av hela designen eller en integration i appen.
 
 | Före | Efter | Varför |
 | --- | --- | --- |

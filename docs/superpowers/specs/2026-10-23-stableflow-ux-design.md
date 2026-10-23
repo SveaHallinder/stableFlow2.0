@@ -92,4 +92,4 @@ Det skriftliga och visuella förslaget behöver granskas innan huvudvyerna ersä
 
 ## Visuell revision efter återkoppling
 
-Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Tre färgriktningar kan jämföras via förhandsvisningens separat märkta designverktyg. Detta är fortfarande ett förslag för visuell granskning, inte en godkänd integration.
+Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Användaren valde därefter originalets klara blått och rent vitt. De alternativa paletterna och den tillfälliga färgväljaren är borttagna. Färgvalet är bekräftat; ikonförslaget och helheten är fortfarande under visuell granskning, inte godkända för integration.
