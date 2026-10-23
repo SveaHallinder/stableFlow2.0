@@ -12,11 +12,13 @@ python3 -m http.server 4173 --bind 127.0.0.1 --directory design-preview
 
 Öppna http://127.0.0.1:4173/. Knappen **Utforska förslaget** visar ägarresa, medlemsresa, daglig användning och stallhantering.
 
-Inga dependencies behöver installeras. Typsnitt och logotyp kommer från appens befintliga tillgångar. Inter-licensen ligger bredvid fontfilerna. Ingen extern font, bild, analys eller backend laddas.
+Inga dependencies behöver installeras. Typsnitt och logotyp kommer från appens befintliga tillgångar. Inter-licensen ligger bredvid fontfilerna. Ikonfont och MIT-licens är kopierade från projektets befintliga `@expo/vector-icons`. Ingen extern font, bild, analys eller backend laddas.
 
 ## Riktning
 
-Behåll hästsymbolen, Inter, blått och vitt. Använd signaturblått `#0099FF` för identitet/markeringar och en mörkare följeslagare `#006FBE` för läsbara vita knapptexter. Lugn blåvit bakgrund, tydlig textkontrast, färre visuella lager och ett huvudbeslut åt gången.
+Behåll hästsymbolen, Inter, blått och vitt. Använd signaturblått `#0099FF`, rent vitt, svart text och neutralt grå ytor. Knappar på klart blått har mörk text för kontrast. Blågrå bakgrund, pastellgradienter och flerfärgade dekorativa ikonytor är borttagna. Ikonerna kommer från det redan installerade Ionicons-setet i `@expo/vector-icons`; Hästar använder originalets geometriska hästsymbol. Aktiv flik använder en fylld ikon och tydlig formmarkering.
+
+**Färg & ikoner** i förhandsvisningens överkant låter dig jämföra signaturblått, svart/vitt och varmt vitt utan att tappa formulärutkast eller ändra appen. Endast signaturblått är standard; en omladdning återställer valet.
 
 | Före | Efter | Varför |
 | --- | --- | --- |

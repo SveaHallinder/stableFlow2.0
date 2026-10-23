@@ -8,7 +8,7 @@ Datum: 2026-10-23. Status: **visuellt granskningsförslag; inte godkänt för in
 
 ## Verifierade källor
 
-- `design/tokens.ts`, `design/system.ts`, `components/theme.ts`: #0099FF, vita ytor, Inter, befintlig radieskala. Normal vit text på signaturblått har otillräcklig kontrast; komplettera med #006FBE för dessa knappar.
+- `design/tokens.ts`, `design/system.ts`, `components/theme.ts`: #0099FF, vita ytor, Inter, befintlig radieskala. Normal vit text på signaturblått har otillräcklig kontrast; använd mörk text på signaturblå knappar.
 - `assets/images/figma/logo.svg`: blå befintlig hästsymbol. `logo-blue.svg` innehåller äldre grönt och används inte.
 - `app/(tabs)/_layout.tsx`, `components/DesktopNav.tsx`: sex destinationer och varierande ikonrepresentation.
 - `app/(tabs)/index.tsx`: överlappande snabbval samt lång sektionering innan den praktiska prioritetsytan.
@@ -66,7 +66,7 @@ Mobil stalladministration är ny UI-integration eftersom den nuvarande adminrutt
 ## Visuella regler
 
 - Samma logotyp och typsnitt; inget nytt typsnittspaket.
-- Signaturblått för identitet och vald status. Mörkare blått för läsbara primärknappar; svart/mörk text på ljusa ytor.
+- Signaturblått för identitet och vald status. Mörk text på signaturblå primärknappar; svart text på vita och neutralt grå ytor.
 - Primär information först. Undvik kort i kort utan funktionell anledning.
 - Formulär med synliga etiketter, ett tydligt sparande, separat tillbaka/avbryt och specifika fel nära fältet.
 - Begripliga tomlägen för hästsökning, datum utan pass, rapporter och nya stall.
@@ -89,3 +89,7 @@ Varje del verifieras mot sina faktiska actions, återförsök, stallbyte och äg
 Förhandsvisning: `design-preview/` på http://127.0.0.1:4173/. QA-stegen finns i dess README. Den är inte kopplad till Supabase och ändrar inte Expo-appen.
 
 Det skriftliga och visuella förslaget behöver granskas innan huvudvyerna ersätts. Detta är den konkreta avstämningspunkten; ingen extra generell kravintervju behövs för att börja nästa fas efter ett ja.
+
+## Visuell revision efter återkoppling
+
+Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Tre färgriktningar kan jämföras via förhandsvisningens separat märkta designverktyg. Detta är fortfarande ett förslag för visuell granskning, inte en godkänd integration.
