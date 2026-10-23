@@ -8,7 +8,7 @@ Datum: 2026-10-23. Status: **visuellt granskningsförslag; inte godkänt för in
 
 ## Verifierade källor
 
-- `design/tokens.ts`, `design/system.ts`, `components/theme.ts`: #0099FF, vita ytor, Inter, befintlig radieskala. Normal vit text på signaturblått har otillräcklig kontrast; använd mörk text på signaturblå knappar.
+- `design/tokens.ts`, `design/system.ts`, `components/theme.ts`: #0099FF, vita ytor, Inter, befintlig radieskala. Normal vit text på signaturblått har otillräcklig kontrast; använd vita knappar med mörk text och tunn neutral kant enligt användarens senaste återkoppling.
 - `assets/images/figma/logo.svg`: blå befintlig hästsymbol. `logo-blue.svg` innehåller äldre grönt och används inte.
 - `app/(tabs)/_layout.tsx`, `components/DesktopNav.tsx`: sex destinationer och varierande ikonrepresentation.
 - `app/(tabs)/index.tsx`: överlappande snabbval samt lång sektionering innan den praktiska prioritetsytan.
@@ -66,7 +66,7 @@ Mobil stalladministration är ny UI-integration eftersom den nuvarande adminrutt
 ## Visuella regler
 
 - Samma logotyp och typsnitt; inget nytt typsnittspaket.
-- Signaturblått för identitet och vald status. Mörk text på signaturblå primärknappar; svart text på vita och neutralt grå ytor.
+- Signaturblått för identitet och små accenter. Vita primärknappar med mörk text och tunn neutral kant; vald flik får fylld ikon och tydligare text utan blå platta. Tidsmarkeringar och väder är neutrala.
 - Primär information först. Undvik kort i kort utan funktionell anledning.
 - Formulär med synliga etiketter, ett tydligt sparande, separat tillbaka/avbryt och specifika fel nära fältet.
 - Begripliga tomlägen för hästsökning, datum utan pass, rapporter och nya stall.
@@ -93,3 +93,5 @@ Det skriftliga och visuella förslaget behöver granskas innan huvudvyerna ersä
 ## Visuell revision efter återkoppling
 
 Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Användaren valde därefter originalets klara blått och rent vitt. De alternativa paletterna och den tillfälliga färgväljaren är borttagna. Färgvalet är bekräftat; ikonförslaget och helheten är fortfarande under visuell granskning, inte godkända för integration.
+
+Användarens senaste precisering: behåll originalets blå identitet men ta bort blå bakgrundsplattor. Detta omfattar primärknappar, aktiv navigation, tidsmarkeringar och motsvarande väder-/valytor. Valda kontroller ska fortsatt gå att identifiera genom ikon, text, neutral yta eller kant.

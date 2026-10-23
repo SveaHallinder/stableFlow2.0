@@ -16,9 +16,9 @@ Inga dependencies behöver installeras. Typsnitt och logotyp kommer från appens
 
 ## Riktning
 
-Behåll hästsymbolen, Inter, blått och vitt. Använd signaturblått `#0099FF`, rent vitt, svart text och neutralt grå ytor. Knappar på klart blått har mörk text för kontrast. Blågrå bakgrund, pastellgradienter och flerfärgade dekorativa ikonytor är borttagna. Ikonerna kommer från det redan installerade Ionicons-setet i `@expo/vector-icons`; Hästar använder originalets geometriska hästsymbol. Aktiv flik använder en fylld ikon och tydlig formmarkering.
+Behåll hästsymbolen, Inter, blått och vitt. Använd signaturblått `#0099FF`, rent vitt, svart text och neutralt grå ytor. Knappar har vit yta, mörk text och tunn neutral kant. Vald flik markeras med fylld ikon och tydligare text; ingen blå bakgrundsplatta. Tidsmarkeringar och väder har neutral bakgrund. Blågrå bakgrund, pastellgradienter och flerfärgade dekorativa ikonytor är borttagna. Ikonerna kommer från det redan installerade Ionicons-setet i `@expo/vector-icons`; Hästar använder originalets geometriska hästsymbol. Aktiv flik använder en fylld ikon och tydlig formmarkering.
 
-**Vald färgriktning:** användaren har valt originalets klara blått `#0099FF` och rent vitt. De tillfälliga svartvita och varmvita alternativen är borttagna. Valet gäller färgerna i förhandsvisningen; det innebär inte ett godkännande av hela designen eller en integration i appen.
+**Vald färgriktning:** användaren har valt originalets klara blått `#0099FF` och rent vitt. Blått används sparsamt i logotyp och små accenter. På användarens begäran är blå bakgrundsplattor borttagna från knappar, navigation, tidsmarkeringar, väder och valda kontroller. De tillfälliga alternativa paletterna är borttagna. Valet gäller färgerna i förhandsvisningen; det innebär inte ett godkännande av hela designen eller en integration i appen.
 
 | Före | Efter | Varför |
 | --- | --- | --- |
