@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ReactNode } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, useWindowDimensions, View, type StyleProp, type ViewStyle } from 'react-native';
 import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Logo from '@/assets/images/figma/logo.svg';
@@ -58,6 +58,8 @@ export const ScreenHeader = ({
   const pathname = usePathname();
   const params = useGlobalSearchParams();
   const isDesktopWeb = useIsDesktopWeb();
+  const { width } = useWindowDimensions();
+  const isNarrow = width < 360;
   const fromOnboarding = Array.isArray(params.fromOnboarding) ? params.fromOnboarding[0] : params.fromOnboarding;
   const showAccount = primaryPaths.has(pathname) && fromOnboarding !== '1';
   const resolvedLeft = left !== undefined ? left : showLogo && !isDesktopWeb ? (
@@ -72,12 +74,12 @@ export const ScreenHeader = ({
   ) : null);
 
   return (
-    <View style={[styles.header, isDesktopWeb && styles.desktopHeader, style]}>
-      <View style={styles.leading}>
+    <View style={[styles.header, isDesktopWeb && styles.desktopHeader, style, isNarrow && styles.headerNarrow]}>
+      <View style={[styles.leading, isNarrow && styles.leadingNarrow]}>
         {resolvedLeft}
         <View style={styles.titleStack}>
           {children ?? <>
-            <Text accessibilityRole="header" numberOfLines={1} style={[styles.title, isDesktopWeb && styles.titleDesktop]}>{title}</Text>
+            <Text accessibilityRole="header" numberOfLines={1} style={[styles.title, isDesktopWeb && styles.titleDesktop, isNarrow && styles.titleNarrow]}>{title}</Text>
             {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
             {typeof meta === 'string' ? <Text style={styles.subtitle}>{meta}</Text> : meta}
           </>}
@@ -99,6 +101,9 @@ const styles = StyleSheet.create({
   subtitle: { fontFamily: systemFonts.regular, fontSize: 13, lineHeight: 20, color: systemPalette.textSecondary },
   desktopHeader: { minHeight: 94, paddingVertical: 22, paddingHorizontal: 4 },
   titleDesktop: { fontSize: 30, lineHeight: 38, letterSpacing: -0.9 },
+  headerNarrow: { paddingHorizontal: 16, gap: 8 },
+  leadingNarrow: { gap: 6 },
+  titleNarrow: { fontSize: 22, lineHeight: 28 },
   actions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
   accountButton: { minWidth: 44, minHeight: 50, alignItems: 'center', justifyContent: 'center', gap: 3 },
   avatar: { width: 28, height: 28, borderRadius: 14 },

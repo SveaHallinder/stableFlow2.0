@@ -29,7 +29,6 @@ test.afterEach(async ({ page }, testInfo) => {
 
 for (const entry of [
   { route: '/feed', title: 'Flöde' },
-  { route: '/messages', title: 'Chatt' },
   { route: '/calendar', title: 'Schema', section: 'Tävling' },
 ]) {
   test(`header search from ${entry.title} opens usable existing search`, async ({ page }) => {
@@ -43,6 +42,28 @@ for (const entry of [
     await expect(page.getByText('Saga', { exact: true }).first()).toBeVisible();
   });
 }
+
+test('new chat member search filters locally and clearing restores members', async ({ page }) => {
+  await page.goto('/messages?qaDemo=1');
+  await expect(page.getByRole('heading', { name: 'Chatt', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Ny chatt', exact: true }).click();
+  const search = page.getByRole('textbox', { name: 'Sök medlem för ny chatt', exact: true });
+  const member = page.getByRole('button', { name: 'Starta privat chatt med QA Medlem', exact: true });
+  const otherMember = page.getByRole('button', { name: 'Starta privat chatt med QA Gruppmedlem', exact: true });
+  await expect(search).toBeVisible();
+  await expect(member).toBeVisible();
+  await expect(otherMember).toBeVisible();
+  await search.fill('QA Medlem');
+  await expect(member).toBeVisible();
+  await expect(otherMember).toHaveCount(0);
+  await search.fill('Ingen träff');
+  await expect(member).toHaveCount(0);
+  await expect(otherMember).toHaveCount(0);
+  await expect(page.getByText('Ingen medlem matchar sökningen. Prova ett annat namn.', { exact: true })).toBeVisible();
+  await search.fill('');
+  await expect(member).toBeVisible();
+  await expect(otherMember).toBeVisible();
+});
 
 test('the stable switcher exposes the current stable when local selection changes', async ({ page }) => {
   await page.goto('/messages?qaDemo=1');

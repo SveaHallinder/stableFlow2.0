@@ -12,7 +12,7 @@ test('horse feed plans remain visible when the daily hay check is cleared', asyn
   await page.getByRole('tab', { name: 'Foder', exact: true }).click();
   await expect(page.getByText('Saga – kvällsfoder', { exact: true })).toBeVisible();
   await page.getByLabel('Öppna hästlistan').click();
-  await expect(page.getByText('1 av 2 fodringar klara', { exact: true })).toBeVisible();
+  await expect(page.getByText('1/2 foder', { exact: true })).toBeVisible();
   await expect(page.getByText('Foderplan ej satt ännu', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/stableflow-autumn-horses-mobile.png' });
   await page.getByRole('button', { name: 'Öppna Saga', exact: true }).click();

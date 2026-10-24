@@ -1211,7 +1211,7 @@ export default function OverviewScreen() {
           {derived.cleanAssignmentNote(myNextAssignment.note) ? <Text style={styles.workspacePassNote}>{derived.cleanAssignmentNote(myNextAssignment.note)}</Text> : null}
           <View style={styles.workspacePassFooter}>
             <Text style={styles.workspaceSubtitle}>Detaljer, instruktioner och klarmarkering.</Text>
-            <TouchableOpacity accessibilityRole="button" onPress={() => handleOpenAssignment(myNextAssignment.id)} style={styles.workspaceButton} activeOpacity={0.8}>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Öppna mitt pass" onPress={() => handleOpenAssignment(myNextAssignment.id)} style={styles.workspaceButton} activeOpacity={0.8}>
               <Feather name="arrow-right" size={17} color={palette.primaryText} /><Text style={styles.workspaceButtonText}>Öppna mitt pass</Text>
             </TouchableOpacity>
           </View>
@@ -1247,7 +1247,7 @@ export default function OverviewScreen() {
   );
   const horseStatusSection = (
     <View style={styles.workspaceSection}>
-      <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded: horseStatusExpanded }} onPress={() => setHorseStatusExpanded(value => !value)} style={styles.workspaceDisclosure}>
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Häststatus & ansvar" accessibilityState={{ expanded: horseStatusExpanded }} onPress={() => setHorseStatusExpanded(value => !value)} style={styles.workspaceDisclosure}>
         <AppIcon name="horse" size={22} focused /><Text style={styles.workspaceDisclosureText}>Häststatus & ansvar</Text><Feather name={horseStatusExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={palette.primaryText} />
       </TouchableOpacity>
       {horseStatusExpanded ? prioritySection : null}

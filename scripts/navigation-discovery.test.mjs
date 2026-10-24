@@ -12,7 +12,7 @@ function renderScreen(path, { owner = false, canGoBack = false, pathname = '/' }
   } };
   const modules = {
     react: { __esModule: true, default: React },
-    'react-native': { View: 'View', Text: 'Text', TouchableOpacity: 'Button', ScrollView: 'ScrollView', StyleSheet: { create: value => value } },
+    'react-native': { View: 'View', Text: 'Text', TouchableOpacity: 'Button', ScrollView: 'ScrollView', useWindowDimensions: () => ({ width: 390, height: 844 }), StyleSheet: { create: value => value } },
     'react-native-safe-area-context': { SafeAreaView: 'SafeAreaView' },
     'expo-router': { useRouter: () => router, usePathname: () => pathname, useGlobalSearchParams: () => ({}) },
     '@expo/vector-icons': { Ionicons: 'Ionicons' },
