@@ -140,12 +140,13 @@ test('renaming a Horse retains every paddock link in list, profile, Today, searc
     return horse.id;
   });
   await expect(page.getByText('Nova', { exact: true })).toBeVisible();
-  await expect(page.getByText('Box B1 · Östra hagen, Västra hagen', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Status för Nova', exact: true }).click();
+  await expect(page.getByText(/(?:^| · )Box B1 · Östra hagen, Västra hagen$/)).toBeVisible();
+  await page.getByRole('button', { name: 'Öppna Nova', exact: true }).click();
   await expect(page).toHaveURL(/\/horses\/qa-horse-main(?:\?|$)/);
   await expect(page.getByText('Box B1 · Östra hagen, Västra hagen · 9 år', { exact: true }).filter({ visible: true })).toBeVisible();
   await page.getByLabel('Öppna hästlistan').click();
   await page.getByRole('tab', { name: 'Idag', exact: true }).click();
+  await page.getByText('Häststatus & ansvar', { exact: true }).click();
   const todayLink = page.getByText('Öppna Nova · Östra hagen, Västra hagen', { exact: true });
   await expect(todayLink).toBeVisible();
   expect(await todayLink.evaluate(element => element.getBoundingClientRect().right <= globalThis.innerWidth)).toBe(true);
@@ -184,7 +185,7 @@ test('view role reads only selected-stable paddocks and cannot open write contro
 test('legacy not-ready text is readable and unconfirmed without declaring a horse unplaced', async ({ page }, testInfo) => {
   await seed(page, 'legacy');
   await expect(page.getByText('Ingen hage satt', { exact: true })).toHaveCount(0);
-  await expect(page.getByText('Box B1 · Hage ej bekräftad', { exact: true })).toBeVisible();
+  await expect(page.getByText(/(?:^| · )Box B1 · Hage ej bekräftad$/)).toBeVisible();
   await page.getByLabel('Öppna hagar').click();
   await expect(page.getByText('Hästkopplingarna är inte aktiverade ännu. Hagar kan inte skapas, ändras eller tas bort.', { exact: true })).toBeVisible();
   await expect(page.getByText(new RegExp(`Tidigare uppgifter \\(ej bekräftade\\): ${legacyName}, Tom äldre post`))).toBeVisible();
@@ -212,7 +213,7 @@ test('global unready state with zero paddocks shows a transition instead of an e
 
 test('ready unknown/cross-stable IDs stay unconfirmed in cards and actual print', async ({ page }) => {
   await seed(page, 'unresolved');
-  await expect(page.getByText('Box B1 · Hage ej bekräftad', { exact: true })).toBeVisible();
+  await expect(page.getByText(/(?:^| · )Box B1 · Hage ej bekräftad$/)).toBeVisible();
   await page.getByLabel('Öppna hagar').click();
   await expect(page.getByText('Hagen behöver kontroll', { exact: true })).toBeVisible();
   await expect(page.getByText('Hästkopplingar ej bekräftade', { exact: true })).toBeVisible();

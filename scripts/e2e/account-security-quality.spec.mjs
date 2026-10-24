@@ -104,7 +104,7 @@ async function boot(page, { rejectUpdate = false } = {}) {
   await page.getByPlaceholder('namn@exempel.se').fill(user.email);
   await page.getByPlaceholder('Minst 8 tecken').fill('OfflineFixture1234!');
   await page.getByRole('button', { name: 'Logga in', exact: true }).last().click();
-  await expect(visibleText(page, 'Dina uppgifter först')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Idag', exact: true })).toBeVisible();
   await page.goto('/settings');
   await page.getByText('Konto', { exact: true }).click();
   await expect(visibleText(page, user.email)).toBeVisible();

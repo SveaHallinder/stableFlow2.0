@@ -1,3 +1,4 @@
+/* global document */
 import { expect, test } from '@playwright/test';
 
 test.use({ viewport: { width: 390, height: 844 } });
@@ -70,24 +71,22 @@ test('validation errors are announced and remain readable for six seconds', asyn
   await expect(error).toHaveCount(0);
 });
 
-test('mobile calendar sections remain reachable without horizontal content shift', async ({ page }) => {
+test('mobile calendar categories can be scrolled and selected without page overflow', async ({ page }, testInfo) => {
   await page.route('**/rest/v1/**', route => route.abort('blockedbyclient'));
   await page.route('**/auth/v1/**', route => route.abort('blockedbyclient'));
   await page.route('**/functions/v1/**', route => route.abort('blockedbyclient'));
   await page.goto('/calendar?qaDemo=1');
-  const labels = ['Stallschema', 'Ridschema', 'Ridhus', 'Tävling', 'Vård'];
-  const first = page.getByRole('button', { name: 'Stallschema', exact: true });
-  for (const active of ['Vård', 'Stallschema']) {
-    await page.getByRole('button', { name: active, exact: true }).click();
-    if (active === 'Stallschema') await page.getByText('Lediga', { exact: true }).first().click();
-    for (const name of labels) {
-      const section = page.getByRole('button', { name, exact: true });
-      await expect(section).toBeVisible();
-      const box = await section.boundingBox();
-      expect(box.x).toBeGreaterThanOrEqual(0);
-      expect(box.x + box.width).toBeLessThanOrEqual(390);
-    }
-    const offsets = await first.evaluate(element => {
+  const labels = ['Stallpass', 'Ridning', 'Ridhus', 'Tävling', 'Vård', 'Stallpass'];
+  for (const name of labels) {
+    const section = page.getByRole('button', { name, exact: true });
+    await section.scrollIntoViewIfNeeded();
+    await expect(section).toBeInViewport();
+    await section.click();
+    await expect(section).toHaveAttribute('aria-pressed', 'true');
+    const box = await section.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    const offsets = await section.evaluate(element => {
       const values = [];
       for (let parent = element.parentElement; parent; parent = parent.parentElement) {
         if (window.getComputedStyle(parent).overflowX === 'hidden') values.push(parent.scrollLeft);
@@ -96,6 +95,10 @@ test('mobile calendar sections remain reachable without horizontal content shift
     });
     expect(offsets.length).toBeGreaterThan(0);
     expect(offsets.every(value => value === 0)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   }
-  await page.screenshot({ path: '/tmp/stableflow-calendar-mobile-sections-final-20261005.png' });
+  await page.getByRole('button', { name: 'Lediga', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Stallpass', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Lediga', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.screenshot({ path: testInfo.outputPath('calendar-mobile-categories.png') });
 });

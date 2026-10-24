@@ -1498,6 +1498,14 @@ export default function CalendarScreen() {
             })}
           </ScrollView>
 
+          {activeFilter === 'Pass' ? (
+            <View style={styles.planningRow}>
+              <TouchableOpacity style={styles.recurringButton} onPress={() => router.push('/season-schedule')} accessibilityRole="button" accessibilityLabel="Fasta pass">
+                <Feather name="calendar" size={16} color={palette.primaryText} /><Text style={styles.recurringButtonText}>Fasta pass</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {activeFilter === 'Pass' && legendExpanded && (
             <View style={[styles.legendCard, isDesktopWeb && styles.legendCardDesktop]}>
               {legendItems.map((item) => (
@@ -1711,7 +1719,8 @@ export default function CalendarScreen() {
             <View style={styles.passViewGroup}>
               {passViewOptions.map(option => <TouchableOpacity key={option.id} onPress={() => setPassView(option.id)}
                 style={[styles.passViewButton, option.id === passView && styles.passViewButtonActive]} activeOpacity={0.8}
-                accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected: option.id === passView }}>
+                accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected: option.id === passView }}
+                {...(Platform.OS === 'web' ? { 'aria-pressed': option.id === passView } : {})}>
                 <Text style={[styles.passViewText, option.id === passView && styles.passViewTextActive]}>{option.label}</Text>
               </TouchableOpacity>)}
             </View>
@@ -1770,9 +1779,6 @@ export default function CalendarScreen() {
 
           {activeFilter === 'Pass' ? (
             <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
-              <TouchableOpacity style={styles.recurringButton} onPress={() => router.push('/season-schedule')} accessibilityRole="button" accessibilityLabel="Fasta pass">
-                <Feather name="calendar" size={16} color={palette.primaryText} /><Text style={styles.recurringButtonText}>Fasta pass</Text>
-              </TouchableOpacity>
               <TouchableOpacity
                   style={styles.legendToggle}
                   onPress={() => setLegendExpanded((expanded) => !expanded)}
@@ -3688,6 +3694,7 @@ const styles = StyleSheet.create({
   categoryButtonActive: { backgroundColor: palette.surfaceMuted, borderColor: palette.primaryText },
   categoryText: { fontFamily: theme.fonts.regular, fontSize: 14, color: palette.secondaryText },
   categoryTextActive: { fontFamily: theme.fonts.semibold, color: palette.primaryText },
+  planningRow: { flexDirection: 'row', alignItems: 'center' },
   datePanel: { gap: 8 },
   dateStrip: { flexDirection: 'row', gap: 6 },
   dateButton: { flex: 1, minWidth: 0, minHeight: 78, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: palette.border, borderRadius: 18, backgroundColor: palette.surface },
@@ -4376,6 +4383,8 @@ const styles = StyleSheet.create({
   },
   scheduleTitleButton: {
     minHeight: 44,
+    alignSelf: 'stretch',
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-start',
@@ -4400,6 +4409,7 @@ const styles = StyleSheet.create({
   },
   scheduleLabel: {
     fontFamily: theme.fonts.semibold,
+    flex: 1,
     flexShrink: 1,
     fontSize: 16,
     fontWeight: '600',

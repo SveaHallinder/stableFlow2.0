@@ -3,15 +3,19 @@ import { test, expect } from '@playwright/test';
 test('horse feed plans remain visible when the daily hay check is cleared', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/horses/qa-horse-main?qaDemo=1');
+  await page.getByRole('tab', { name: 'Foder', exact: true }).click();
   await expect(page.getByText('Saga – kvällsfoder', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Översikt', exact: true }).click();
   const hayRow = page.getByText('Hö', { exact: true }).locator('..');
   await hayRow.getByText('Klart', { exact: true }).click();
   await expect(hayRow.getByText('Markera', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Foder', exact: true }).click();
+  await expect(page.getByText('Saga – kvällsfoder', { exact: true })).toBeVisible();
   await page.getByLabel('Öppna hästlistan').click();
   await expect(page.getByText('1 av 2 fodringar klara', { exact: true })).toBeVisible();
   await expect(page.getByText('Foderplan ej satt ännu', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: '/tmp/stableflow-autumn-horses-mobile.png' });
-  await page.getByRole('button', { name: 'Status för Saga', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna Saga', exact: true }).click();
   await expect(page).toHaveURL(/\/horses\/qa-horse-main/);
   await expect(page.getByText('Dagens status', { exact: true }).last()).toBeVisible();
 });
@@ -19,7 +23,7 @@ test('horse feed plans remain visible when the daily hay check is cleared', asyn
 test('mobile navigation shows destination labels and a readable new assignment action', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/calendar?qaDemo=1');
-  for (const label of ['Idag', 'Hästar', 'Schema', 'Feed', 'Chat']) {
+  for (const label of ['Idag', 'Hästar', 'Schema', 'Flöde', 'Chatt']) {
     await expect(page.getByRole('tab', { name: label, exact: true }).getByText(label, { exact: true })).toBeVisible();
   }
   const create = page.getByRole('button', { name: 'Nytt pass', exact: true }).first();

@@ -81,7 +81,7 @@ async function offlineSession(page, { paddocks = [], save, remove } = {}) {
   await page.getByPlaceholder('namn@exempel.se').fill(user.email);
   await page.getByPlaceholder('Minst 8 tecken').fill('OfflineFixture1234!');
   await page.getByRole('button', { name: 'Logga in', exact: true }).last().click();
-  await expect(page.getByText('Läget i stallet', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Idag', exact: true })).toBeVisible();
   return { blockedWrites };
 }
 
@@ -116,6 +116,7 @@ for (const surface of ['paddocks', 'stables', 'admin', 'setup-paddocks']) {
     });
     await page.goto(`/${surface}`);
     if (surface === 'paddocks') await page.getByText('Lägg till hage', { exact: true }).click();
+    if (surface === 'admin') await page.getByText('Skapa hage', { exact: true }).click();
     const name = page.getByPlaceholder(surface === 'paddocks' ? 'Ex. Hage 3, Gräshage, Paddock vid ridhuset' : surface === 'stables' ? 'Namn eller nummer' : 'Namn på hage');
     await name.fill('Offline Sparad hage');
     const selected = page.getByRole('button', { name: /Saga · Box B1 · Offline Ägare/ });

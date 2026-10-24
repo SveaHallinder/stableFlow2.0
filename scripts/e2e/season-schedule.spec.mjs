@@ -122,7 +122,7 @@ test('Schema opens named periods and five daily passes fit on mobile with inclus
   expect(assignments.filter(item => item.date === '2026-11-14')).toHaveLength(5);
   expect(assignments.every(item => item.date >= '2026-11-01' && item.date <= '2026-11-14')).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await visibleText(page, 'En period. Ett gemensamt schema.').scrollIntoViewIfNeeded();
+  await visibleText(page, 'Stallets fasta pass.').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('season-five-templates-mobile.png'), fullPage: true });
 });
 
@@ -216,6 +216,7 @@ test('An owner can leave a weekly cell empty and explicitly unlock it for member
   await expect(page.getByRole('button', { name: 'Öppna Lunchfodring 2026-11-04', exact: true })).toBeVisible();
   await setDemoRole(page, 'rider', 'view');
   await page.getByRole('button', { name: 'Öppna Lunchfodring 2026-11-04', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna fast pass och veckoval', exact: true }).click();
   await page.getByRole('button', { name: 'Bara detta pass', exact: true }).click();
   await expect(page.getByLabel('Passets namn', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Släpp bara detta pass', exact: true }).click();
@@ -225,6 +226,7 @@ test('An owner can leave a weekly cell empty and explicitly unlock it for member
   expect(released.find(item => item.date === '2026-11-11')?.assigneeId).toBe(currentUserId);
   await page.getByRole('button', { name: 'Tillbaka till schema', exact: true }).click();
   await page.getByRole('button', { name: 'Öppna Lunchfodring 2026-11-04', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna fast pass och veckoval', exact: true }).click();
   await page.getByRole('button', { name: 'Bara detta pass', exact: true }).click();
   await page.getByRole('button', { name: 'Ta bara detta pass', exact: true }).click();
   await expect(visibleText(page, 'Passet är sparat.')).toBeVisible();
@@ -254,7 +256,7 @@ test('Five daily passes for a year are created in one action and an interrupted 
   const resumed = (await qaState(page)).assignments.filter(item => item.templateId);
   expect(resumed).toHaveLength(1825);
   expect(new Set(resumed.map(item => `${item.templateId}:${item.originalDate}`)).size).toBe(1825);
-  await visibleText(page, 'En period. Ett gemensamt schema.').scrollIntoViewIfNeeded();
+  await visibleText(page, 'Stallets fasta pass.').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('season-year-resumed.png'), fullPage: true });
 });
 
@@ -304,7 +306,7 @@ test('A concurrent owner edit retains the draft and requires an explicit version
   await page.getByRole('button', { name: 'Spara och uppdatera passen', exact: true }).click();
   await expect(visibleText(page, 'Passen är skapade.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Välj period QA mitt bevarade utkast', exact: true })).toBeVisible();
-  await visibleText(page, 'En period. Ett gemensamt schema.').scrollIntoViewIfNeeded();
+  await visibleText(page, 'Stallets fasta pass.').scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('season-owner-conflict-retry.png'), fullPage: true });
   await otherOwner.close();
 });
@@ -330,6 +332,7 @@ test('An open and then own seasonal calendar pass opens both one-date and weekda
   await page.goto('/calendar?qaDemo=1&date=2026-11-01&view=all');
   await expect(page.getByRole('button', { name: 'Öppna Morgonfodring 2026-11-01', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Öppna Morgonfodring 2026-11-01', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna fast pass och veckoval', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/season-schedule\\?assignmentId=${morning.id}`));
   await page.getByRole('button', { name: 'Kommande pass denna veckodag', exact: true }).click();
   await expect(page.getByLabel('Veckoval från datum', { exact: true })).toHaveValue('2026-11-01');
@@ -339,6 +342,7 @@ test('An open and then own seasonal calendar pass opens both one-date and weekda
   await expect(visibleText(page, 'Veckofördelningen är sparad.')).toBeVisible();
   await page.goto('/calendar?qaDemo=1&date=2026-11-01&view=all');
   await page.getByRole('button', { name: 'Öppna Morgonfodring 2026-11-01', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna fast pass och veckoval', exact: true }).click();
   await page.getByRole('button', { name: 'Bara detta pass', exact: true }).click();
   const longName = 'QA morgonfodring och utsläpp för alla hästar i norra hagen';
   await page.getByLabel('Passets namn', { exact: true }).fill(longName);

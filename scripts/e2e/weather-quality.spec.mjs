@@ -1,4 +1,6 @@
+/* global document */
 import { expect, test } from '@playwright/test';
+import { URL } from 'node:url';
 
 test.use({ viewport: { width: 390, height: 844 }, timezoneId: 'Europe/Stockholm' });
 
@@ -30,7 +32,7 @@ async function prepare(page, status = 200) {
   });
   await page.routeWebSocket(/supabase\./, socket => socket.close());
   await page.goto('/?qaDemo=1');
-  await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
   return weatherRequests;
 }
 
@@ -104,7 +106,7 @@ test('weather: the owner can correct the current stable’s unknown place and re
   await expect(page.getByPlaceholder('Plats (valfritt)', { exact: true })).toHaveValue('platsen');
   await page.getByPlaceholder('Plats (valfritt)', { exact: true }).fill('Åkersberga');
   await page.getByText('Spara & tillbaka', { exact: true }).click();
-  await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: /Prognos för Åkersberga/ })).toBeVisible();
 });
 

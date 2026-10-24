@@ -143,7 +143,7 @@ test('mobile recovery survives consumed SDK hash, browser refocus and incomplete
   const fixture = await offlineRecovery(page, { incompleteOnboarding: true });
   await expectRecoveryForm(page);
   await expect.poll(() => fixture.calls.memberships).toBeGreaterThan(0);
-  await expect(page.getByText('Kom igång', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Välkommen till ditt stall', { exact: true })).toHaveCount(0);
   await fillPassword(page);
   await refocusRecovery(page, fixture);
   await expectRecoveryForm(page);
@@ -151,7 +151,7 @@ test('mobile recovery survives consumed SDK hash, browser refocus and incomplete
   await expect(page.getByPlaceholder('Upprepa lösenord')).toHaveValue(password);
   await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Uppdatera lösenord', exact: true }).click();
-  await expect(page.getByText('Kom igång', { exact: true })).toBeVisible();
+  await expect(page.getByText('Välkommen till ditt stall', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/setup$/);
   expect(fixture.calls.passwordUpdates).toEqual([expect.objectContaining({ password })]);
   expect(await page.evaluate(key => JSON.parse(globalThis.localStorage.getItem(key))?.user?.id, fixture.storageKey())).toBe(userId);
@@ -159,7 +159,7 @@ test('mobile recovery survives consumed SDK hash, browser refocus and incomplete
   // The reset exemption must not keep an ordinary auth route open for an
   // already signed-in account after recovery has finished.
   await page.goto('/(auth)');
-  await expect(page.getByText('Kom igång', { exact: true })).toBeVisible();
+  await expect(page.getByText('Välkommen till ditt stall', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/setup$/);
   await expect(page.getByPlaceholder('namn@exempel.se')).toHaveCount(0);
   expectCleanTraffic(fixture);

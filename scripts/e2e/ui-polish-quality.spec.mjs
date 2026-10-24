@@ -28,8 +28,8 @@ test.afterEach(async ({ page }, testInfo) => {
 });
 
 for (const entry of [
-  { route: '/feed', title: 'Feed' },
-  { route: '/messages', title: 'Meddelanden' },
+  { route: '/feed', title: 'Flöde' },
+  { route: '/messages', title: 'Chatt' },
   { route: '/calendar', title: 'Schema', section: 'Tävling' },
 ]) {
   test(`header search from ${entry.title} opens usable existing search`, async ({ page }) => {
@@ -46,7 +46,7 @@ for (const entry of [
 
 test('the stable switcher exposes the current stable when local selection changes', async ({ page }) => {
   await page.goto('/messages?qaDemo=1');
-  await expect(page.getByText('Meddelanden', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Chatt', { exact: true }).first()).toBeVisible();
   const first = page.getByRole('button', { name: 'Byt till QA Stallet', exact: true });
   await expect(first).toHaveAttribute('aria-pressed', 'true');
   await page.evaluate(() => {

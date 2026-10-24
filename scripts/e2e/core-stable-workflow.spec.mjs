@@ -111,7 +111,7 @@ async function qaState(page, fixture = null) {
 
 async function boot(page) {
   await page.goto('/?qaDemo=1');
-  await expect(visibleText(page, 'Läget i stallet')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
   await qaState(page);
   await page.evaluate(() => { globalThis.__coreDocumentMarker = 'qaDemo-core-single-document'; });
 }
@@ -127,10 +127,11 @@ async function navigateTab(page, name) {
   else await visibleText(page, name).first().click();
 }
 
-async function openHorse(page) {
+async function openHorse(page, section = 'Översikt') {
   await navigateTab(page, 'Hästar');
-  await button(page, 'Profil').last().click();
-  await expect(visibleText(page, 'Foderplan')).toBeVisible();
+  await button(page, 'Öppna Saga').click();
+  await expect(visibleText(page, 'Dagens status')).toBeVisible();
+  if (section !== 'Översikt') await page.getByRole('tab', { name: section, exact: true }).click();
 }
 
 function careRow(page, title) {
@@ -163,7 +164,7 @@ test('Idag → claim and complete the same assignment → updated Today counts',
 test('Admin feed plan → owner override → staff feed check → profile and paddock status', async ({ page }, testInfo) => {
   await boot(page);
   await qaState(page, 'clear-checks');
-  await button(page, 'Profil').click();
+  await openHorse(page, 'Foder');
   await visibleText(page, 'Ändra stallplan').first().click();
   await page.getByPlaceholder('Titel, t.ex. Morgonfoder').fill('Offline stallplan');
   await page.getByPlaceholder('Mängd, t.ex. 2 kg hösilage').fill('Lokalt QA-prov');
@@ -177,14 +178,16 @@ test('Admin feed plan → owner override → staff feed check → profile and pa
   await expect(visibleText(page, 'Offline hästplan')).toBeVisible();
   await qaState(page, 'staff');
   await button(page, 'Tillbaka').click();
+  await navigateTab(page, 'Idag');
   await expect(visibleText(page, 'Saga · Offline hästplan')).toBeVisible();
   await button(page, 'Markera klart').first().click();
   await expect(button(page, 'Klart')).toBeVisible();
   await button(page, 'Avvikelse').click();
   await page.getByPlaceholder(/Skriv en kort avvikelse/).fill('Offline foderanteckning');
   await visibleText(page, 'Spara avvikelse').click();
-  await button(page, 'Profil').click();
+  await openHorse(page, 'Foder');
   await expect(visibleText(page, /Offline foderanteckning/, false).first()).toBeVisible();
+  await page.getByRole('tab', { name: 'Översikt', exact: true }).click();
   await button(page, 'Dag: Inne').click();
   await expect(button(page, 'Dag: Inne')).toHaveAttribute('aria-pressed', 'true');
   await screenshot(page, testInfo, 'staff-profile-feed-and-status');
@@ -195,7 +198,7 @@ test('Admin feed plan → owner override → staff feed check → profile and pa
   await expect(button(page, 'Saga, dag: Ute')).toHaveAttribute('aria-pressed', 'true');
   await screenshot(page, testInfo, 'paddock-status-updated');
   await button(page, 'Tillbaka').click();
-  await button(page, 'Profil').last().click();
+  await button(page, 'Öppna Saga').click();
   await expect(button(page, 'Dag: Ute')).toHaveAttribute('aria-pressed', 'true');
   await screenshot(page, testInfo, 'profile-reflects-paddock-status');
   const state = await qaState(page);
@@ -207,7 +210,7 @@ test('Admin feed plan → owner override → staff feed check → profile and pa
 test('Owner plans a ride → linked rider completes it → visible linked horse history', async ({ page }, testInfo) => {
   await boot(page);
   await qaState(page, 'owner');
-  await openHorse(page);
+  await openHorse(page, 'Ridning');
   await visibleText(page, 'Planera ridpass').click();
   await page.getByPlaceholder('Datum (YYYY-MM-DD)').fill('2026-10-07');
   await page.getByPlaceholder('Tid (HH:MM, frivillig)').fill('09:30');
@@ -235,16 +238,16 @@ test('Owner plans a ride → linked rider completes it → visible linked horse 
 test('Desktop contact → horse care → calendar → completed profile and calendar history', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 1000 });
   await boot(page);
-  await visibleText(page, 'Admin').first().click();
-  await visibleText(page, 'Öppna kontakter →').click();
+  await button(page, 'Öppna meny').click();
+  await button(page, 'Kontakter').click();
   await button(page, 'Lägg till kontakt').click();
   await visibleText(page, 'Veterinär').first().click();
   await page.getByRole('textbox', { name: 'Namn', exact: true }).fill('QA Kontakt lokalt');
   await visibleText(page, 'Spara kontakt').click();
   await expect(visibleText(page, 'QA Kontakt lokalt')).toBeVisible();
   await button(page, 'Tillbaka').click();
-  await button(page, 'Till överblick').click();
-  await openHorse(page);
+  await button(page, 'Tillbaka').click();
+  await openHorse(page, 'Vård');
   await visibleText(page, 'Lägg till vårdhändelse').click();
   await page.getByPlaceholder('Titel, t.ex. Skoning').fill('Offline vårdprov');
   await page.getByPlaceholder('Datum (YYYY-MM-DD)').fill('2026-10-07');
@@ -260,6 +263,7 @@ test('Desktop contact → horse care → calendar → completed profile and cale
   await screenshot(page, testInfo, 'care-event-calendar-planned');
   const card = visibleText(page, 'Offline vårdprov').locator('xpath=..');
   await card.getByText('Öppna hästprofil →', { exact: true }).click();
+  await page.getByRole('tab', { name: 'Vård', exact: true }).click();
   await careRow(page, 'Offline vårdprov').getByRole('button', { name: /Slutför vård/ }).click();
   await page.getByPlaceholder(/Notering, t.ex. nya skor/).fill('Offline vårdlogg klar');
   await button(page, 'Spara vårdlogg').click();
@@ -277,6 +281,7 @@ test('Desktop contact → horse care → calendar → completed profile and cale
 test('Unlinked guest reads Today, schedule, horse, paddock and Feed with writes gated', async ({ page }, testInfo) => {
   await boot(page);
   await qaState(page, 'guest');
+  await button(page, 'Häststatus & ansvar').click();
   await expect(visibleText(page, 'Läsbar stallstatus')).toBeVisible();
   await expect(button(page, 'Markera klart')).toHaveCount(0);
   await expect(button(page, 'Avvikelse')).toHaveCount(0);
@@ -289,10 +294,13 @@ test('Unlinked guest reads Today, schedule, horse, paddock and Feed with writes 
   await openHorse(page);
   await expect(button(page, 'Dag: Inne')).toBeDisabled();
   await expect(page.getByRole('checkbox', { name: 'Hö', exact: true })).toBeDisabled();
+  await page.getByRole('tab', { name: 'Foder', exact: true }).click();
   await expect(visibleText(page, 'Avvikelse')).toHaveCount(0);
-  await expect(visibleText(page, 'Lägg till vårdhändelse')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Ridning', exact: true }).click();
   await expect(visibleText(page, 'Planera ridpass')).toHaveCount(0);
   await expect(visibleText(page, 'Slutför ridpass')).toHaveCount(0);
+  await page.getByRole('tab', { name: 'Vård', exact: true }).click();
+  await expect(visibleText(page, 'Lägg till vårdhändelse')).toHaveCount(0);
   await screenshot(page, testInfo, 'guest-horse-read-only');
   await button(page, 'Öppna hästlistan').click();
   await button(page, 'Öppna hagar').click();
@@ -300,7 +308,7 @@ test('Unlinked guest reads Today, schedule, horse, paddock and Feed with writes 
   await expect(visibleText(page, 'Lägg till hage')).toHaveCount(0);
   await screenshot(page, testInfo, 'guest-paddock-read-only');
   await button(page, 'Tillbaka').click();
-  await navigateTab(page, 'Feed');
+  await navigateTab(page, 'Flöde');
   await expect(page.getByPlaceholder('Vad behöver alla veta idag?')).toHaveCount(0);
   await expect(button(page, 'Publicera inlägg')).toHaveCount(0);
   await expect(button(page, 'Gilla inlägg')).toBeDisabled();

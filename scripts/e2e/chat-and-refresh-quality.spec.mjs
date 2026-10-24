@@ -192,16 +192,16 @@ test('member-write failure stays on the profile, then retry opens one acknowledg
 
 test('a readable creator shell without membership stays out of the private chat list', async ({ page }, testInfo) => {
   const controls = await boot(page, { orphanChat: true });
-  await page.getByRole('tab', { name: 'Chat', exact: true }).click();
+  await page.getByRole('tab', { name: 'Chatt', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Öppna konversation med Offline Chattstall', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: /^Öppna konversation med / })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Öppna konversation med Konversation', exact: true })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('mobile-chat-list-without-unacknowledged-shell.png') });
 
-  // The private filter is part of the desktop inbox; mobile shows the complete list.
+  // The private filter must also keep unacknowledged shells out of the desktop inbox.
   await page.setViewportSize({ width: 1280, height: 844 });
   await visibleText(page, 'Privat').click();
-  await expect(visibleText(page, 'Inga meddelanden ännu')).toBeVisible();
+  await expect(visibleText(page, 'Inga privata chattar ännu')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Öppna konversation med Konversation', exact: true })).toHaveCount(0);
   expect(controls.conversationWrites).toEqual([]);
   expect(controls.memberWrites).toEqual([]);

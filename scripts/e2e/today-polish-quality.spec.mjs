@@ -37,7 +37,7 @@ test.beforeEach(async ({ context, page, baseURL }) => {
   });
   await page.clock.setFixedTime(new Date('2026-10-13T07:30:00Z'));
   await page.goto('/?qaDemo=1');
-  await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
   await expect(page.getByText('Ej tillgängligt', { exact: true })).toBeVisible();
 });
 
@@ -53,9 +53,9 @@ test.afterEach(async ({ page }, testInfo) => {
     'Today polish QA must not attempt backend or unexpected external requests').toEqual([]);
 });
 
-// Add only one local QA post to exercise the real expand/collapse controls.
+// Add a local QA post and incoming unread message for the real collapse controls.
 // Reload discards the fixture; no authenticated data or backend is used.
-async function addQaPost(page) {
+async function addQaContent(page) {
   await page.evaluate(() => {
     const element = document.querySelector('#root');
     const root = element[Object.keys(element).find(key => key.startsWith('__reactContainer$'))];
@@ -74,7 +74,17 @@ async function addQaPost(page) {
     if (state.currentStableId !== 'qa-stable-main') throw new Error('[today polish QA] Only synthetic qaDemo fixtures are allowed.');
     const original = state.posts.find(post => post.stableId === state.currentStableId);
     if (!original) throw new Error('[today polish QA] Local demo post is unavailable.');
-    hook.queue.dispatch({ type: 'STATE_HYDRATE', payload: { ...state, posts: [...state.posts, {
+    const preview = state.messages.find(message => message.chatKind === 'stable' && message.stableId === state.currentStableId);
+    const authorId = preview?.participantIds.find(id => id !== state.currentUserId);
+    if (!preview || !authorId) throw new Error('[today polish QA] Local demo stall chat is unavailable.');
+    const message = { id: 'qa-today-polish-message', conversationId: preview.id, authorId,
+      text: 'QA oläst uppdatering i stallchatten', timestamp: new Date().toISOString(), status: 'delivered' };
+    hook.queue.dispatch({ type: 'STATE_HYDRATE', payload: { ...state,
+      messages: state.messages.map(item => item.id === preview.id ? {
+        ...item, description: message.text, unreadCount: 1, unreadMessageIds: [message.id],
+      } : item),
+      conversations: { ...state.conversations, [preview.id]: [...(state.conversations[preview.id] ?? []), message] },
+      posts: [...state.posts, {
       ...original,
       id: 'qa-today-polish-post',
       content: 'QA extra inlägg för listkontroll',
@@ -106,9 +116,9 @@ async function saveUiReceipt(page, testInfo, name, controls) {
 for (const width of [320, 390]) {
   test(`Idag: lower collapse controls are accessible touch targets at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
-    await addQaPost(page);
+    await addQaContent(page);
     for (const section of [
-      { title: 'nya meddelanden', extra: 'Välkommen till QA-stallet.' },
+      { title: 'nya meddelanden', extra: 'QA oläst uppdatering i stallchatten' },
       { title: 'senaste inlägg', extra: 'QA extra inlägg för listkontroll' },
     ]) {
       await page.getByRole('button', { name: `Visa fler ${section.title}`, exact: true }).click();
@@ -127,7 +137,7 @@ for (const width of [320, 390]) {
 
   test(`Idag: event types keep accessible selection and submit/close behavior at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
-    await page.getByRole('button', { name: 'Händelse', exact: true }).click();
+    await page.getByRole('button', { name: 'Händelser', exact: true }).click();
     const dialog = page.getByRole('dialog');
     await page.waitForFunction(() => {
       const input = document.querySelector('textarea');
@@ -149,7 +159,7 @@ for (const width of [320, 390]) {
         background: getComputedStyle(element).backgroundColor,
         border: getComputedStyle(element).borderColor,
       }));
-      expect.soft(selectedColors).toEqual({ background: 'rgb(229, 245, 255)', border: 'rgb(0, 153, 255)' });
+      expect.soft(selectedColors).toEqual({ background: 'rgb(245, 245, 245)', border: 'rgb(0, 153, 255)' });
       await saveUiReceipt(page, testInfo, `event-${choices[index].toLowerCase()}`, controls);
     }
     const submit = dialog.getByText('Skicka', { exact: true }).locator('..');
@@ -161,7 +171,7 @@ for (const width of [320, 390]) {
     await submit.click();
     await expect(dialog).toHaveCount(0);
     await expect(page.getByText(note, { exact: true }).first()).toBeVisible();
-    await page.getByRole('button', { name: 'Händelse', exact: true }).click();
+    await page.getByRole('button', { name: 'Händelser', exact: true }).click();
     await expect(dialog.getByRole('textbox')).toHaveValue('');
     const close = dialog.getByRole('button', { name: 'Stäng händelser', exact: true });
     expect.soft(await close.count()).toBe(1);

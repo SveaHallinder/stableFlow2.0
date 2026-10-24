@@ -76,14 +76,14 @@ async function screenshotModal(page, testInfo, anchor, filename) {
 test('mobile calendar keeps the colour explanation optional and week controls readable', async ({ page }, testInfo) => {
   await page.goto('/calendar?qaDemo=1&view=all');
   const explanation = page.getByRole('button', { name: 'Färgförklaring', exact: true });
-  await expect(explanation).toHaveAttribute('aria-expanded', 'true');
-  await expect(visibleText(page, 'Fodring saknas')).toBeVisible();
-  await explanation.click();
   await expect(explanation).toHaveAttribute('aria-expanded', 'false');
   await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
   await explanation.click();
   await expect(explanation).toHaveAttribute('aria-expanded', 'true');
   await expect(visibleText(page, 'Fodring saknas')).toBeVisible();
+  await explanation.click();
+  await expect(explanation).toHaveAttribute('aria-expanded', 'false');
+  await expect(visibleText(page, 'Fodring saknas')).toHaveCount(0);
   for (const name of ['Föregående vecka', 'Nästa vecka']) {
     const control = page.getByRole('button', { name, exact: true });
     await expect(control).toBeVisible();
@@ -94,7 +94,7 @@ test('mobile calendar keeps the colour explanation optional and week controls re
   await expect(page.getByLabel('Nytt pass', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ta Lunchfodring', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Ta pass', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Stallschema', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Stallpass', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Mina', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Mina', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Alla', exact: true })).toHaveAttribute('aria-pressed', 'false');

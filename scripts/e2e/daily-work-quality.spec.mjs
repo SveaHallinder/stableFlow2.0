@@ -60,6 +60,17 @@ async function loadFixture(page, fixture) {
         status: fixture === 'open' && index >= 7 ? 'open' : 'assigned',
         assigneeId: fixture === 'open' && index >= 7 ? undefined : fixture === 'mine' && index >= 7 ? userId : otherId,
       }));
+    } else if (fixture === 'unread-stable-message') {
+      const preview = state.messages.find(message => message.chatKind === 'stable' && message.stableId === stableId);
+      const authorId = preview?.participantIds.find(id => id !== userId);
+      if (!preview || !authorId) throw new Error('qaDemo stall chat fixture is unavailable.');
+      const message = { id: 'qa-mobile-unread-message', conversationId: preview.id, authorId,
+        text: 'QA oläst uppdatering i stallchatten', timestamp: new Date().toISOString(), status: 'delivered' };
+      payload.messages = state.messages.map(item => item.id === preview.id ? {
+        ...item, description: message.text, unreadCount: 1, unreadMessageIds: [message.id],
+      } : item);
+      payload.conversations = { ...state.conversations,
+        [preview.id]: [...(state.conversations[preview.id] ?? []), message] };
     } else if (fixture === 'guest') {
       users[userId].membership = users[userId].membership.map((membership) => ({
         ...membership, role: 'guest', access: 'view', riderRole: undefined, horseIds: [],
@@ -71,14 +82,16 @@ async function loadFixture(page, fixture) {
 
 test('Idag and Mina pass agree on the current stable', async ({ page }, testInfo) => {
   await page.goto('/?qaDemo=1');
-  await expect(page.getByText('Läget i stallet', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
   await loadFixture(page, 'other-stable');
-  const next = page.getByText('Nästa: Lunch i valt stall · 12:00', { exact: true });
+  const nextPass = page.getByRole('heading', { name: 'Mitt närmaste pass', exact: true }).locator('../..');
+  const next = nextPass.getByText('Lunch i valt stall', { exact: true });
   await expect(next).toBeVisible();
-  await expect(page.getByText(/Nästa: Morgon i annat stall/)).toHaveCount(0);
+  await expect(nextPass.getByText('Idag · 12:00', { exact: true })).toBeVisible();
+  await expect(page.getByText('Morgon i annat stall', { exact: true })).toHaveCount(0);
   await next.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath('today-current-stable.png') });
-  await page.getByText('Mina pass', { exact: true }).click();
+  await nextPass.getByRole('button', { name: 'Mitt schema', exact: true }).click();
   await expect(page.getByText('Lunch i valt stall', { exact: true }).filter({ visible: true })
     .and(page.locator(':not([aria-hidden="true"] *)'))).toBeVisible();
   await expect(page.getByText('Morgon i annat stall', { exact: true })).toHaveCount(0);
@@ -133,9 +146,10 @@ for (const width of [320, 390]) {
   test(`home opens its messages and keeps every mobile destination usable at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto('/?qaDemo=1');
-    await expect(page.getByText('Dagens översikt', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Öppna dagens stallpass', exact: true })).toBeVisible();
-    for (const name of ['Idag', 'Hästar', 'Schema', 'Feed', 'Chat', 'Profil']) {
+    await expect(page.getByRole('heading', { name: 'Dagen i stallet', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Öppna mitt pass', exact: true })).toBeVisible();
+    await loadFixture(page, 'unread-stable-message');
+    for (const name of ['Idag', 'Hästar', 'Schema', 'Flöde', 'Chatt']) {
       const tab = page.getByRole('tab', { name, exact: true });
       await expect(tab).toBeVisible();
       const box = await tab.boundingBox();
@@ -144,6 +158,13 @@ for (const width of [320, 390]) {
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width + 1);
     }
+    const menu = page.getByRole('button', { name: 'Öppna meny', exact: true });
+    await expect(menu).toBeVisible();
+    const menuBox = await menu.boundingBox();
+    expect(menuBox.width).toBeGreaterThanOrEqual(44);
+    expect(menuBox.height).toBeGreaterThanOrEqual(44);
+    expect(menuBox.x).toBeGreaterThanOrEqual(0);
+    expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(width + 1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await page.screenshot({ path: testInfo.outputPath(`figma-home-${width}.png`) });
 
@@ -162,7 +183,8 @@ for (const width of [320, 390]) {
     await page.screenshot({ path: testInfo.outputPath(`figma-chat-${width}.png`) });
 
     await page.getByRole('button', { name: 'Tillbaka', exact: true }).click();
-    await page.getByRole('tab', { name: 'Profil', exact: true }).click();
+    await page.getByRole('button', { name: 'Öppna meny', exact: true }).click();
+    await page.getByRole('button', { name: 'Min profil', exact: true }).click();
     await expect(page).toHaveURL(/\/profile(?:\?|$)/);
     await expect(page.getByText('QA Admin', { exact: true }).filter({ visible: true }).first()).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`figma-profile-${width}.png`) });
