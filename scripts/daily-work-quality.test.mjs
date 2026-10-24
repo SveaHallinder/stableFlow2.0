@@ -40,6 +40,18 @@ test('Idag selects the next assignment from the current stable', async () => {
   assert.deepEqual(select(), [local]);
 });
 
+test('Today counts only unread chats in the selected stable, excluding empty or read conversations', async () => {
+  const unread = { id: 'unread', stableId: 'local', unreadCount: 2 };
+  const direct = { id: 'direct', unreadCount: 1 };
+  const select = await loadScreenCallback('app/(tabs)/index.tsx', 'activeMessages', {
+    currentStableId: 'local', messageItems: [unread, direct,
+      { id: 'empty', stableId: 'local', unreadCount: 0 },
+      { id: 'legacy', stableId: 'local' },
+      { id: 'foreign', stableId: 'other', unreadCount: 1 }],
+  });
+  assert.deepEqual(select(), [unread, direct]);
+});
+
 for (const passView of ['mine', 'open']) {
   test(`${passView} finds matching days after seven other pass days and keeps the seven-day limit`, async () => {
     const groupedDays = Array.from({ length: 16 }, (_, index) => ({

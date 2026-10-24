@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -33,7 +32,7 @@ const accessLevel: Record<string, number> = { view: 0, edit: 1, owner: 2 };
 export default function MembersScreen() {
   const toast = useToast();
   const router = useRouter();
-  const { state, actions } = useAppData();
+  const { state, actions, derived } = useAppData();
   const [memberSaving, setMemberSaving] = React.useState(false);
   const memberSavingRef = React.useRef(false);
   const [memberError, setMemberError] = React.useState<string | null>(null);
@@ -62,8 +61,7 @@ export default function MembersScreen() {
       router.back();
       return;
     }
-    const fallbackRoute = Platform.OS === 'web' ? '/admin' : '/(tabs)';
-    router.replace(fallbackRoute);
+    router.replace('/menu');
   }, [router]);
 
   const currentUser = state.users[state.currentUserId];
@@ -83,6 +81,15 @@ export default function MembersScreen() {
     [q],
   );
   const [query, setQuery] = React.useState(initialQuery);
+  const [filtersExpanded, setFiltersExpanded] = React.useState(false);
+  const hasExtraFilters = stableFilter !== state.currentStableId || roleFilter !== 'all' || horseFilter !== 'all';
+  const hasActiveFilters = hasExtraFilters || query.trim().length > 0;
+  const resetFilters = () => {
+    setStableFilter(state.currentStableId);
+    setRoleFilter('all');
+    setHorseFilter('all');
+    setQuery('');
+  };
 
   React.useEffect(() => {
     if (stableFilter !== 'all' && stableFilter !== state.currentStableId) {
@@ -228,11 +235,12 @@ export default function MembersScreen() {
 
   const handleRoleCycle = React.useCallback(
     (userId: string, stableId: string, role: UserRole) => {
+      if (!canManageMembersStable(stableId)) return;
       const index = roleOrder.indexOf(role);
       const nextRole = roleOrder[(index + 1) % roleOrder.length];
-      void runMemberChange(() => actions.updateMemberRole({ userId, stableId, role: nextRole }));
+      void runMemberChange(() => actions.updateMemberRole({ userId, stableId, role: nextRole, customRole: undefined }));
     },
-    [actions, runMemberChange],
+    [actions, canManageMembersStable, runMemberChange],
   );
 
   const handleRemoveMember = React.useCallback(
@@ -291,7 +299,7 @@ export default function MembersScreen() {
               left={
                 <HeaderIconButton
                   accessibilityRole="button"
-                  accessibilityLabel="Till admin"
+                  accessibilityLabel="Tillbaka"
                   onPress={handleExit}
                   style={styles.headerIconButton}
                 >
@@ -300,6 +308,12 @@ export default function MembersScreen() {
               }
               showSearch={false}
               showLogo={false}
+              primaryAction={derived.permissions.canManageMembers ? (
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Bjud in medlem" style={styles.inviteButton} onPress={() => router.push({ pathname: '/(onboarding)/invite-members', params: { returnTo: '/members' } })}>
+                  <Feather name="user-plus" size={17} color={palette.primaryText} />
+                  <Text style={styles.inviteButtonText}>Bjud in</Text>
+                </TouchableOpacity>
+              ) : null}
             />
             {!isDesktopWeb ? <StableSwitcher /> : null}
             <ScrollView
@@ -311,119 +325,158 @@ export default function MembersScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {!isDesktopWeb ? (
+                <View style={styles.mobileSearch}>
+                  <View style={styles.mobileSearchRow}>
+                    <TextInput
+                      accessibilityLabel="Sök medlemmar"
+                      style={[styles.searchInput, styles.mobileSearchInput]}
+                      placeholder="Sök namn, roll, häst..."
+                      placeholderTextColor={palette.mutedText}
+                      value={query}
+                      onChangeText={setQuery}
+                    />
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Filter"
+                      accessibilityState={{ expanded: filtersExpanded, selected: hasExtraFilters }}
+                      style={styles.filterButton}
+                      onPress={() => setFiltersExpanded((expanded) => !expanded)}
+                    >
+                      <Feather name="sliders" size={17} color={palette.primaryText} />
+                      <Text style={styles.inviteButtonText}>Filter{hasExtraFilters ? ' ·' : ''}</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {hasActiveFilters ? (
+                    <TouchableOpacity accessibilityRole="button" accessibilityLabel="Rensa filter" style={styles.resetFilters} onPress={resetFilters}>
+                      <Text style={styles.resetFiltersText}>Rensa filter</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              ) : null}
               <View style={[styles.desktopLayout, isDesktopWeb && styles.desktopLayoutDesktop]}>
-                <View style={[styles.desktopPanel, isDesktopWeb && styles.desktopPanelDesktop, stickyPanelStyle]}>
-                  <Card tone="muted" style={styles.filterCard}>
-                    <Text style={styles.panelTitle}>Filter</Text>
-                    {stables.length > 1 ? (
-                      <>
-                        <Text style={styles.filterLabel}>Stall</Text>
-                        <View style={styles.filterRow}>
-                          <TouchableOpacity onPress={() => setStableFilter('all')}>
-                            <Pill active={stableFilter === 'all'} style={styles.filterChip}>
-                              <Text
-                                style={[
-                                  styles.filterChipText,
-                                  stableFilter === 'all' && styles.filterChipTextActive,
-                                ]}
-                              >
-                                Alla
-                              </Text>
-                            </Pill>
-                          </TouchableOpacity>
-                          {stables.map((stable) => (
-                            <TouchableOpacity
-                              key={stable.id}
-                              onPress={() => {
-                                actions.setCurrentStable(stable.id);
-                                setStableFilter(stable.id);
-                              }}
-                            >
-                              <Pill active={stableFilter === stable.id} style={styles.filterChip}>
+                {isDesktopWeb || filtersExpanded ? (
+                  <View style={[styles.desktopPanel, isDesktopWeb && styles.desktopPanelDesktop, stickyPanelStyle]}>
+                    <Card tone="muted" style={styles.filterCard}>
+                      <Text style={styles.panelTitle}>Filter</Text>
+                      {stables.length > 1 ? (
+                        <>
+                          <Text style={styles.filterLabel}>Stall</Text>
+                          <View style={styles.filterRow}>
+                            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa alla stall" accessibilityState={{ selected: stableFilter === 'all' }} onPress={() => setStableFilter('all')}>
+                              <Pill active={stableFilter === 'all'} style={styles.filterChip}>
                                 <Text
                                   style={[
                                     styles.filterChipText,
-                                    stableFilter === stable.id && styles.filterChipTextActive,
+                                    stableFilter === 'all' && styles.filterChipTextActive,
                                   ]}
                                 >
-                                  {stable.name}
+                                  Alla
                                 </Text>
                               </Pill>
                             </TouchableOpacity>
-                          ))}
-                        </View>
-                      </>
-                    ) : null}
-                    <Text style={styles.filterLabel}>Roll</Text>
-                    <View style={styles.filterRow}>
-                      <TouchableOpacity onPress={() => setRoleFilter('all')}>
-                        <Pill active={roleFilter === 'all'} style={styles.filterChip}>
-                          <Text
-                            style={[
-                              styles.filterChipText,
-                              roleFilter === 'all' && styles.filterChipTextActive,
-                            ]}
-                          >
-                            Alla
-                          </Text>
-                        </Pill>
-                      </TouchableOpacity>
-                      {roleOrder.map((role) => (
-                        <TouchableOpacity key={role} onPress={() => setRoleFilter(role)}>
-                          <Pill active={roleFilter === role} style={styles.filterChip}>
-                            <Text
-                              style={[
-                                styles.filterChipText,
-                                roleFilter === role && styles.filterChipTextActive,
-                              ]}
-                            >
-                              {roleLabels[role]}
-                            </Text>
-                          </Pill>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                    <Text style={styles.filterLabel}>Häst</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                            {stables.map((stable) => (
+                              <TouchableOpacity
+                                key={stable.id}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Visa ${stable.name}`}
+                                accessibilityState={{ selected: stableFilter === stable.id }}
+                                onPress={() => {
+                                  actions.setCurrentStable(stable.id);
+                                  setStableFilter(stable.id);
+                                }}
+                              >
+                                <Pill active={stableFilter === stable.id} style={styles.filterChip}>
+                                  <Text
+                                    style={[
+                                      styles.filterChipText,
+                                      stableFilter === stable.id && styles.filterChipTextActive,
+                                    ]}
+                                  >
+                                    {stable.name}
+                                  </Text>
+                                </Pill>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </>
+                      ) : null}
+                      <Text style={styles.filterLabel}>Roll</Text>
                       <View style={styles.filterRow}>
-                        <TouchableOpacity onPress={() => setHorseFilter('all')}>
-                          <Pill active={horseFilter === 'all'} style={styles.filterChip}>
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa alla roller" accessibilityState={{ selected: roleFilter === 'all' }} onPress={() => setRoleFilter('all')}>
+                          <Pill active={roleFilter === 'all'} style={styles.filterChip}>
                             <Text
                               style={[
                                 styles.filterChipText,
-                                horseFilter === 'all' && styles.filterChipTextActive,
+                                roleFilter === 'all' && styles.filterChipTextActive,
                               ]}
                             >
                               Alla
                             </Text>
                           </Pill>
                         </TouchableOpacity>
-                        {horsesInScope.map((horse) => (
-                          <TouchableOpacity key={horse.id} onPress={() => setHorseFilter(horse.id)}>
-                            <Pill active={horseFilter === horse.id} style={styles.filterChip}>
+                        {roleOrder.map((role) => (
+                          <TouchableOpacity key={role} accessibilityRole="button" accessibilityLabel={`Visa ${roleLabels[role]}`} accessibilityState={{ selected: roleFilter === role }} onPress={() => setRoleFilter(role)}>
+                            <Pill active={roleFilter === role} style={styles.filterChip}>
                               <Text
                                 style={[
                                   styles.filterChipText,
-                                  horseFilter === horse.id && styles.filterChipTextActive,
+                                  roleFilter === role && styles.filterChipTextActive,
                                 ]}
                               >
-                                {horse.name}
+                                {roleLabels[role]}
                               </Text>
                             </Pill>
                           </TouchableOpacity>
                         ))}
                       </View>
-                    </ScrollView>
-                    <Text style={styles.filterLabel}>Sök</Text>
-                    <TextInput
-                      style={styles.searchInput}
-                      placeholder="Sök namn, roll, häst..."
-                      placeholderTextColor={palette.mutedText}
-                      value={query}
-                      onChangeText={setQuery}
-                    />
-                  </Card>
-                </View>
+                      <Text style={styles.filterLabel}>Häst</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        <View style={styles.filterRow}>
+                          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Visa alla hästar" accessibilityState={{ selected: horseFilter === 'all' }} onPress={() => setHorseFilter('all')}>
+                            <Pill active={horseFilter === 'all'} style={styles.filterChip}>
+                              <Text
+                                style={[
+                                  styles.filterChipText,
+                                  horseFilter === 'all' && styles.filterChipTextActive,
+                                ]}
+                              >
+                                Alla
+                              </Text>
+                            </Pill>
+                          </TouchableOpacity>
+                          {horsesInScope.map((horse) => (
+                            <TouchableOpacity key={horse.id} accessibilityRole="button" accessibilityLabel={`Visa medlemmar för ${horse.name}`} accessibilityState={{ selected: horseFilter === horse.id }} onPress={() => setHorseFilter(horse.id)}>
+                              <Pill active={horseFilter === horse.id} style={styles.filterChip}>
+                                <Text
+                                  style={[
+                                    styles.filterChipText,
+                                    horseFilter === horse.id && styles.filterChipTextActive,
+                                  ]}
+                                >
+                                  {horse.name}
+                                </Text>
+                              </Pill>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </ScrollView>
+                      {isDesktopWeb ? (
+                        <>
+                          <Text style={styles.filterLabel}>Sök</Text>
+                          <TextInput
+                            accessibilityLabel="Sök medlemmar"
+                            style={styles.searchInput}
+                            placeholder="Sök namn, roll, häst..."
+                            placeholderTextColor={palette.mutedText}
+                            value={query}
+                            onChangeText={setQuery}
+                          />
+                        </>
+                      ) : null}
+                    </Card>
+                  </View>
+                ) : null}
 
                 <View style={styles.desktopList}>
                   <Card tone="muted" style={styles.listCard}>
@@ -449,16 +502,20 @@ export default function MembersScreen() {
                           const roleLabel = row.customRole?.trim() || roleLabels[row.role];
                           const stableLabel = stableFilter === 'all' ? stableNameById[row.stableId] : undefined;
                           return (
-                            <TouchableOpacity
+                            <View
                               key={`${row.userId}-${row.stableId}`}
                               style={styles.tableRow}
-                              onPress={() => handleOpenMember(row.userId, row.stableId)}
-                              activeOpacity={0.85}
                             >
-                              <View style={styles.colName}>
+                              <TouchableOpacity
+                                accessibilityRole="button"
+                                accessibilityLabel={`Öppna profil för ${row.name}`}
+                                style={styles.colName}
+                                onPress={() => handleOpenMember(row.userId, row.stableId)}
+                                activeOpacity={0.85}
+                              >
                                 <Text style={styles.tableCellName}>{row.name}</Text>
                                 {stableLabel ? <Text style={styles.tableCellSub}>{stableLabel}</Text> : null}
-                              </View>
+                              </TouchableOpacity>
                               <View style={styles.colRole}>
                                 <Text style={styles.tableCellRole}>{roleLabel}</Text>
                                 {row.access ? <Text style={styles.tableCellSub}>{accessLabels[row.access]}</Text> : null}
@@ -482,9 +539,10 @@ export default function MembersScreen() {
                                       activeOpacity={0.85}
                                       disabled={memberSaving}
                                       accessibilityRole="button"
-                                      accessibilityState={{ disabled: memberSaving }}
+                                      accessibilityLabel={roleLabels[row.role]}
+                                      accessibilityState={{ disabled: memberSaving, busy: memberSaving }}
                                     >
-                                      <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
+                                      <Text style={styles.roleButtonText}>{memberSaving ? 'Sparar…' : roleLabels[row.role]}</Text>
                                     </TouchableOpacity>
                                     {row.userId !== state.currentUserId ? (
                                       <TouchableOpacity
@@ -494,7 +552,7 @@ export default function MembersScreen() {
                                         disabled={memberSaving}
                                         accessibilityRole="button"
                                         accessibilityLabel={`Ta bort ${row.name} från stallet`}
-                                        accessibilityState={{ disabled: memberSaving }}
+                                        accessibilityState={{ disabled: memberSaving, busy: memberSaving }}
                                       >
                                         <Feather name="x" size={14} color={palette.error} />
                                       </TouchableOpacity>
@@ -502,7 +560,7 @@ export default function MembersScreen() {
                                   </>
                                 ) : null}
                               </View>
-                            </TouchableOpacity>
+                            </View>
                           );
                         })}
                       </View>
@@ -526,6 +584,8 @@ export default function MembersScreen() {
                           return (
                             <View key={`${row.userId}-${row.stableId}`} style={styles.memberRow}>
                               <TouchableOpacity
+                                accessibilityRole="button"
+                                accessibilityLabel={`Öppna profil för ${row.name}`}
                                 style={styles.memberMain}
                                 onPress={() => handleOpenMember(row.userId, row.stableId)}
                                 activeOpacity={0.85}
@@ -553,9 +613,10 @@ export default function MembersScreen() {
                                     activeOpacity={0.85}
                                     disabled={memberSaving}
                                     accessibilityRole="button"
-                                    accessibilityState={{ disabled: memberSaving }}
+                                    accessibilityLabel={roleLabels[row.role]}
+                                    accessibilityState={{ disabled: memberSaving, busy: memberSaving }}
                                   >
-                                    <Text style={styles.roleButtonText}>{roleLabels[row.role]}</Text>
+                                    <Text style={styles.roleButtonText}>{memberSaving ? 'Sparar…' : roleLabels[row.role]}</Text>
                                   </TouchableOpacity>
                                   {row.userId !== state.currentUserId ? (
                                     <TouchableOpacity
@@ -565,7 +626,7 @@ export default function MembersScreen() {
                                       disabled={memberSaving}
                                       accessibilityRole="button"
                                       accessibilityLabel={`Ta bort ${row.name} från stallet`}
-                                      accessibilityState={{ disabled: memberSaving }}
+                                      accessibilityState={{ disabled: memberSaving, busy: memberSaving }}
                                     >
                                       <Feather name="x" size={14} color={palette.error} />
                                     </TouchableOpacity>
@@ -589,6 +650,8 @@ export default function MembersScreen() {
 }
 
 const styles = StyleSheet.create({
+  inviteButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: palette.border, borderRadius: radius.full, backgroundColor: palette.surface },
+  inviteButtonText: { fontSize: 14, fontFamily: theme.fonts.medium, color: palette.primaryText },
   background: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: palette.background },
   scroll: { flex: 1 },
@@ -645,6 +708,12 @@ const styles = StyleSheet.create({
   filterChip: { backgroundColor: palette.surface },
   filterChipText: { fontSize: 12, fontWeight: '600', color: palette.primaryText },
   filterChipTextActive: { color: palette.primary },
+  mobileSearch: { gap: 4 },
+  mobileSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  mobileSearchInput: { flex: 1, minWidth: 0, minHeight: 44, fontSize: 16 },
+  filterButton: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: palette.border, borderRadius: radius.lg, backgroundColor: palette.surface },
+  resetFilters: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center' },
+  resetFiltersText: { fontSize: 13, color: palette.primaryText, fontFamily: theme.fonts.medium, textDecorationLine: 'underline' },
   searchInput: {
     borderRadius: radius.lg,
     borderWidth: StyleSheet.hairlineWidth,

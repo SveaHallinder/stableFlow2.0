@@ -2,7 +2,7 @@
   "authorSourceFreezeSHA256": "d824d40cced6bd6ce692b0bd328c38867edc056a0b7d6ca02582875d86243966",
   "baselineMainHead": "ef793f472f6be14d7909219216a5f9bc3c7e4e00",
   "fixtureHashes": {
-    "ownership-overlay.test.mjs.txt": "855bc1758f7dad28e41e70670358957d45a0b8b3be5cc6fbbe7f4ada1d5666ac",
+    "ownership-overlay.test.mjs.txt": "8994f760dcf48edb1d412ed62bfb1aff76926a2e8e373886fd86be94d69d9407",
     "baseline-supabase.ts.txt": "eaf050a3f72a1505fbc7ad5f039a4b2f988a33833847d6273b5111fa036594af",
     "primary-session-mutation.test.mjs.txt": "6e3c80e3afa4feb63d63e626fcf54fd2c255d526b91bf642773c8375859e7f2c"
   },

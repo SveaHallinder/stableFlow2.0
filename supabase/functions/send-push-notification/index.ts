@@ -61,48 +61,68 @@ async function getEligibleTokens(
   return eligible.filter(target => selected.has(key(target.registration)));
 }
 
-// Handle new chat message
-async function handleMessage(record: Record<string, unknown>): Promise<PushTarget[]> {
+// Re-evaluated before each provider chunk so queued work cannot outlive membership.
+async function messageRecipientIds(record: Record<string, unknown>): Promise<string[]> {
   const conversationId = record.conversation_id as string;
   const authorId = record.author_id as string;
+  if (!isUuid(conversationId) || !isUuid(authorId)) throw new Error("Invalid message identity");
 
-  // Get all members of this conversation except the author
   const { data: members, error: memberError } = await supabase
     .from("conversation_members")
     .select("user_id")
-    .eq("conversation_id", conversationId)
-    .neq("user_id", authorId);
+    .eq("conversation_id", conversationId);
   if (memberError) {
     console.error("[push notification] Conversation member lookup failed", { category: "member_lookup_failed" });
     throw new Error("Conversation member lookup failed");
   }
 
-  // Also check if this is a stable group conversation
   const { data: convo, error: conversationError } = await supabase
     .from("conversations")
-    .select("stable_id, is_group")
+    .select("*")
     .eq("id", conversationId)
     .single();
   if (conversationError) {
+    if (conversationError.code === "PGRST116") return [];
     console.error("[push notification] Conversation lookup failed", { category: "conversation_lookup_failed" });
     throw new Error("Conversation lookup failed");
   }
 
-  let recipientIds: string[] = (members ?? []).map((m) => m.user_id);
+  // Legacy rows are supported; an explicit unknown kind must never widen access.
+  const kind = Object.prototype.hasOwnProperty.call(convo ?? {}, "chat_kind")
+    ? convo.chat_kind : convo?.is_group ? "stable" : "direct";
+  if (!["stable", "direct", "custom"].includes(kind)) throw new Error("Unknown conversation type");
+  const participantIds = new Set<string>((members ?? []).map((m) => m.user_id));
+  let recipientIds: string[] = [...participantIds];
 
-  // For stable group chats, all stable members are recipients
-  if (convo?.is_group && convo?.stable_id) {
+  if (kind === "stable" || kind === "custom") {
+    if (!isUuid(convo?.stable_id)) throw new Error("Missing conversation stable");
     const { data: stableMembers, error: stableMemberError } = await supabase
       .from("stable_members")
       .select("user_id")
-      .eq("stable_id", convo.stable_id)
-      .neq("user_id", authorId);
+      .eq("stable_id", convo.stable_id);
     if (stableMemberError) {
       console.error("[push notification] Stable member lookup failed", { category: "stable_member_lookup_failed" });
       throw new Error("Stable member lookup failed");
     }
-    const smIds = (stableMembers ?? []).map((m) => m.user_id);
-    recipientIds = [...new Set([...recipientIds, ...smIds])];
+    const stableIds = new Set<string>((stableMembers ?? []).map((m) => m.user_id));
+    if (!stableIds.has(authorId) || (kind === "custom" && !participantIds.has(authorId))) return [];
+    recipientIds = kind === "stable" ? [...stableIds] : recipientIds.filter(id => stableIds.has(id));
+  } else if (!participantIds.has(authorId)) {
+    return [];
+  }
+  recipientIds = recipientIds.filter(id => id !== authorId);
+
+  if (kind === "custom") {
+    // Service-only SQL applies the same active-account rules as chat RLS.
+    const { data: activeRecipients, error: recipientError } = await supabase.rpc("chat_push_recipients", {
+      target_conversation_id: conversationId, target_author_id: authorId,
+    });
+    if (recipientError || !Array.isArray(activeRecipients) || activeRecipients.some(id => !isUuid(id))) {
+      console.error("[chat group] Active push audience lookup failed", { category: "recipient_lookup_failed" });
+      throw new Error("Active chat audience could not be verified");
+    }
+    const active = new Set(activeRecipients);
+    recipientIds = recipientIds.filter(id => active.has(id));
   }
 
   if (recipientIds.length) {
@@ -118,7 +138,12 @@ async function handleMessage(record: Record<string, unknown>): Promise<PushTarge
     const blockers = new Set((blocks ?? []).map((row) => row.blocker_user_id));
     recipientIds = recipientIds.filter(id => !blockers.has(id));
   }
+  return recipientIds;
+}
 
+// Handle new chat message. Push deliberately carries no private chat content.
+async function handleMessage(record: Record<string, unknown>): Promise<PushTarget[]> {
+  const recipientIds = await messageRecipientIds(record);
   const tokens = await getEligibleTokens(recipientIds, "messages");
   if (!tokens.length) return [];
 
@@ -209,8 +234,20 @@ async function handleAlert(record: Record<string, unknown>): Promise<PushTarget[
 }
 
 // Reserve the entire webhook attempt before sending any 100-message chunk.
-async function sendToExpo(messages: PushTarget[], attemptId: string): Promise<number> {
-  return await sendPushTargets(supabase, attemptId, messages);
+async function sendToExpo(messages: PushTarget[], attemptId: string, messageRecord?: Record<string, unknown>): Promise<number> {
+  return await sendPushTargets(supabase, attemptId, messages, fetch, messageRecord ? async chunk => {
+    const authorized = new Set(await messageRecipientIds(messageRecord));
+    if (chunk.some(target => !authorized.has(target.registration.user_id))) {
+      console.error("[chat group] Queued push audience changed", { category: "recipient_revoked" });
+      throw new Error("Chat push membership changed");
+    }
+    const active = await getEligibleTokens([...new Set(chunk.map(target => target.registration.user_id))], "messages");
+    const key = (target: PushRegistration) => `${target.token_id}:${target.user_id}:${target.registration_generation}`;
+    const eligible = new Map(active.map(target => [key(target.registration), target.token]));
+    if (chunk.some(target => eligible.get(key(target.registration)) !== target.message.to)) {
+      throw new Error("Chat push device or preference changed");
+    }
+  } : undefined);
 }
 
 Deno.serve(async (req) => {
@@ -253,7 +290,7 @@ Deno.serve(async (req) => {
         break;
     }
 
-    const sent = await sendToExpo(messages, payload.request_id);
+    const sent = await sendToExpo(messages, payload.request_id, payload.type === "message" ? payload.record : undefined);
 
     return new Response(JSON.stringify({ sent }), {
       status: 200,

@@ -197,10 +197,8 @@ export default function SearchScreen() {
   const [query, setQuery] = React.useState(initialQuery);
 
   React.useEffect(() => {
-    if (initialQuery && initialQuery !== query) {
-      setQuery(initialQuery);
-    }
-  }, [initialQuery, query]);
+    setQuery(initialQuery);
+  }, [initialQuery]);
 
   const currentUser = state.users[state.currentUserId];
   const memberStableIds = React.useMemo(
@@ -908,18 +906,14 @@ export default function SearchScreen() {
 
   const handleOpenHorse = React.useCallback(
     (horse: HorseResult) => {
-      openStableRoute(horse.stableId, '/stables', { q: horse.name });
+      openStableRoute(horse.stableId, '/horses/[id]', { id: horse.id });
     },
     [openStableRoute],
   );
 
   const handleOpenHorses = React.useCallback(() => {
-    if (!hasQuery) {
-      openRouteWithFallback('/stables');
-      return;
-    }
-    openRouteWithFallback('/stables', { q: query.trim() });
-  }, [hasQuery, openRouteWithFallback, query]);
+    openRouteWithFallback('/stable-horses');
+  }, [openRouteWithFallback]);
 
   const handleOpenPaddock = React.useCallback(
     (paddock: PaddockResult) => {
@@ -934,41 +928,42 @@ export default function SearchScreen() {
 
   const handleOpenStable = React.useCallback(
     (stable: StableResult) => {
-      openStableRoute(stable.id, '/stables');
+      openStableRoute(stable.id, '/menu');
     },
     [openStableRoute],
   );
 
   const handleOpenStables = React.useCallback(() => {
-    openRouteWithFallback('/stables');
+    openRouteWithFallback('/menu');
   }, [openRouteWithFallback]);
 
   const handleOpenFarm = React.useCallback(
     (farm: FarmResult) => {
-      const stableForFarm = stablesInScope.find((stable) => stable.farmId === farm.id);
-      openStableRoute(stableForFarm?.id, '/stables');
+      const stableForFarm = stablesInScope.find((stable) => stable.farmId === farm.id && stable.id === fallbackStableId)
+        ?? stablesInScope.find((stable) => stable.farmId === farm.id);
+      if (stableForFarm) openStableRoute(stableForFarm.id, '/menu');
     },
-    [openStableRoute, stablesInScope],
+    [fallbackStableId, openStableRoute, stablesInScope],
   );
 
   const handleOpenFarms = React.useCallback(() => {
-    openRouteWithFallback('/stables');
+    openRouteWithFallback('/menu');
   }, [openRouteWithFallback]);
 
   const handleOpenRideType = React.useCallback(
     (rideType: RideTypeResult) => {
-      openStableRoute(rideType.stableId, '/stables');
+      openStableRoute(rideType.stableId, '/calendar', { section: 'riding' });
     },
     [openStableRoute],
   );
 
   const handleOpenRideTypes = React.useCallback(() => {
-    openRouteWithFallback('/stables');
+    openRouteWithFallback('/calendar', { section: 'riding' });
   }, [openRouteWithFallback]);
 
   const handleOpenAssignment = React.useCallback(
     (assignment: AssignmentResult) => {
-      openStableRoute(assignment.stableId, '/calendar', { date: assignment.date });
+      openStableRoute(assignment.stableId, '/calendar', { assignmentId: assignment.id, date: assignment.date, section: 'pass' });
     },
     [openStableRoute],
   );
@@ -1205,7 +1200,7 @@ export default function SearchScreen() {
                       <View style={styles.sectionHeader}>
                         <Text style={styles.sectionTitle}>Stall</Text>
                         <TouchableOpacity onPress={handleOpenStables}>
-                          <Text style={styles.sectionAction}>Visa alla</Text>
+                          <Text style={styles.sectionAction}>Öppna stallmenyn</Text>
                         </TouchableOpacity>
                       </View>
                       <View style={styles.resultList}>
@@ -1227,7 +1222,7 @@ export default function SearchScreen() {
                       <View style={styles.sectionHeader}>
                         <Text style={styles.sectionTitle}>Gårdar</Text>
                         <TouchableOpacity onPress={handleOpenFarms}>
-                          <Text style={styles.sectionAction}>Visa alla</Text>
+                          <Text style={styles.sectionAction}>Öppna stallmenyn</Text>
                         </TouchableOpacity>
                       </View>
                       <View style={styles.resultList}>
@@ -1249,7 +1244,7 @@ export default function SearchScreen() {
                       <View style={styles.sectionHeader}>
                         <Text style={styles.sectionTitle}>Ridpass-typer</Text>
                         <TouchableOpacity onPress={handleOpenRideTypes}>
-                          <Text style={styles.sectionAction}>Visa alla</Text>
+                          <Text style={styles.sectionAction}>Öppna ridning</Text>
                         </TouchableOpacity>
                       </View>
                       <View style={styles.resultList}>

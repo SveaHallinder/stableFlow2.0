@@ -30,6 +30,10 @@ const palette = theme.colors;
 
 export default function AccountSettingsScreen() {
   const router = useRouter();
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) { router.back(); return; }
+    router.replace('/profile');
+  }, [router]);
   const toast = useToast();
   const { signOut, finishAccountDeletion, pendingAccountDeletionId, user } = useAuth();
   const { state, actions } = useAppData();
@@ -487,7 +491,7 @@ export default function AccountSettingsScreen() {
           title="Konto"
           showSearch={false}
           left={
-            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}>
               <Feather name="chevron-left" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }

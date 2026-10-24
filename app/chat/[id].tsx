@@ -23,18 +23,19 @@ import { Avatar } from '@/components/Avatar';
 import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
-import type { MessagePreview } from '@/context/AppDataContext';
+import type { LeaveMemberGroupInput, MessagePreview } from '@/context/AppDataContext';
 import { Ionicons } from '@expo/vector-icons';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
 import { chatUnreadIds, scrollReadViewport, visibleMessageIds } from '@/lib/chatReadReceipts';
 import { useAuth } from '@/context/AuthContext';
+import { MemberGroupModal } from '@/components/MemberGroupModal';
 
 const palette = theme.colors;
 
 export default function ChatScreen() {
   const router = useRouter();
-  const { state, actions } = useAppData();
+  const { state, actions, hydrating } = useAppData();
   const { user } = useAuth();
   const focused = useIsFocused();
   const { markConversationRead, sendConversationMessage } = actions;
@@ -44,8 +45,20 @@ export default function ChatScreen() {
   const conversationPreview = state.messages.find(
     (message: MessagePreview) => message.id === conversationId,
   );
-  const displayName = name ?? conversationPreview?.title ?? 'Konversation';
+  const displayName = conversationPreview?.title ?? name ?? 'Konversation';
   const isGroup = conversationPreview?.group ?? false;
+  const isCustomGroup = conversationPreview?.chatKind === 'custom';
+  const [groupInfoOpen, setGroupInfoOpen] = React.useState(false);
+  const refreshRef = React.useRef(actions.refreshData);
+  refreshRef.current = actions.refreshData;
+  React.useEffect(() => {
+    if (focused && conversationId && isCustomGroup) void refreshRef.current();
+  }, [focused, conversationId, isCustomGroup]);
+  const customAccess = !isCustomGroup || (conversationPreview?.stableId === state.currentStableId
+    && user?.id === state.currentUserId && user?.id === state.sessionUserId
+    && conversationPreview.participantIds?.includes(state.currentUserId)
+    && state.users[state.currentUserId]?.membership.some(entry => entry.stableId === conversationPreview.stableId));
+  const handleBack = () => { if (router.canGoBack()) router.back(); else router.replace('/messages'); };
 
   const conversationMessages = state.conversations[conversationId];
   const messages = React.useMemo(
@@ -82,17 +95,29 @@ export default function ChatScreen() {
     layoutsRef.current.clear();
     viewportRef.current = { y: 0, height: 0 };
   }
-  const identity = `${user?.id ?? ''}:${state.sessionUserId ?? ''}:${conversationId}:${focused}:${foreground}`;
+  const identity = `${user?.id ?? ''}:${state.sessionUserId ?? ''}:${state.currentUserId}:${state.currentStableId}:${conversationId}:${focused}:${foreground}:${groupInfoOpen}`;
   const readScopeRef = React.useRef({ identity, epoch: 0 });
   if (readScopeRef.current.identity !== identity) {
     readScopeRef.current = { identity, epoch: readScopeRef.current.epoch + 1 };
   }
   const readReady = Boolean(conversationPreview?.readMessageIds && conversationPreview.unreadMessageIds)
-    && user?.id === state.sessionUserId && user?.id === state.currentUserId;
+    && user?.id === state.sessionUserId && user?.id === state.currentUserId && !groupInfoOpen;
   const unreadIds = React.useMemo(() => readReady && conversationPreview
     ? chatUnreadIds(conversationPreview, conversationMessages ?? [], state.currentUserId, state.blockedUserIds) : [],
   [readReady, conversationPreview, conversationMessages, state.currentUserId, state.blockedUserIds]);
   const observerEpoch = readScopeRef.current.epoch;
+  const handleLeaveGroup = React.useCallback(async (input: LeaveMemberGroupInput) => {
+    if (!focused || !customAccess || input.conversationId !== conversationId || readScopeRef.current.epoch !== observerEpoch) {
+      return { success: false as const, reason: 'Stall eller konto har ändrats. Öppna chatten igen.' };
+    }
+    const result = await actions.leaveMemberGroup(input);
+    // The confirmed action removes its preview and unmounts the information
+    // modal before returning. Keep routing in the still-mounted chat screen.
+    if (result.success && result.data?.left && result.data.conversationId === conversationId && readScopeRef.current.epoch === observerEpoch) {
+      router.replace('/messages');
+    }
+    return result;
+  }, [actions, conversationId, customAccess, focused, observerEpoch, router]);
   const visibleUnreadKey = observed.epoch === observerEpoch ? observed.ids.filter(id => unreadIds.includes(id)).sort().join(',') : '';
   const retryReadIds = failedReadIdsRef.current?.epoch === observerEpoch ? failedReadIdsRef.current.ids : [];
   const unloadedUnreadCount = unreadIds.filter(id => !messages.some(message => message.id === id)).length;
@@ -264,16 +289,17 @@ export default function ChatScreen() {
     );
   };
 
-  if (!conversationId) {
+  if (!conversationId || !customAccess || (!hydrating && !conversationPreview)) {
     return (
       <LinearGradient colors={theme.gradients.background} style={styles.background}>
         <SafeAreaView style={styles.safeArea}>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
             <Text style={{ fontSize: 16, fontWeight: '600', color: palette.primaryText, marginBottom: 8 }}>
-              Konversationen kunde inte hittas
+              {conversationId ? 'Konversationen är inte tillgänglig' : 'Konversationen kunde inte hittas'}
             </Text>
-            <TouchableOpacity onPress={() => router.back()} style={{ paddingVertical: 10, paddingHorizontal: 20, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, borderRadius: 999 }}>
-              <Text style={{ color: palette.primaryText, fontWeight: '600', fontSize: 14 }}>Tillbaka</Text>
+            <Text style={styles.emptyText}>Du kan ha lämnat eller tagits bort från gruppen. Öppna chattlistan för aktuella konversationer.</Text>
+            <TouchableOpacity accessibilityRole="button" accessibilityLabel="Till chattar" onPress={() => router.replace('/messages')} style={{ paddingVertical: 10, paddingHorizontal: 20, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, borderRadius: 999 }}>
+              <Text style={{ color: palette.primaryText, fontWeight: '600', fontSize: 14 }}>Till chattar</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -297,7 +323,7 @@ export default function ChatScreen() {
                 <HeaderIconButton
                   accessibilityRole="button"
                   accessibilityLabel="Tillbaka"
-                  onPress={() => router.back()}
+                  onPress={handleBack}
                   style={styles.backButton}
                 >
                   <Ionicons name="arrow-back" size={22} color={palette.primaryText} />
@@ -305,6 +331,7 @@ export default function ChatScreen() {
               }
               showLogo={false}
               showSearch={false}
+              primaryAction={isCustomGroup ? <HeaderIconButton accessibilityRole="button" accessibilityLabel="Gruppinformation" onPress={() => setGroupInfoOpen(true)}><Ionicons name="information-circle-outline" size={24} color={palette.primaryText} /></HeaderIconButton> : null}
             >
               <View style={styles.headerProfile}>
                 {isGroup ? (
@@ -318,11 +345,13 @@ export default function ChatScreen() {
                     accessibilityLabel={`${displayName} profilbild`}
                   />
                 )}
-                <Text style={[styles.headerTitle, isDesktopWeb && styles.headerTitleDesktop]} numberOfLines={1}>
-                  {displayName}
-                </Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={[styles.headerTitle, isDesktopWeb && styles.headerTitleDesktop]} numberOfLines={1}>{displayName}</Text>
+                  {isGroup ? <Text style={styles.headerSubtitle}>{isCustomGroup ? `Egen grupp · ${conversationPreview?.participantIds?.length ?? 0} deltagare` : 'Stallchatt · alla medlemmar'}</Text> : null}
+                </View>
               </View>
             </ScreenHeader>
+            {groupInfoOpen && isCustomGroup ? <MemberGroupModal key={`${state.currentUserId}:${conversationId}`} conversationId={conversationId} onClose={() => setGroupInfoOpen(false)} onLeft={() => setGroupInfoOpen(false)} onLeaveGroup={handleLeaveGroup} /> : null}
 
             <ScrollView
               key={`${user?.id ?? ''}:${state.sessionUserId ?? ''}:${conversationId}`}
@@ -339,7 +368,10 @@ export default function ChatScreen() {
               keyboardShouldPersistTaps="handled"
             >
               {!messages.length && (
-                <Text style={styles.emptyText}>Inga meddelanden har laddats här. Uppdatera chattlistan eller skriv ett meddelande.</Text>
+                <Text style={styles.emptyText}>{Array.isArray(conversationMessages) && conversationMessages.length === 0
+                  && conversationPreview?.readMessageIds && conversationPreview.unreadMessageIds?.length === 0
+                  ? 'Inga meddelanden ännu. Skriv det första meddelandet.'
+                  : 'Inga meddelanden har laddats här. Uppdatera chattlistan eller skriv ett meddelande.'}</Text>
               )}
               {messages.map((message, index) => {
                 const isMe = message.authorId === state.currentUserId;
@@ -450,6 +482,7 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
+  headerSubtitle: { color: palette.secondaryText, fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 18 },
   emptyText: { color: palette.mutedText, fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19, paddingHorizontal: 20, paddingVertical: 12 },
   errorText: { color: palette.error, fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19, paddingHorizontal: 20, paddingVertical: 12 },
   background: {

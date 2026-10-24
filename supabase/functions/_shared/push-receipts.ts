@@ -135,6 +135,7 @@ export async function sendPushTargets(
   attemptId: string,
   targets: PushTarget[],
   transport: typeof fetch = fetch,
+  authorizeTargets?: (targets: PushTarget[]) => Promise<void>,
 ): Promise<number> {
   if (!isUuid(attemptId) || targets.length > MAX_REGISTRATIONS) throw new PushReceiptStateError();
   const registrations = targets.map(({ registration: target }, position) => {
@@ -155,6 +156,8 @@ export async function sendPushTargets(
     const chunk = targets.slice(offset, offset + PUSH_CHUNK_SIZE);
     let acknowledgement: Record<string, unknown> | null;
     try {
+      // Reservation is durable; a revoked audience aborts without sending or retrying.
+      await authorizeTargets?.(chunk);
       acknowledgement = await withDeadline(async signal => {
         const response = await transport(EXPO_PUSH_URL, {
           method: "POST", headers: headers(), body: JSON.stringify(chunk.map(target => target.message)), signal,

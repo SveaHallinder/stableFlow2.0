@@ -55,6 +55,7 @@ const adminLinks: AdminLink[] = [
     title: 'Hästar & boxar',
     description: 'Lägg till hästar, ägare och boxinfo.',
     route: '/stables',
+    params: { section: 'horses' },
     action: 'Öppna hästar',
   },
   {

@@ -151,7 +151,7 @@ export default function OverviewScreen() {
   const showOnboardingEntry = isOwner && !onboardingComplete;
 
   const activeMessages = React.useMemo(
-    () => messageItems.filter((item) => !item.stableId || item.stableId === currentStableId),
+    () => messageItems.filter((item) => (!item.stableId || item.stableId === currentStableId) && (item.unreadCount ?? 0) > 0),
     [messageItems, currentStableId],
   );
   const activePosts = React.useMemo(

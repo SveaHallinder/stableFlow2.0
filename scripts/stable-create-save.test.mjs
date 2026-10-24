@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import ts from 'typescript';
+const modelSource = await readFile(new URL('../lib/memberGroups.ts', import.meta.url), 'utf8');
+const groupModel = await import(`data:text/javascript;base64,${Buffer.from(ts.transpileModule(modelSource, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64')}`);
 
 async function loadAction(name, dependencies, options = {}) {
+  dependencies = { ...groupModel, ...dependencies };
   const source = await readFile(new URL(options.file ?? '../context/AppDataContext.tsx', import.meta.url), 'utf8');
   const ast = ts.createSourceFile('AppDataContext.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const provider = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === (options.component ?? 'AppDataProvider'));
@@ -101,6 +104,12 @@ test('lost creation acknowledgements recover stable, owner and chat without over
   assert.equal(result.success, true);
   assert.equal(calls.some(call => ['upsert', 'update'].includes(call.method)), false);
   assert.deepEqual(calls.filter(call => call.method === 'insert').map(call => call.table), ['stables', 'stable_members', 'conversations']);
+  assert.ok(calls.some(call => call.table === 'conversations' && call.method === 'eq' && call.args[0] === 'chat_kind' && call.args[1] === 'stable'));
+});
+
+test('owner bootstrap never accepts a custom conversation as the shared stable chat', async () => {
+  const { result } = await persistFixture([{ data: stableRow }, { error: null }, { data: memberRow }, { data: { ...chatRow, chat_kind: 'custom' } }]);
+  assert.equal(result.success, false);
 });
 
 for (const changed of ['stable owner', 'membership']) {

@@ -49,6 +49,10 @@ type PreferenceView = {
 
 export default function NotificationSettingsScreen() {
   const router = useRouter();
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) { router.back(); return; }
+    router.replace('/profile');
+  }, [router]);
   const { user } = useAuth();
   const { state, derived } = useAppData();
   const { currentStableId } = state;
@@ -249,7 +253,7 @@ export default function NotificationSettingsScreen() {
           title="Notiser"
           showSearch={false}
           left={
-            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}>
               <Feather name="chevron-left" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }

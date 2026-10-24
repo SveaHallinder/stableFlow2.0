@@ -35,16 +35,19 @@ async function loadHandler(overrides = {}) {
       rpcCalls.push({ name, params });
       let data;
       if (name === 'push_device_active_registrations') data = { registrations: params.p_registrations };
+      else if (name === 'chat_push_recipients') data = overrides.activeChatRecipients ?? [uuid(101)];
       else if (name === 'push_receipts_prepare') {
         const started = !attempts.has(params.p_attempt_id); attempts.add(params.p_attempt_id);
         data = { attempt_id: params.p_attempt_id, started };
+        overrides.afterPrepare?.();
       } else {
         assert.equal(name, 'push_receipts_record_tickets');
         data = { attempt_id: params.p_attempt_id, recorded_count: params.p_results.length };
       }
-      return { abortSignal: signal => {
+      const result = { data, error: name === 'chat_push_recipients' ? overrides.chatRecipientError ?? null : null };
+      return { then: (resolve, reject) => Promise.resolve(result).then(resolve, reject), abortSignal: signal => {
         assert.ok(signal instanceof globalThis.AbortSignal);
-        return Promise.resolve({ data, error: null });
+        return Promise.resolve(result);
       } };
     }, from: table => {
       reads.push(table);
@@ -52,9 +55,9 @@ async function loadHandler(overrides = {}) {
       queries.push({ table, filters });
       const rows = {
         push_tokens: tokens, notification_preferences: overrides.preferences ?? [],
-        conversation_members: overrides.members ?? [{ conversation_id: '00000000-0000-4000-8000-000000000103', user_id: '00000000-0000-4000-8000-000000000101' }],
+        conversation_members: overrides.members ?? [101, 102].map(id => ({ conversation_id: uuid(103), user_id: uuid(id) })),
         conversations: [overrides.conversation ?? { id: '00000000-0000-4000-8000-000000000103', stable_id: null, is_group: false }],
-        stable_members: overrides.stableMembers ?? [{ stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000101' }],
+        stable_members: overrides.stableMembers ?? [101, 102].map(id => ({ stable_id: uuid(104), user_id: uuid(id) })),
         blocked_users: overrides.blockedUsers ?? [], profiles: [{ id: '00000000-0000-4000-8000-000000000102', full_name: 'Syntetisk avsändare' }],
       }[table];
       assert.ok(rows, 'An unexpected database read must fail the fixture');
@@ -90,7 +93,7 @@ async function loadHandler(overrides = {}) {
   const supplied = {
     ...dependencies, isUuid: shared.isUuid, registration: shared.registration,
     activePushRegistrations: shared.activePushRegistrations,
-    sendPushTargets: (client, attempt, targets) => shared.sendPushTargets(client, attempt, targets, dependencies.fetch),
+    sendPushTargets: (client, attempt, targets, _transport, authorize) => shared.sendPushTargets(client, attempt, targets, dependencies.fetch, authorize),
   };
   const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(supplied).join(', ')} }) => { ${body} };`, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
@@ -224,7 +227,7 @@ test('a recipient who blocked the message author receives no private-chat push p
 test('stable group messages omit blocked recipients while retaining the other members', async () => {
   const fixture = await loadHandler({
     conversation: { id: '00000000-0000-4000-8000-000000000103', is_group: true, stable_id: '00000000-0000-4000-8000-000000000104' },
-    stableMembers: [{ stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000101' }, { stable_id: '00000000-0000-4000-8000-000000000104', user_id: '00000000-0000-4000-8000-000000000105' }],
+    stableMembers: [101, 102, 105].map(id => ({ stable_id: uuid(104), user_id: uuid(id) })),
     tokens: [{ user_id: '00000000-0000-4000-8000-000000000101', token: 'synthetic-push-token' }, { user_id: '00000000-0000-4000-8000-000000000105', token: 'synthetic-other-token' }],
     blockedUsers: [{ blocker_user_id: '00000000-0000-4000-8000-000000000101', blocked_user_id: '00000000-0000-4000-8000-000000000102' }],
   });
@@ -264,4 +267,87 @@ test('recipient-side chat blocking does not change assignment or alert recipient
   assert.deepEqual(await (await fixture.handler(request())).json(), { sent: 1 });
   assert.deepEqual(await (await fixture.handler(request('Bearer synthetic-service-key', alertPayload))).json(), { sent: 1 });
   assert.ok(!fixture.reads.includes('blocked_users'));
+});
+
+const customConversation = { id: uuid(103), stable_id: uuid(104), is_group: true, chat_kind: 'custom' };
+const groupMembers = () => [101, 102, 105].map(id => ({ conversation_id: uuid(103), user_id: uuid(id) }));
+const groupStableMembers = () => [101, 102, 106].map(id => ({ stable_id: uuid(104), user_id: uuid(id) }));
+const groupTokens = () => [101, 102, 105, 106].map(id => ({ user_id: uuid(id), token: `synthetic-${id}` }));
+
+test('custom group push reaches only current explicit participants in the exact stable', async () => {
+  const fixture = await loadHandler({ conversation: customConversation, members: groupMembers(),
+    stableMembers: groupStableMembers(), tokens: groupTokens() });
+  const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
+  assert.deepEqual(await response.json(), { sent: 1 });
+  assert.deepEqual(JSON.parse(fixture.calls[0][1].body).map(message => message.to), ['synthetic-101']);
+});
+
+test('custom groups with missing stable identity never expand to every participant', async () => {
+  const fixture = await loadHandler({ conversation: { ...customConversation, stable_id: null }, members: groupMembers(), tokens: groupTokens() });
+  await assertFailed(fixture, messagePayload);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('an author removed before queued group delivery cannot trigger any push', async () => {
+  const fixture = await loadHandler({ conversation: customConversation, members: groupMembers().filter(row => row.user_id !== uuid(102)),
+    stableMembers: groupStableMembers(), tokens: groupTokens() });
+  const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
+  assert.deepEqual(await response.json(), { sent: 0 });
+  assert.equal(fixture.calls.length, 0);
+});
+
+for (const revoke of ['participant', 'stable membership', 'block']) {
+  test(`custom group ${revoke} is rechecked after reservation and immediately before Expo`, async () => {
+    const members = groupMembers(); const stableMembers = groupStableMembers(); const blockedUsers = [];
+    const fixture = await loadHandler({ conversation: customConversation, members, stableMembers, blockedUsers,
+      tokens: groupTokens(), afterPrepare: () => {
+        if (revoke === 'participant') members.splice(members.findIndex(row => row.user_id === uuid(101)), 1);
+        else if (revoke === 'stable membership') stableMembers.splice(stableMembers.findIndex(row => row.user_id === uuid(101)), 1);
+        else blockedUsers.push({ blocker_user_id: uuid(101), blocked_user_id: uuid(102) });
+      } });
+    await assertFailed(fixture, messagePayload);
+    assert.equal(fixture.calls.length, 0);
+  });
+}
+
+test('unknown conversation types fail closed instead of using the stable-chat audience', async () => {
+  const fixture = await loadHandler({ conversation: { ...customConversation, chat_kind: 'unrecognized' } });
+  await assertFailed(fixture, messagePayload);
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('membership revoked between provider chunks stops the later custom-group chunk', async () => {
+  const members = groupMembers();
+  const fixture = await loadHandler({ conversation: customConversation, members, stableMembers: groupStableMembers(),
+    tokens: Array.from({ length: 101 }, (_, index) => ({ user_id: uuid(101), token: `synthetic-device-${index}` })),
+    provider: async (_url, options) => {
+      members.splice(members.findIndex(row => row.user_id === uuid(101)), 1);
+      return new globalThis.Response(JSON.stringify({ data: JSON.parse(options.body).map((_, i) => ({ status: 'ok', id: `first-chunk-${i}` })) }), { status: 200 });
+    } });
+  await assertFailed(fixture, messagePayload);
+  assert.equal(fixture.calls.length, 1);
+  assert.equal(JSON.parse(fixture.calls[0][1].body).length, 100);
+});
+
+test('custom push excludes accounts rejected by the authoritative active-account check', async () => {
+  const fixture = await loadHandler({ conversation: customConversation, members: groupMembers(),
+    stableMembers: groupStableMembers(), tokens: groupTokens(), activeChatRecipients: [] });
+  const response = await fixture.handler(request('Bearer synthetic-service-key', messagePayload));
+  assert.deepEqual(await response.json(), { sent: 0 });
+  assert.equal(fixture.calls.length, 0);
+});
+
+test('custom push cannot bypass a failed or malformed active-account check', async () => {
+  for (const override of [{ chatRecipientError: { code: '503' } }, { activeChatRecipients: ['invalid-recipient'] }]) {
+    const fixture = await loadHandler({ conversation: customConversation, members: groupMembers(),
+      stableMembers: groupStableMembers(), tokens: groupTokens(), ...override });
+    await assertFailed(fixture, messagePayload);
+    assert.equal(fixture.calls.length, 0);
+  }
+});
+
+test('an explicit null chat type never acquires legacy stable-chat permissions', async () => {
+  const fixture = await loadHandler({ conversation: { ...customConversation, chat_kind: null } });
+  await assertFailed(fixture, messagePayload);
+  assert.equal(fixture.calls.length, 0);
 });

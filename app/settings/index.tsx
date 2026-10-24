@@ -45,6 +45,10 @@ const settingsItems: SettingsItem[] = [
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) { router.back(); return; }
+    router.replace('/profile');
+  }, [router]);
   const isDesktopWeb = useIsDesktopWeb();
 
   return (
@@ -55,7 +59,7 @@ export default function SettingsScreen() {
           title="Inställningar"
           showSearch={false}
           left={
-            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.back()}>
+            <HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}>
               <Feather name="chevron-left" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }

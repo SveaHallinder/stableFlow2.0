@@ -89,3 +89,85 @@ test('browsing an empty future week renders seven dates without inventing assign
   assert.deepEqual(future.days.flatMap(day => day.assignments), []);
   assert.deepEqual(weeks.flatMap(week => week.days.flatMap(day => day.assignments)), [original]);
 });
+
+async function calendarCallback(name, dependencies) {
+  const screen = ast.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'CalendarScreen');
+  const declaration = screen.body.statements.filter(ts.isVariableStatement)
+    .flatMap(node => [...node.declarationList.declarations])
+    .find(node => node.name.getText(ast) === name);
+  assert.ok(declaration, `Calendar callback ${name} exists`);
+  const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(dependencies).join(',')} }) => (${declaration.initializer.arguments[0].getText(ast)});`, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(dependencies);
+}
+
+async function firstMonthPress(style, dependencies) {
+  let target;
+  function visit(node) {
+    if (!target && (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node))) {
+      const attributes = node.attributes.properties.filter(ts.isJsxAttribute);
+      const styleAttribute = attributes.find(item => item.name.text === 'style');
+      if (styleAttribute?.initializer?.getText(ast) === `{styles.${style}}`) target = node;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast);
+  const press = target?.attributes.properties.find(item => ts.isJsxAttribute(item) && item.name.text === 'onPress');
+  assert.ok(press?.initializer && ts.isJsxExpression(press.initializer), `Month ${style} is actionable`);
+  const { outputText } = ts.transpileModule(`export default ({ ${Object.keys(dependencies).join(',')} }) => (${press.initializer.expression.getText(ast)});`, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  return (await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)).default(dependencies);
+}
+
+test('month date opens that day in the agenda, including an empty future week', async () => {
+  const navigation = [];
+  const dates = [];
+  const monthVisibility = [];
+  const handleSelectMonthDate = await calendarCallback('handleSelectMonthDate', {
+    weekNavigationScope: 'account:stable', setWeekNavigation: value => navigation.push(value),
+    setSelectedAgendaDate: value => dates.push(value), setShowMonthView: value => monthVisibility.push(value),
+  });
+  const onPress = await firstMonthPress('monthDayHeader', { isoDate: '2027-01-04', handleSelectMonthDate });
+  onPress();
+  assert.deepEqual(navigation, [{ scope: 'account:stable', date: '2027-01-04' }]);
+  assert.deepEqual(dates, ['2027-01-04']);
+  assert.deepEqual(monthVisibility, [false]);
+});
+
+test('month pass row opens its actual guarded detail', async () => {
+  const opened = [];
+  const onPress = await firstMonthPress('monthAssignmentRow', {
+    assignment: { id: 'recurring-occurrence' }, setDetailAssignmentId: value => opened.push(value),
+  });
+  onPress();
+  assert.deepEqual(opened, ['recurring-occurrence']);
+});
+
+test('editing one assigned recurring occurrence opens the individual assignment form', async () => {
+  const forms = [];
+  const series = [];
+  const assignment = { id: 'occurrence', seriesId: 'series', date: '2026-11-03', slot: 'Morning', label: 'Fodra', time: '07:00', note: 'Hö först', assigneeId: 'member-a', status: 'assigned' };
+  const edit = await calendarCallback('handleEditAssignment', {
+    assignments: [assignment], currentUserId: 'owner', setAssignmentModal: value => forms.push(value),
+    setSeriesEditor: value => series.push(value), stripAssignmentNoteMetadata: value => value,
+    router: { push() { assert.fail('A recurring occurrence must stay in its individual editor'); } },
+    toast: { showToast() { assert.fail('The saved occurrence exists'); } },
+  });
+  edit('occurrence');
+  assert.deepEqual(forms, [{ visible: true, mode: 'edit', assignmentId: 'occurrence', date: '2026-11-03', slot: 'Morning', label: 'Fodra', time: '07:00', note: 'Hö först', assignToMe: false, assigneeId: 'member-a' }]);
+  assert.deepEqual(series, []);
+});
+
+test('fixed seasonal occurrences keep their dedicated dates and week choices', async () => {
+  const routes = [];
+  const edit = await calendarCallback('handleEditAssignment', {
+    assignments: [{ id: 'fixed', templateId: 'template' }], currentUserId: 'owner',
+    setAssignmentModal() { assert.fail('Fixed seasonal pass uses its own editor'); },
+    setSeriesEditor() { assert.fail('Fixed seasonal pass is not a recurring series'); },
+    router: { push: route => routes.push(route) }, toast: { showToast() {} },
+  });
+  edit('fixed');
+  assert.deepEqual(routes, [{ pathname: '/season-schedule', params: { assignmentId: 'fixed' } }]);
+});

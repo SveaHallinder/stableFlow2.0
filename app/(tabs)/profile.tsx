@@ -65,6 +65,10 @@ const assignmentStatusStyles: Record<AssignmentStatus, { label: string; backgrou
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const handleBack = React.useCallback(() => {
+    if (router.canGoBack()) { router.back(); return; }
+    router.replace('/menu');
+  }, [router]);
   const { section } = useLocalSearchParams<{ section?: string | string[] }>();
   const { state, derived, actions, refreshing } = useAppData();
   const { currentUserId, users, currentStableId } = state;
@@ -298,18 +302,22 @@ export default function ProfileScreen() {
   );
 
   const membersSection = (
-    <Card tone="muted" style={styles.membersCard}>
-      <View style={styles.sectionHeader}>
-        <View style={styles.sectionTitleGroup}>
-          <Text style={styles.sectionTitle}>Medlemmar</Text>
-          <View style={styles.sectionDot} />
+    <Card style={styles.membersCard}>
+      <TouchableOpacity style={styles.settingsRow} onPress={handleOpenMembers} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Öppna medlemmar">
+        <View style={styles.settingsRowLeft}>
+          <Feather name="users" size={18} color={palette.primaryText} />
+          <Text style={styles.settingsRowText}>Medlemmar</Text>
           <Text style={styles.sectionCount}>{memberCount}</Text>
         </View>
-        <TouchableOpacity style={styles.sectionActionButton} onPress={handleOpenMembers} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Öppna medlemmar">
-          <Text style={styles.sectionAction}>Öppna</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={styles.membersHint}>Roller, kontaktuppgifter och hästar för valt stall.</Text>
+        <Feather name="chevron-right" size={18} color={palette.secondaryText} />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.settingsRow} onPress={handleOpenJoinStable} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Gå med i annat stall">
+        <View style={styles.settingsRowLeft}>
+          <Feather name="user-plus" size={18} color={palette.primaryText} />
+          <Text style={styles.settingsRowText}>Gå med i annat stall</Text>
+        </View>
+        <Feather name="chevron-right" size={18} color={palette.secondaryText} />
+      </TouchableOpacity>
     </Card>
   );
 
@@ -473,8 +481,10 @@ export default function ProfileScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title={currentUser.name}
+          title="Min profil"
+          subtitle={currentUser.name}
           showSearch={false}
+          left={<HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}><Feather name="arrow-left" size={20} color={palette.primaryText} /></HeaderIconButton>}
           right={
             <HeaderIconButton
               accessibilityLabel="Inställningar"
@@ -502,6 +512,7 @@ export default function ProfileScreen() {
             <View style={styles.desktopLayout}>
               <View style={styles.desktopSidebar}>
                 {heroSection}
+                {membersSection}
                 {settingsSection}
                 {awaySection}
               </View>
@@ -510,17 +521,16 @@ export default function ProfileScreen() {
               {adminSection}
               {defaultPassSection}
               {hasStable ? upcomingSection : null}
-              {hasStable ? membersSection : null}
             </View>
           </View>
         ) : (
           <>
             {heroSection}
+            {membersSection}
             {noStableSection}
             {adminSection}
             {defaultPassSection}
             {hasStable ? upcomingSection : null}
-            {hasStable ? membersSection : null}
             {settingsSection}
             {awaySection}
             </>

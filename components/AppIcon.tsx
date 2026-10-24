@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import HorseIcon from '@/assets/images/figma/profile-horse.svg';
 import { theme } from '@/components/theme';
 
-export type AppIconName = 'home' | 'horse' | 'calendar' | 'feed' | 'chat' | 'stable';
+export type AppIconName = 'home' | 'horse' | 'calendar' | 'feed' | 'chat' | 'stable' | 'menu' | 'profile' | 'members';
 
 type AppIconProps = {
   name: AppIconName;
@@ -19,6 +19,9 @@ const symbols = {
   feed: ['newspaper-outline', 'newspaper'],
   chat: ['chatbubble-ellipses-outline', 'chatbubble-ellipses'],
   stable: ['business-outline', 'business'],
+  menu: ['grid-outline', 'grid'],
+  profile: ['person-outline', 'person'],
+  members: ['people-outline', 'people'],
 } as const;
 
 export function AppIcon({ name, size = 22, color = theme.colors.primaryText, focused = false }: AppIconProps) {

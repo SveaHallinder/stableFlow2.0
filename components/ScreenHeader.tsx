@@ -36,14 +36,15 @@ function AccountShortcut() {
   return (
     <TouchableOpacity
       accessibilityRole="button"
-      accessibilityLabel="Öppna profil och mitt stall"
-      onPress={() => router.push('/profile')}
+      accessibilityLabel="Öppna meny"
+      onPress={() => router.push('/menu')}
       style={styles.accountButton}
       activeOpacity={0.8}
     >
       {user?.avatar ? <Avatar source={user.avatar} style={styles.avatar} /> : (
         <Text style={styles.initials}>{user?.name?.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('sv-SE') || '·'}</Text>
       )}
+      <Text style={styles.accountLabel}>Meny</Text>
     </TouchableOpacity>
   );
 }
@@ -99,7 +100,8 @@ const styles = StyleSheet.create({
   desktopHeader: { minHeight: 94, paddingVertical: 22, paddingHorizontal: 4 },
   titleDesktop: { fontSize: 30, lineHeight: 38, letterSpacing: -0.9 },
   actions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  accountButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  avatar: { width: 34, height: 34, borderRadius: 17 },
-  initials: { width: 34, height: 34, lineHeight: 34, textAlign: 'center', borderRadius: 17, overflow: 'hidden', backgroundColor: systemPalette.surfaceAlt, color: systemPalette.textPrimary, fontFamily: systemFonts.medium, fontSize: 11 },
+  accountButton: { minWidth: 44, minHeight: 50, alignItems: 'center', justifyContent: 'center', gap: 3 },
+  avatar: { width: 28, height: 28, borderRadius: 14 },
+  initials: { width: 28, height: 28, lineHeight: 28, textAlign: 'center', borderRadius: 14, overflow: 'hidden', backgroundColor: systemPalette.surfaceAlt, color: systemPalette.textPrimary, fontFamily: systemFonts.medium, fontSize: 10 },
+  accountLabel: { fontFamily: systemFonts.medium, fontSize: 11, lineHeight: 15, color: systemPalette.textPrimary },
 });

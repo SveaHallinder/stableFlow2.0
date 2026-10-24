@@ -34,7 +34,8 @@ const navGroups: NavGroup[] = [
   ] },
   { items: [
     { label: 'Mitt stall', route: '/admin', icon: 'stable', adminOnly: true },
-    { label: 'Medlemmar', route: '/members', icon: 'stable' },
+    { label: 'Medlemmar', route: '/members', icon: 'members' },
+    { label: 'Meny', route: '/menu', icon: 'menu' },
   ] },
 ];
 
@@ -53,7 +54,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarm = state.farms.find((farm) => farm.id === currentStable?.farmId);
   const currentUser = state.users[state.currentUserId];
-  const canManageOnboarding = derived.canManageOnboardingAny;
+  const canManageOnboarding = derived.permissions.canManageOnboarding;
   const memberStableIds = currentUser?.membership?.map((entry) => entry.stableId) ?? [];
   const visibleStables = stables.filter((stable) => memberStableIds.includes(stable.id));
   const stablesToShow = visibleStables.length ? visibleStables : stables;
@@ -72,7 +73,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const showSidebarHeader = isSidebar && showHeader;
 
   // Flatten for inline variant
-  const allItems = [...navGroups.flatMap((group) => group.items), { label: 'Profil', route: '/profile', icon: 'home' as const, adminOnly: false }];
+  const allItems = [...navGroups.flatMap((group) => group.items), { label: 'Min profil', route: '/profile', icon: 'profile' as const, adminOnly: false }];
 
   if (!isSidebar) {
     return (
@@ -209,7 +210,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
           />
           <View style={styles.profileText}>
             <Text style={styles.profileName} numberOfLines={1}>{currentUser?.name ?? 'Okänd'}</Text>
-            <Text style={styles.profileMeta} numberOfLines={1}>{metaLabel}</Text>
+            <Text style={styles.profileMeta} numberOfLines={1}>Min profil · {metaLabel}</Text>
           </View>
         </TouchableOpacity>
       ) : null}

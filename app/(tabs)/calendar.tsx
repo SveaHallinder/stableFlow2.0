@@ -367,6 +367,7 @@ export default function CalendarScreen() {
   }, [date]);
 
   const resolvedFilter = React.useMemo(() => resolveFilterFromSection(section), [section]);
+  const viewParam = Array.isArray(view) ? view[0] : view;
   const [activeFilter, setActiveFilter] = React.useState<Filter>(resolvedFilter ?? 'Pass');
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
   const [legendExpanded, setLegendExpanded] = React.useState(false);
@@ -462,10 +463,10 @@ export default function CalendarScreen() {
   }));
 
   React.useEffect(() => {
-    if (resolvedFilter && resolvedFilter !== activeFilter) {
-      setActiveFilter(resolvedFilter);
-    }
-  }, [activeFilter, resolvedFilter]);
+    if (resolvedFilter) setActiveFilter(resolvedFilter);
+    else if (focusDate || viewParam !== undefined) setActiveFilter('Pass');
+    setPassView(resolvePassView(viewParam));
+  }, [focusDate, resolvedFilter, viewParam]);
 
   const activeAssignments = React.useMemo(
     () => assignments.filter((assignment) => assignment.stableId === currentStableId),
@@ -589,21 +590,6 @@ export default function CalendarScreen() {
       (a, b) => a.date.getTime() - b.date.getTime(),
     );
   }, [activeAssignments, focusDate]);
-
-  React.useEffect(() => {
-    if (focusDate) {
-      setPassView('all');
-      return;
-    }
-    setPassView(resolvePassView(view));
-  }, [focusDate, view]);
-
-  React.useEffect(() => {
-    if (!focusDate) {
-      return;
-    }
-    setActiveFilter('Pass');
-  }, [focusDate]);
 
   React.useEffect(() => {
     if (!focusDate) {
@@ -1101,7 +1087,6 @@ export default function CalendarScreen() {
       }
 
       if (assignment.templateId) { router.push({ pathname: '/season-schedule', params: { assignmentId } }); return; }
-      if (assignment.seriesId) { setSeriesEditor({ initialSeriesId: assignment.seriesId }); return; }
       setAssignmentModal({
         visible: true,
         mode: 'edit',
@@ -1151,6 +1136,12 @@ export default function CalendarScreen() {
   const handleNextMonth = React.useCallback(() => {
     setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
   }, []);
+
+  const handleSelectMonthDate = React.useCallback((isoDate: string) => {
+    setWeekNavigation({ scope: weekNavigationScope, date: isoDate });
+    setSelectedAgendaDate(isoDate);
+    setShowMonthView(false);
+  }, [weekNavigationScope]);
 
   const handleCreateAssignment = React.useCallback(
     async (input: CreateAssignmentInput) => {
@@ -1574,7 +1565,8 @@ export default function CalendarScreen() {
                             isToday && styles.monthDayCellToday,
                           ]}
                         >
-                          <View style={styles.monthDayHeader}>
+                          <TouchableOpacity style={styles.monthDayHeader} onPress={() => handleSelectMonthDate(isoDate)}
+                            accessibilityRole="button" accessibilityLabel={`Visa schemat för ${isoDate}`} activeOpacity={0.75}>
                             <Text
                               style={[
                                 styles.monthDayNumber,
@@ -1588,7 +1580,7 @@ export default function CalendarScreen() {
                                 <Text style={styles.todayPillText}>Idag</Text>
                               </View>
                             ) : null}
-                          </View>
+                          </TouchableOpacity>
                           {visibleEvents.length > 0 ? (
                             <View style={styles.monthEventRow}>
                               {visibleEvents.map((event) => (
@@ -1612,7 +1604,9 @@ export default function CalendarScreen() {
                                 : 'Ledigt';
                               const label = `${assignment.label} · ${assignee}`;
                               return (
-                                <View key={assignment.id} style={styles.monthAssignmentRow}>
+                                <TouchableOpacity key={assignment.id} style={styles.monthAssignmentRow}
+                                  onPress={() => setDetailAssignmentId(assignment.id)} activeOpacity={0.75}
+                                  accessibilityRole="button" accessibilityLabel={`Öppna ${assignment.label}, ${assignment.time}, ${assignee}`}>
                                   <View
                                     style={[
                                       styles.monthSlotDot,
@@ -1629,11 +1623,13 @@ export default function CalendarScreen() {
                                   >
                                     {label}
                                   </Text>
-                                </View>
+                                </TouchableOpacity>
                               );
                             })}
                             {hiddenCount > 0 ? (
-                              <Text style={styles.monthMoreText}>+{hiddenCount} till</Text>
+                              <TouchableOpacity onPress={() => handleSelectMonthDate(isoDate)} accessibilityRole="button" accessibilityLabel={`Visa alla pass den ${isoDate}`}>
+                                <Text style={styles.monthMoreText}>+{hiddenCount} till</Text>
+                              </TouchableOpacity>
                             ) : null}
                           </View>
                         </View>
@@ -2889,8 +2885,14 @@ export default function CalendarScreen() {
                 <Feather name="repeat" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>Fast pass · datum och veckoval</Text>
               </TouchableOpacity> : null}
               {canManageAssignments && !detailAssignment.templateId ? <TouchableOpacity style={styles.detailButton} onPress={() => { const id = detailAssignment.id; setDetailAssignmentId(undefined); handleEditAssignment(id); }} accessibilityRole="button" accessibilityLabel="Redigera detta pass">
-                <Feather name="edit-3" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>Redigera och tilldela</Text>
+                <Feather name="edit-3" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>{detailAssignment.seriesId ? 'Redigera och tilldela detta pass' : 'Redigera och tilldela'}</Text>
               </TouchableOpacity> : null}
+              {canManageAssignments && detailAssignment.seriesId && !detailAssignment.templateId ? <>
+                <TouchableOpacity style={styles.detailButton} onPress={() => { const initialSeriesId = detailAssignment.seriesId; setDetailAssignmentId(undefined); setSeriesEditor({ initialSeriesId }); }} accessibilityRole="button" accessibilityLabel="Redigera framtida lediga pass i serien">
+                  <Feather name="repeat" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>Ändra framtida lediga pass i serien</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalHint}>Serieändringar påverkar bara framtida lediga pass. Tilldelade och klara pass behålls.</Text>
+              </> : null}
               {canClaimAssignments && detailAssignment.status === 'open' ? <TouchableOpacity style={styles.detailButton} disabled={claimingAssignmentIds.has(detailAssignment.id)} onPress={() => { void handleClaimAssignment(detailAssignment.id); }} accessibilityRole="button" accessibilityLabel="Ta detta pass">
                 <Text style={styles.modalPrimaryText}>{claimingAssignmentIds.has(detailAssignment.id) ? 'Tar pass…' : 'Ta passet'}</Text>
               </TouchableOpacity> : null}

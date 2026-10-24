@@ -7,6 +7,8 @@ import { generateId } from '@/lib/ids';
 import { isValidHorseBirthYear } from '@/lib/horseAge';
 import { chatUnreadIds, peerMessageIds, requestChatReadReceipt } from '@/lib/chatReadReceipts';
 import type { ChatReadReceipt } from '@/lib/chatReadReceipts';
+import { hasCustomChatAccess, isMissingChatKindColumn, loadMemberGroupAccess, parseMemberGroupReceipt, requestMemberGroup, resolveChatKind } from '@/lib/memberGroups';
+import type { ChatKind, ChatMemberRole, CreateMemberGroupInput, ManageMemberGroupInput, LeaveMemberGroupInput, LeaveMemberGroupReceipt } from '@/lib/memberGroups';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
 import { MAX_RECURRING_ASSIGNMENTS_PER_BATCH } from '@/lib/schedule';
 import { fetchAllAssignments, mapSeasonAssignment } from '@/lib/seasonSchedule';
@@ -26,6 +28,8 @@ import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
 import { formatTimeAgo } from '@/lib/time';
 import { isQaDemoMode, QA_DEMO_MEMBER_ID, QA_DEMO_USER_ID } from '@/lib/qaDemo';
+
+export type { CreateMemberGroupInput, ManageMemberGroupInput, LeaveMemberGroupInput, LeaveMemberGroupReceipt } from '@/lib/memberGroups';
 
 export type AssignmentStatus = 'open' | 'assigned' | 'completed';
 export type AssignmentSlot = 'Morning' | 'Lunch' | 'Evening';
@@ -451,6 +455,10 @@ export type MessagePreview = {
   avatar?: ImageSourcePropType;
   stableId?: string;
   participantUserIds?: string[];
+  chatKind?: ChatKind;
+  participantIds?: string[];
+  participantRoles?: Record<string, ChatMemberRole>;
+  createdByUserId?: string | null;
 };
 
 export type ConversationMessage = {
@@ -1153,6 +1161,7 @@ type AppDataAction =
   | StableAlertUpsertAction
   | MarkMessageReadAction
   | AppendConversationMessageAction
+  | { type: 'CONVERSATION_REMOVE'; payload: { conversationId: string } }
   | UserUpdateAction
   | UserUpsertAction
   | PaddockUpsertAction
@@ -1201,7 +1210,7 @@ type AppDataAction =
 
 export type ActionResult<T = void> =
   | { success: true; data?: T }
-  | { success: false; reason: string };
+  | { success: false; reason: string; requiresDeletionConfirmation?: boolean };
 
 type PersistOptions = {
   skipPersist?: boolean;
@@ -1305,6 +1314,9 @@ type AppDataContextValue = {
     markConversationRead: (conversationId: string, messageIds: readonly string[]) => Promise<ActionResult<ChatReadReceipt>>;
     sendConversationMessage: (conversationId: string, text: string, requestId?: string) => Promise<ActionResult<ConversationMessage>>;
     createPrivateConversation: (otherUserId: string) => Promise<ActionResult<string>>;
+    createMemberGroup: (input: CreateMemberGroupInput) => Promise<ActionResult<MessagePreview>>;
+    manageMemberGroup: (input: ManageMemberGroupInput) => Promise<ActionResult<MessagePreview>>;
+    leaveMemberGroup: (input: LeaveMemberGroupInput) => Promise<ActionResult<LeaveMemberGroupReceipt>>;
     setCurrentStable: (stableId: string) => void;
     refreshData: (options?: RefreshOptions) => Promise<ActionResult>;
     syncSeasonAssignments: (demoAssignments?: Assignment[], hideTemplateIds?: string[]) => Promise<ActionResult>;
@@ -1658,6 +1670,11 @@ function createQaDemoState(): AppDataState {
         avatar: require('@/assets/images/dummy-avatar.png'),
         onboardingDismissed: true,
       },
+      '00000000-0000-4000-8000-000000000003': {
+        id: '00000000-0000-4000-8000-000000000003', name: 'QA Gruppmedlem', email: 'qa-group@example.com',
+        membership: [{ stableId, role: 'staff', access: 'view' }], horses: [], location: 'Stockholm', phone: '',
+        responsibilities: [], defaultPasses: [], awayNotices: [], onboardingDismissed: true,
+      },
     },
     horses: [
       {
@@ -1776,20 +1793,27 @@ function createQaDemoState(): AppDataState {
     messages: [
       {
         id: conversationId,
+        chatKind: 'direct',
+        participantIds: [QA_DEMO_USER_ID, QA_DEMO_MEMBER_ID],
+        participantRoles: {},
         title: 'QA Medlem',
         subtitle: 'Privat chatt',
         description: 'Kan du ta kvällspasset imorgon?',
         timeAgo: 'Nu',
         unreadCount: 1,
+        readMessageIds: [], unreadMessageIds: ['qa-message-1'],
         stableId,
       },
       {
         id: groupConversationId,
+        chatKind: 'stable',
+        participantIds: [QA_DEMO_USER_ID, QA_DEMO_MEMBER_ID],
+        participantRoles: {},
         title: 'QA Stallet',
         subtitle: 'Stallchatt',
         description: 'Välkommen till QA-stallet.',
         timeAgo: 'Idag',
-        group: true,
+        group: true, unreadCount: 0, readMessageIds: [], unreadMessageIds: [],
         stableId,
       },
     ],
@@ -2176,6 +2200,11 @@ function reducer(state: AppDataState, action: AppDataAction): AppDataState {
           return { ...next, unreadCount: chatUnreadIds(next, state.conversations[preview.id] ?? [], receipt.userId, state.blockedUserIds).length };
         }),
       };
+    }
+    case 'CONVERSATION_REMOVE': {
+      const conversations = { ...state.conversations };
+      delete conversations[action.payload.conversationId];
+      return { ...state, messages: state.messages.filter(preview => preview.id !== action.payload.conversationId), conversations };
     }
     case 'CONVERSATION_APPEND': {
       const { conversationId, message, preview } = action.payload;
@@ -4739,10 +4768,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           let chatResult = await supabase.from('conversations').insert(conversation).select('*')
             .abortSignal(controller.signal).single();
           if (chatResult.error?.code === '23505') {
-            chatResult = await supabase.from('conversations').select('*').eq('stable_id', stable.id).eq('is_group', true)
+            chatResult = await supabase.from('conversations').select('*').eq('stable_id', stable.id).eq('is_group', true).eq('chat_kind', 'stable')
               .abortSignal(controller.signal).single();
+            if (isMissingChatKindColumn(chatResult.error)) {
+              chatResult = await supabase.from('conversations').select('*').eq('stable_id', stable.id).eq('is_group', true)
+                .abortSignal(controller.signal).single();
+            }
           }
           if (chatResult.error) throw chatResult.error;
+          if (resolveChatKind(chatResult.data ?? {}) !== 'stable') throw new Error('Servern bekräftade inte rätt sorts stallchatt.');
           if (!chatResult.data?.id || chatResult.data.stable_id !== stable.id || chatResult.data.is_group !== true
             || chatResult.data.created_by_user_id !== ownerId) throw new Error('Servern bekräftade inte stallchatten.');
         }
@@ -4798,8 +4832,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const { data, error } = await query.select('*').abortSignal(controller.signal).single();
         if (error || data?.id !== stableId) throw error ?? new Error('Stallet ändrades innan sparningen bekräftades.');
         if (hasOwnProperty(updates, 'name')) {
-          const { error: conversationError } = await supabase.from('conversations').update({ title: data.name })
-            .eq('stable_id', stableId).eq('is_group', true).abortSignal(controller.signal);
+          let { error: conversationError } = await supabase.from('conversations').update({ title: data.name })
+            .eq('stable_id', stableId).eq('is_group', true).eq('chat_kind', 'stable').abortSignal(controller.signal);
+          if (isMissingChatKindColumn(conversationError)) {
+            ({ error: conversationError } = await supabase.from('conversations').update({ title: data.name })
+              .eq('stable_id', stableId).eq('is_group', true).abortSignal(controller.signal));
+          }
           if (conversationError) console.warn('[stable settings] Kunde inte uppdatera chattnamnet', conversationError);
         }
         return { success: true, data: { ...existing, name: data.name, description: data.description ?? undefined,
@@ -5021,6 +5059,38 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     [user],
   );
 
+  const verifyMemberGroupAccess = React.useCallback(async (conversationId: string): Promise<boolean> => {
+    const current = stateRef.current;
+    const scope = recurringScopeRef.current;
+    const userId = user?.id;
+    const preview = current.messages.find(item => item.id === conversationId);
+    if (!scope || !userId || current.currentUserId !== userId || current.sessionUserId !== userId || !preview || preview.chatKind !== 'custom') return false;
+    if (!hasCustomChatAccess(preview, current)) {
+      dataWriteVersion.current += 1;
+      dispatch({ type: 'CONVERSATION_REMOVE', payload: { conversationId } });
+      return false;
+    }
+    if (isQaDemoMode) return true;
+    const result = await loadMemberGroupAccess(supabase, userId, current.currentStableId, conversationId);
+    if (recurringScopeRef.current !== scope || stateRef.current.currentUserId !== userId || stateRef.current.sessionUserId !== userId
+      || stateRef.current.currentStableId !== current.currentStableId) return false;
+    if (!result.success) return false;
+    if (!result.data) {
+      dataWriteVersion.current += 1;
+      dispatch({ type: 'CONVERSATION_REMOVE', payload: { conversationId } });
+      return false;
+    }
+    const latest = stateRef.current.messages.find(item => item.id === conversationId);
+    if (!latest || latest.chatKind !== 'custom') return false;
+    if (latest.title !== result.data.title || JSON.stringify(latest.participantIds) !== JSON.stringify(result.data.participantIds)
+      || JSON.stringify(latest.participantRoles) !== JSON.stringify(result.data.participantRoles)) {
+      dataWriteVersion.current += 1;
+      dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, preview: { ...latest, ...result.data,
+        group: true, participantUserIds: result.data.participantIds, subtitle: `${result.data.participantIds.length} medlemmar` } } });
+    }
+    return true;
+  }, [user]);
+
   const persistConversationMessage = React.useCallback(
     async (message: ConversationMessage): Promise<ActionResult<ConversationMessage>> => {
       if (isQaDemoMode) return { success: true, data: message };
@@ -5087,6 +5157,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         if (isQaDemoMode) {
           if (requestId === refreshRequestId.current) {
             const seed = createQaDemoState();
+            const currentDemo = stateRef.current;
+            const localGroups = currentDemo.currentUserId === seed.currentUserId && currentDemo.currentStableId === seed.currentStableId
+              ? currentDemo.messages.filter(preview => preview.chatKind === 'custom').map(preview => {
+                const readMessageIds = preview.readMessageIds ?? [];
+                const unreadMessageIds = chatUnreadIds({ ...preview, readMessageIds }, currentDemo.conversations[preview.id] ?? [], seed.currentUserId, currentDemo.blockedUserIds);
+                return { ...preview, readMessageIds, unreadMessageIds, unreadCount: unreadMessageIds.length };
+              }) : [];
+            seed.messages = [...seed.messages, ...localGroups];
+            for (const preview of localGroups) seed.conversations[preview.id] = currentDemo.conversations[preview.id] ?? [];
             const demo = readDemoSchedule({ userId: seed.currentUserId, stableId: seed.currentStableId });
             const active = demo.assignments.filter(row => demo.templates.some(template => template.id === row.templateId
               && demo.periods.some(period => period.id === template.periodId && period.status === 'ready')));
@@ -5354,7 +5433,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         const groupRows = groupsResult.data ?? [];
         const defaultPassRows = defaultPassesResult.data ?? [];
         const awayNoticeRows = awayNoticesResult.data ?? [];
-        let conversationRows = conversationsResult.data ?? [];
+        let conversationRows = (conversationsResult.data ?? []).filter(row => resolveChatKind(row) !== undefined);
 
         const stableById = stableRows.reduce<Record<string, (typeof stableRows)[number]>>(
           (acc, stable) => {
@@ -5364,7 +5443,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           {},
         );
         const conversationStableIds = new Set<string>(
-          conversationRows.map((row) => row.stable_id).filter((id): id is string => Boolean(id)),
+          conversationRows.filter(row => resolveChatKind(row) === 'stable').map((row) => row.stable_id).filter((id): id is string => Boolean(id)),
         );
         const missingConversationStableIds = stableIds.filter((stableId) => !conversationStableIds.has(stableId));
         if (missingConversationStableIds.length) {
@@ -5382,16 +5461,16 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           }
         }
 
-        // Load conversation members for private chats
+        // Both direct and custom chats require explicit participant membership.
         const privateConversationIds = conversationRows
-          .filter((row) => !row.is_group)
+          .filter((row) => resolveChatKind(row) !== 'stable')
           .map((row) => row.id);
         const conversationMembersResult = privateConversationIds.length
           ? await supabase
               .from('conversation_members')
               .select('*')
               .in('conversation_id', privateConversationIds)
-          : { data: [] as { conversation_id: string; user_id: string }[] };
+          : { data: [] as { conversation_id: string; user_id: string; member_role?: string }[] };
         if ('error' in conversationMembersResult && conversationMembersResult.error) {
           console.warn('[stable refresh] Kunde inte hämta chattmedlemmar', conversationMembersResult.error);
           return fail('Kunde inte uppdatera stalldata. Försök igen.');
@@ -5406,8 +5485,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           },
           {},
         );
-        conversationRows = conversationRows.filter((row) =>
-          row.is_group || membersByConversation[row.id]?.includes(authUser.id));
+        conversationRows = conversationRows.filter((row) => {
+          const kind = resolveChatKind(row);
+          return kind === 'stable' ? stableIds.includes(row.stable_id)
+            : membersByConversation[row.id]?.includes(authUser.id)
+              && (kind === 'direct' || stableIds.includes(row.stable_id));
+        });
 
         // PII-safe: co-member name/avatar/location come from get_member_directory()
         // (phone masked for non-admins). The base profiles table is self-only RLS, so a
@@ -5631,7 +5714,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           console.warn('[stable refresh] Kunde inte hämta meddelanden', messagesResult.error);
           return fail('Kunde inte uppdatera stalldata. Försök igen.');
         }
-        const messageRows = messagesResult.data ?? [];
+        const allowedConversationIds = new Set(conversationIds);
+        const messageRows = (messagesResult.data ?? []).filter(row => allowedConversationIds.has(row.conversation_id));
         const conversations = messageRows.reduce<Record<string, ConversationMessage[]>>((acc, row) => {
           const list = acc[row.conversation_id] ?? [];
           list.push({
@@ -5663,11 +5747,12 @@ export function AppDataProvider({ children }: PropsWithChildren) {
             const sortTime = lastMessage?.timestamp ?? row.created_at ?? '';
             const sortMs = sortTime ? new Date(sortTime).getTime() : 0;
 
-            // For private chats, show the other participant's name
+            const chatKind = resolveChatKind(row)!;
+            // Only direct chats use another participant's name as the title.
             let title = row.title ?? stable?.name ?? 'Konversation';
-            let subtitle = stable?.location ?? (row.is_group ? 'Gruppchatt' : 'Privat chatt');
+            let subtitle = chatKind === 'custom' ? `${membersByConversation[row.id]?.length ?? 0} medlemmar` : stable?.location ?? (chatKind === 'stable' ? 'Stallchatt' : 'Privat chatt');
             let avatar: ImageSourcePropType | undefined;
-            if (!row.is_group) {
+            if (chatKind === 'direct') {
               const members = membersByConversation[row.id] ?? [];
               const otherUserId = members.find((id) => id !== authUser.id);
               if (otherUserId) {
@@ -5691,10 +5776,15 @@ export function AppDataProvider({ children }: PropsWithChildren) {
               unreadCount: readByConversation.get(row.id)?.unreadMessageIds.length ?? 0,
               readMessageIds: readByConversation.get(row.id)?.readMessageIds ?? [],
               unreadMessageIds: readByConversation.get(row.id)?.unreadMessageIds ?? [],
-              group: row.is_group ?? false,
+              group: chatKind !== 'direct',
+              chatKind,
               stableId: row.stable_id ?? undefined,
               avatar,
-              participantUserIds: row.is_group ? undefined : membersByConversation[row.id] ?? [],
+              createdByUserId: row.created_by_user_id ?? null,
+              participantIds: chatKind === 'stable' ? membership.filter(member => member.stable_id === row.stable_id).map(member => member.user_id) : membersByConversation[row.id] ?? [],
+              participantRoles: Object.fromEntries(conversationMemberRows.filter(member => member.conversation_id === row.id)
+                .map(member => [member.user_id, member.member_role === 'owner' ? 'owner' : 'member'])),
+              participantUserIds: chatKind === 'stable' ? undefined : membersByConversation[row.id] ?? [],
             };
             return { preview, sortMs };
           })
@@ -6100,18 +6190,27 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           const existingPreview = current.messages.find((msg) => msg.id === row.conversation_id);
           if (!existingPreview) return; // Unknown conversation
 
-          const preview: MessagePreview = {
-            ...existingPreview,
-            description: row.text,
-            timeAgo: formatTimeAgo(row.created_at),
-            unreadCount: (existingPreview.unreadCount ?? 0) + 1,
+          const append = () => {
+            const latestState = stateRef.current;
+            if (!active || latestState.sessionUserId !== userId || latestState.currentUserId !== userId) return;
+            const latestPreview = latestState.messages.find(item => item.id === row.conversation_id);
+            if (!latestPreview) return;
+            const preview: MessagePreview = {
+              ...latestPreview, description: row.text, timeAgo: formatTimeAgo(row.created_at),
+              unreadCount: (latestPreview.unreadCount ?? 0) + 1,
+            };
+            dataWriteVersion.current += 1;
+            dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId: row.conversation_id, message, preview } });
           };
-
-          dataWriteVersion.current += 1;
-          dispatch({
-            type: 'CONVERSATION_APPEND',
-            payload: { conversationId: row.conversation_id, message, preview },
-          });
+          if (existingPreview.chatKind === 'custom') {
+            const scope = recurringScopeRef.current;
+            if (existingPreview.stableId !== current.currentStableId) return;
+            void verifyMemberGroupAccess(row.conversation_id).then(allowed => {
+              if (allowed && active && recurringScopeRef.current === scope) append();
+            });
+            return;
+          }
+          append();
         },
       )
       .subscribe();
@@ -6120,7 +6219,31 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       active = false;
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user, verifyMemberGroupAccess]);
+
+  // DELETE may arrive without a visible row after RLS revokes our membership.
+  // Re-read authoritative access instead of trusting event bodies or cached roles.
+  React.useEffect(() => {
+    if (!user || isQaDemoMode) return;
+    let active = true;
+    const revalidate = () => {
+      if (!active || stateRef.current.sessionUserId !== user.id || stateRef.current.currentUserId !== user.id) return;
+      for (const preview of stateRef.current.messages) {
+        if (preview.chatKind === 'custom' && preview.stableId === stateRef.current.currentStableId) void verifyMemberGroupAccess(preview.id);
+      }
+    };
+    const metadataChanged = () => {
+      revalidate();
+      if (!active || pendingDataWrites.current.size || hydrating || refreshing) return;
+      void refreshData();
+    };
+    const channel = supabase.channel('member-groups-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversation_members' }, metadataChanged)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, metadataChanged).subscribe();
+    const interval = setInterval(revalidate, 15_000);
+    const subscription = AppState.addEventListener('change', next => { if (next === 'active') revalidate(); });
+    return () => { active = false; clearInterval(interval); subscription.remove(); supabase.removeChannel(channel); };
+  }, [user, state.currentStableId, verifyMemberGroupAccess, refreshData, hydrating, refreshing]);
 
   React.useEffect(() => {
     if (hydrating || refreshing) {
@@ -7149,6 +7272,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!userId || current.sessionUserId !== userId || current.currentUserId !== userId
         || chatReadScope.current.userId !== userId) return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
       const preview = current.messages.find(message => message.id === conversationId);
+      const groupScope = preview?.chatKind === 'custom' ? recurringScopeRef.current : undefined;
+      if (preview?.chatKind === 'custom' && !await verifyMemberGroupAccess(conversationId)) return { success: false, reason: 'Gruppens åtkomst kunde inte bekräftas. Öppna chatten igen.' };
+      if (groupScope && recurringScopeRef.current !== groupScope) return { success: false, reason: 'Stall eller konto har ändrats. Öppna chatten igen.' };
       const eligible = new Set(peerMessageIds(current.conversations[conversationId] ?? [], userId, current.blockedUserIds));
       if (!preview || !messageIds.length || messageIds.some(id => !eligible.has(id))) {
         return { success: false, reason: 'Meddelandena kunde inte verifieras i den här chatten.' };
@@ -7166,6 +7292,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           || stateRef.current.sessionUserId !== userId || stateRef.current.currentUserId !== userId) {
           return { success: false, reason: 'Kontot har ändrats. Öppna chatten igen.' };
         }
+        if (groupScope && (recurringScopeRef.current !== groupScope || !stateRef.current.messages.some(item => item.id === conversationId && hasCustomChatAccess(item, stateRef.current)))) return { success: false, reason: 'Gruppens åtkomst har ändrats. Öppna chatten igen.' };
         if (result.success) {
           dataWriteVersion.current += 1;
           dispatch({ type: 'MESSAGE_MARK_READ', payload: result.data });
@@ -7175,7 +7302,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         pendingDataWrites.current.delete(key);
       }
     },
-    [user],
+    [user, verifyMemberGroupAccess],
   );
 
   const sendConversationMessage = React.useCallback(
@@ -7185,6 +7312,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       if (!current.currentUserId) return { success: false, reason: 'Ingen inloggad användare.' };
       const existingPreview = current.messages.find((msg) => msg.id === conversationId);
       if (!existingPreview) return { success: false, reason: 'Konversationen kunde inte hittas. Uppdatera och försök igen.' };
+      const groupScope = existingPreview.chatKind === 'custom' ? recurringScopeRef.current : undefined;
+      if (existingPreview.chatKind === 'custom' && !await verifyMemberGroupAccess(conversationId)) return { success: false, reason: 'Gruppens åtkomst kunde inte bekräftas. Texten finns kvar. Uppdatera och försök igen.' };
+      if (groupScope && recurringScopeRef.current !== groupScope) return { success: false, reason: 'Stall eller konto har ändrats. Texten finns kvar.' };
       const message: ConversationMessage = {
         id: requestId ?? generateId(), conversationId, authorId: current.currentUserId,
         text: text.trim(), timestamp: new Date().toISOString(), status: 'sent',
@@ -7195,7 +7325,8 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       dataWriteVersion.current += 1;
       try {
         const result = await persistConversationMessage(message);
-        if (!result.success) return result;
+        if (groupScope && (recurringScopeRef.current !== groupScope || !stateRef.current.messages.some(item => item.id === conversationId && hasCustomChatAccess(item, stateRef.current)))) return { success: false, reason: 'Stall eller gruppåtkomst har ändrats. Öppna chatten igen.' };
+        if (!result.success) { if (groupScope) await verifyMemberGroupAccess(conversationId); return result; }
         if (!result.data) return { success: false, reason: 'Meddelandet kunde inte skickas. Försök igen.' };
         const preview: MessagePreview = {
           ...existingPreview, description: result.data.text,
@@ -7205,7 +7336,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         return result;
       } finally { pendingDataWrites.current.delete(key); }
     },
-    [persistConversationMessage],
+    [persistConversationMessage, verifyMemberGroupAccess],
   );
 
   const createPrivateConversation = React.useCallback(
@@ -7225,7 +7356,7 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       // A private chat can be empty or contain only our messages. Use membership,
       // falling back to message authors for older local/demo previews.
       for (const preview of current.messages) {
-        if (preview.group) continue;
+        if (preview.group || preview.chatKind === 'custom' || preview.chatKind === 'stable') continue;
         const msgs = current.conversations[preview.id] ?? [];
         const participants = preview.participantUserIds ?? [current.currentUserId, ...msgs.map((m) => m.authorId)];
         if (participants.includes(current.currentUserId) && participants.includes(otherUserId)) {
@@ -7312,7 +7443,10 @@ export function AppDataProvider({ children }: PropsWithChildren) {
           timeAgo: '',
           unreadCount: undefined,
           group: false,
+          chatKind: 'direct',
           avatar: otherUser?.avatar,
+          participantIds: [current.currentUserId, otherUserId],
+          participantRoles: {},
           participantUserIds: [current.currentUserId, otherUserId],
         };
         dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, preview } });
@@ -7327,6 +7461,113 @@ export function AppDataProvider({ children }: PropsWithChildren) {
     },
     [],
   );
+
+  const changeMemberGroup = React.useCallback(
+    async (operation: 'create' | 'manage' | 'leave', input: CreateMemberGroupInput | ManageMemberGroupInput | LeaveMemberGroupInput): Promise<ActionResult<MessagePreview | LeaveMemberGroupReceipt>> => {
+      const current = stateRef.current;
+      const scope = recurringScopeRef.current;
+      const userId = user?.id;
+      const stableId = current.currentStableId;
+      if (!scope || !userId || current.currentUserId !== userId || current.sessionUserId !== userId
+        || scope.userId !== userId || scope.stableId !== stableId) {
+        return { success: false, reason: 'Stall eller konto har ändrats. Öppna chatten igen.' };
+      }
+      const sameStable = (id: string) => Boolean(current.users[id]?.membership.some(entry => entry.stableId === stableId));
+      if (!sameStable(userId)) return { success: false, reason: 'Du måste vara medlem i stallet för att använda gruppchatten.' };
+      const create = input as CreateMemberGroupInput;
+      const manage = input as ManageMemberGroupInput;
+      const conversationId = operation === 'create' ? create.requestId : manage.conversationId;
+      const existing = current.messages.find(preview => preview.id === conversationId);
+      const title = operation === 'create' ? create.title.trim() : manage.title?.trim();
+      const addIds = [...new Set(operation === 'create' ? create.participantIds : manage.addUserIds ?? [])];
+      const removeIds = [...new Set(manage.removeUserIds ?? [])];
+      const transferTo = manage.transferOwnerTo;
+      if (!conversationId || (operation === 'create' && create.stableId !== stableId)
+        || (title !== undefined && (title.length < 2 || title.length > 80))) {
+        return { success: false, reason: 'Ange ett gruppnamn med 2–80 tecken och välj det aktuella stallet.' };
+      }
+      if (operation !== 'create' && (!existing || existing.chatKind !== 'custom' || !hasCustomChatAccess(existing, current))) {
+        return { success: false, reason: 'Du har inte längre tillgång till den här gruppchatten.' };
+      }
+      if (operation === 'manage' && existing?.participantRoles?.[userId] !== 'owner') {
+        return { success: false, reason: 'Bara gruppens ägare kan ändra gruppen.' };
+      }
+      const initialIds = operation === 'create' ? [userId] : existing?.participantIds ?? [];
+      const nextIds = [...new Set([...initialIds, ...addIds])].filter(id => !removeIds.includes(id));
+      if (addIds.some(id => id === userId || !sameStable(id) || current.blockedUserIds.includes(id))
+        || removeIds.some(id => id === userId || !initialIds.includes(id))
+        || addIds.some(id => removeIds.includes(id)) || nextIds.length > 50
+        || (operation === 'create' && nextIds.length < 3)
+        || (transferTo && (!nextIds.includes(transferTo) || transferTo === userId || !sameStable(transferTo)))) {
+        return { success: false, reason: 'Välj minst två andra medlemmar i samma stall. Gruppen får ha högst 50 medlemmar. Ägaren lämnar via Lämna grupp.' };
+      }
+      const key = `member-group:${userId}:${conversationId}`;
+      if (pendingDataWrites.current.has(key)) return { success: false, reason: 'Gruppändringen sparas redan. Vänta ett ögonblick.' };
+      pendingDataWrites.current.add(key);
+      dataWriteVersion.current += 1;
+      try {
+        const endpoint = operation === 'create' ? 'create_member_group' : operation === 'manage' ? 'manage_member_group' : 'leave_member_group';
+        const params = operation === 'create'
+          ? { expected_user_id: userId, request_id: conversationId, target_stable_id: stableId, group_title: title, participant_ids: addIds }
+          : { expected_user_id: userId, target_conversation_id: conversationId, transfer_owner_to: transferTo ?? null,
+            ...(operation === 'manage' ? { group_title: title ?? null, add_user_ids: addIds, remove_user_ids: removeIds } : { confirm_delete: (input as LeaveMemberGroupInput).confirmDelete === true }) };
+        let result: Awaited<ReturnType<typeof requestMemberGroup>>;
+        if (isQaDemoMode) {
+          if (operation === 'leave' && nextIds.length === 1 && (input as LeaveMemberGroupInput).confirmDelete !== true) return { success: false, reason: 'Du är nu gruppens sista medlem. Bekräfta att gruppen och historiken ska raderas.', requiresDeletionConfirmation: true };
+          const remaining = operation === 'leave' ? nextIds.filter(id => id !== userId) : nextIds;
+          const ownerId = transferTo ?? (operation === 'create' ? userId
+            : remaining.find(id => existing?.participantRoles?.[id] === 'owner') ?? remaining[0]);
+          result = { success: true, data: { id: conversationId, chatKind: 'custom', stableId,
+            title: title ?? existing?.title, participantIds: remaining,
+            participantRoles: Object.fromEntries(remaining.map(id => [id, id === ownerId ? 'owner' : 'member'])),
+            createdByUserId: existing ? existing.createdByUserId ?? null : userId,
+            ...(operation === 'leave' ? { left: true, deleted: remaining.length === 0 } : {}) } };
+        } else {
+          result = await requestMemberGroup(supabase, endpoint, params);
+        }
+        if (recurringScopeRef.current !== scope || stateRef.current.currentUserId !== userId
+          || stateRef.current.sessionUserId !== userId || stateRef.current.currentStableId !== stableId) {
+          return { success: false, reason: 'Stall eller konto har ändrats. Öppna chatten igen.' };
+        }
+        if (!result.success) return result;
+        if (operation === 'leave') {
+          const receipt = result.data as { id?: unknown; left?: unknown; deleted?: unknown };
+          if (receipt?.id !== conversationId || receipt.left !== true || typeof receipt.deleted !== 'boolean') {
+            return { success: false, reason: 'Servern bekräftade inte att du lämnat gruppen. Försök igen.' };
+          }
+          dataWriteVersion.current += 1;
+          dispatch({ type: 'CONVERSATION_REMOVE', payload: { conversationId } });
+          return { success: true, data: { conversationId, left: true, deleted: receipt.deleted } };
+        }
+        const receipt = parseMemberGroupReceipt(result.data, userId, stableId, conversationId);
+        if (!receipt || (operation === 'create' && (receipt.title !== title || receipt.participantRoles[userId] !== 'owner'
+          || receipt.participantIds.length !== nextIds.length || nextIds.some(id => !receipt.participantIds.includes(id))))
+          || (operation === 'manage' && (title !== undefined && receipt.title !== title
+            || addIds.some(id => !receipt.participantIds.includes(id)) || removeIds.some(id => receipt.participantIds.includes(id))
+            || transferTo && receipt.participantRoles[transferTo] !== 'owner'))) {
+          console.warn('[member group] Gruppkvittot kunde inte verifieras', 'InvalidReceipt');
+          return { success: false, reason: 'Servern bekräftade inte gruppens namn och medlemmar. Försök igen.' };
+        }
+        const latest = stateRef.current.messages.find(preview => preview.id === conversationId);
+        const preview: MessagePreview = { ...latest, ...receipt, group: true,
+          participantUserIds: receipt.participantIds, subtitle: `${receipt.participantIds.length} medlemmar`,
+          description: latest?.description ?? (isQaDemoMode ? 'Inga meddelanden ännu' : 'Historiken behöver uppdateras'), timeAgo: latest?.timeAgo ?? '',
+          ...(isQaDemoMode && !latest ? { unreadCount: 0, readMessageIds: [], unreadMessageIds: [] } : {}) };
+        dataWriteVersion.current += 1;
+        dispatch({ type: 'CONVERSATION_APPEND', payload: { conversationId, preview } });
+        return { success: true, data: preview };
+      } catch (error) {
+        console.warn('[member group] Gruppändringen misslyckades', error instanceof Error ? error.name : 'Unknown');
+        return { success: false, reason: 'Gruppändringen kunde inte sparas. Dina uppgifter finns kvar. Försök igen.' };
+      } finally { pendingDataWrites.current.delete(key); }
+    }, [user],
+  );
+  const createMemberGroup = React.useCallback((input: CreateMemberGroupInput) =>
+    changeMemberGroup('create', input) as Promise<ActionResult<MessagePreview>>, [changeMemberGroup]);
+  const manageMemberGroup = React.useCallback((input: ManageMemberGroupInput) =>
+    changeMemberGroup('manage', input) as Promise<ActionResult<MessagePreview>>, [changeMemberGroup]);
+  const leaveMemberGroup = React.useCallback((input: LeaveMemberGroupInput) =>
+    changeMemberGroup('leave', input) as Promise<ActionResult<LeaveMemberGroupReceipt>>, [changeMemberGroup]);
 
   const upsertPaddock = React.useCallback(
     async (input: UpsertPaddockInput): Promise<ActionResult<Paddock>> => {
@@ -9728,6 +9969,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
         markConversationRead,
         sendConversationMessage,
         createPrivateConversation,
+        createMemberGroup,
+        manageMemberGroup,
+        leaveMemberGroup,
         setCurrentStable,
         refreshData,
         syncSeasonAssignments,
@@ -9812,6 +10056,9 @@ export function AppDataProvider({ children }: PropsWithChildren) {
       markConversationRead,
       sendConversationMessage,
       createPrivateConversation,
+      createMemberGroup,
+      manageMemberGroup,
+      leaveMemberGroup,
       setCurrentStable,
       refreshData,
       syncSeasonAssignments,

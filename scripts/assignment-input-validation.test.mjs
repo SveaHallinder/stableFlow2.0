@@ -52,6 +52,34 @@ for (const name of ['createAssignment', 'updateAssignment']) {
   }
 }
 
+test('reassigning one recurring occurrence preserves its series and other occurrences', async () => {
+  const existing = { id: 'occurrence-a', seriesId: 'series', stableId: 'stable', date: '2026-11-03', slot: 'Morning', label: 'Morgon', time: '07:00', status: 'assigned', assigneeId: 'member-a' };
+  const other = { ...existing, id: 'occurrence-b', date: '2026-11-04' };
+  const writes = [];
+  const dispatched = [];
+  const action = await loadAction('updateAssignment', {
+    ...validators,
+    stateRef: { current: { currentUserId: 'owner', assignments: [existing, other], users: {
+      'member-b': { membership: [{ stableId: 'stable', role: 'rider' }] },
+    } } },
+    ensurePermission: stableId => {
+      assert.equal(stableId, 'stable');
+      return { success: true };
+    },
+    persistAssignmentUpdate: async (id, updates) => { writes.push({ id, updates }); return { error: null }; },
+    persistAssignmentHistory: async () => {}, dispatch: event => dispatched.push(event),
+  });
+  const result = await action({ id: existing.id, assigneeId: 'member-b' });
+  assert.equal(result.success, true);
+  assert.equal(result.data.assigneeId, 'member-b');
+  assert.equal(result.data.seriesId, 'series');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].id, 'occurrence-a');
+  assert.equal(writes[0].updates.seriesId, undefined);
+  assert.deepEqual(dispatched.map(event => event.payload.id), ['occurrence-a']);
+  assert.equal(other.assigneeId, 'member-a');
+});
+
 test('date and time validation accepts leap days and rejects overflow', () => {
   for (const value of ['2028-02-29', '2026-12-31', '0001-01-01']) assert.equal(validators.isValidISODate(value), true, value);
   for (const value of ['2026-02-30', '2026-13-01', '0000-01-01', '2026-2-3']) assert.equal(validators.isValidISODate(value), false, value);

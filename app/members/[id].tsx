@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -78,6 +79,8 @@ export default function MemberProfileScreen() {
   const stableId = selectedStableId ?? state.currentStableId;
   const member = memberId ? state.users[memberId] : undefined;
   const stable = state.stables.find((item) => item.id === stableId);
+  const dialNumber = member?.phone?.replace(/[^\d+]/g, '') ?? '';
+  const phoneUrl = /^\+?\d{3,}$/.test(dialNumber) ? `tel:${dialNumber}` : undefined;
 
   const isDesktopWeb = useIsDesktopWeb();
   const handleBack = React.useCallback(() => {
@@ -164,9 +167,18 @@ export default function MemberProfileScreen() {
     }
   }, [actions, member, router, toast]);
 
-  const handleCall = React.useCallback(() => {
-    toast.showToast('Direktsamtal öppnas snart.', 'info');
-  }, [toast]);
+  const handleCall = React.useCallback(async () => {
+    if (!phoneUrl) {
+      toast.showToast('Telefonnumret är inte tillgängligt.', 'info');
+      return;
+    }
+    try {
+      await Linking.openURL(phoneUrl);
+    } catch {
+      console.warn('[member call] Kunde inte öppna telefonappen.');
+      toast.showToast('Kunde inte öppna telefonappen på den här enheten.', 'error');
+    }
+  }, [phoneUrl, toast]);
 
   const isSelf = member?.id === state.currentUserId;
   const isBlocked = member ? state.blockedUserIds.includes(member.id) : false;
@@ -186,13 +198,13 @@ export default function MemberProfileScreen() {
   }, [actions, isBlocked, member, toast]);
 
   const handleRoleCycle = React.useCallback(() => {
-    if (!member || !membership) {
+    if (!member || !membership || !canManageMembers) {
       return;
     }
     const index = roleOrder.indexOf(membership.role);
     const nextRole = roleOrder[(index + 1) % roleOrder.length];
-    void runMemberChange(() => actions.updateMemberRole({ userId: member.id, stableId, role: nextRole }));
-  }, [actions, member, membership, stableId, runMemberChange]);
+    void runMemberChange(() => actions.updateMemberRole({ userId: member.id, stableId, role: nextRole, customRole: undefined }));
+  }, [actions, canManageMembers, member, membership, stableId, runMemberChange]);
 
   const handleRemoveMember = React.useCallback(async () => {
     if (!member) {
@@ -263,11 +275,11 @@ export default function MemberProfileScreen() {
         </View>
       </View>
       <View style={styles.heroActions}>
-        <TouchableOpacity style={styles.primaryActionButton} onPress={handleCall} activeOpacity={0.85}>
-          <Feather name="phone-call" size={16} color={palette.inverseText} />
-          <Text style={styles.primaryActionLabel}>Ring</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={phoneUrl ? `Ring ${member.name}` : 'Telefonnummer inte tillgängligt'} accessibilityState={{ disabled: !phoneUrl }} disabled={!phoneUrl} style={[styles.primaryActionButton, !phoneUrl && styles.unavailableAction]} onPress={handleCall} activeOpacity={0.85}>
+          <Feather name="phone-call" size={16} color={palette.primaryText} />
+          <Text style={styles.primaryActionLabel}>{phoneUrl ? 'Ring' : 'Nummer saknas'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.secondaryActionButton} onPress={handleMessage} activeOpacity={0.85}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Chatta med ${member.name}`} style={styles.secondaryActionButton} onPress={handleMessage} activeOpacity={0.85}>
           <Feather name="message-circle" size={16} color={palette.primary} />
           <Text style={styles.secondaryActionLabel}>Chatta</Text>
         </TouchableOpacity>
@@ -457,9 +469,10 @@ export default function MemberProfileScreen() {
             activeOpacity={0.85}
             disabled={!canManageMembers || memberSaving}
             accessibilityRole="button"
-            accessibilityState={{ disabled: !canManageMembers || memberSaving }}
+            accessibilityLabel="Byt roll"
+            accessibilityState={{ disabled: !canManageMembers || memberSaving, busy: memberSaving }}
           >
-            <Text style={styles.adminButtonText}>Byt roll</Text>
+            <Text style={styles.adminButtonText}>{memberSaving ? 'Sparar…' : 'Byt roll'}</Text>
           </TouchableOpacity>
           {member.id !== state.currentUserId ? (
             <TouchableOpacity
@@ -468,7 +481,7 @@ export default function MemberProfileScreen() {
               activeOpacity={0.85}
               disabled={!canManageMembers || memberSaving}
               accessibilityRole="button"
-              accessibilityState={{ disabled: !canManageMembers || memberSaving }}
+              accessibilityState={{ disabled: !canManageMembers || memberSaving, busy: memberSaving }}
             >
               <Text style={styles.removeButtonText}>Ta bort från stallet</Text>
             </TouchableOpacity>
@@ -556,6 +569,7 @@ function formatRange(start: string, end: string) {
 }
 
 const styles = StyleSheet.create({
+  unavailableAction: { opacity: 0.5 },
   background: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: palette.background },
   scroll: { flex: 1 },
@@ -623,9 +637,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
-  primaryActionLabel: { fontSize: 13, fontWeight: '600', color: palette.inverseText },
+  primaryActionLabel: { fontSize: 13, fontWeight: '600', color: palette.primaryText },
   secondaryActionButton: {
     flexDirection: 'row',
     alignItems: 'center',

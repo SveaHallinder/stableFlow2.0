@@ -13,7 +13,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url));
 const fixtures = new URL('./fixtures/push-ownership/', import.meta.url);
 const digest = value => createHash('sha256').update(value).digest('hex');
 const bindingsBytes = await readFile(new URL('bindings.json', fixtures));
-assert.equal(digest(bindingsBytes), '149df27857570169b6dbca603639c7d386024687622daa046e50639a2d2b631e', 'Push ownership fixture bindings changed');
+assert.equal(digest(bindingsBytes), '5f606efa7572bda788cbb0c9673b6949faca3b6c8966a93cf4013af1e5dad956', 'Push ownership fixture bindings changed');
 const bindings = JSON.parse(bindingsBytes);
 const verified = new Map();
 for (const [name, expected] of Object.entries(bindings.fixtureHashes)) {

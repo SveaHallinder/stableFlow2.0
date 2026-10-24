@@ -20,6 +20,7 @@ const reducerSource=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.
 const effect=provider.body.statements.find(n=>ts.isExpressionStatement(n)&&n.getText(ast).includes(".channel('messages-realtime')")).expression.arguments[0].getText(ast);
 const compile=async code=>(await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React}}).outputText).toString('base64')));
 const helper=await compile(await readFile(join(sourceRoot,'lib/chatReadReceipts.ts'),'utf8'));
+const groupHelpers=await compile(await readFile(join(sourceRoot,'lib/memberGroups.ts'),'utf8'));
 const scheduleSource=await readFile(join(sourceRoot,'lib/seasonSchedule.ts'),'utf8');
 const scheduleAst=ts.createSourceFile('seasonSchedule.ts',scheduleSource,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
 const scheduleDeclarations=scheduleAst.statements.filter(node=>ts.isFunctionDeclaration(node)
@@ -39,14 +40,15 @@ let clientNumber=0;
 const jwt=id=>`${Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url')}.${Buffer.from(JSON.stringify({sub:id,role:'authenticated',exp:Math.floor(Date.now()/1000)+36000})).toString('base64url')}.synthetic-signature`;
 const session=id=>JSON.stringify({access_token:jwt(id),refresh_token:'synthetic-refresh',expires_at:Math.floor(Date.now()/1000)+36000,user:{id,aud:'authenticated',role:'authenticated'}});
 async function sdkFixture({sharedReads=new Map(),serverMessages=[...messages,{id:UNKNOWN,authorId:B}],storageUser=A}={}){
- const controls={storageUser,delay:null,fail:false,lost:false,alter:null,storageError:null,storageDelay:null,active:true,loadMode:false,loadedMessages:null,delayLoad:null};
+ const controls={storageUser,delay:null,fail:false,lost:false,alter:null,storageError:null,storageDelay:null,active:true,loadMode:false,loadedMessages:null,loadedConversations:null,loadedConversationMembers:null,delayLoad:null};
  const requests=[],writes=[];
  const sdk=createClient('https://sf-chat-read.example.test','synthetic-public-key',{auth:{storageKey:'sf-synthetic-chat-'+(++clientNumber),autoRefreshToken:false,detectSessionInUrl:false,persistSession:true,storage:{getItem(){if(controls.storageError)throw controls.storageError;if(controls.storageDelay)return controls.storageDelay.promise.then(()=>session(controls.storageUser));return session(controls.storageUser)},setItem(){},removeItem(){}}},global:{fetch:async(input,options)=>{
   const url=new URL(input);assert.equal(url.hostname,'sf-chat-read.example.test');assert.ok(url.pathname.startsWith('/rest/v1/'));
   if(controls.loadMode && !url.pathname.endsWith('own_chat_read_state') && !url.pathname.endsWith('mark_chat_messages_read')) {
     const rows = url.pathname.endsWith('/stable_members') ? [{id:uid(10),stable_id:uid(1),user_id:A,role:'admin',access:'owner'}]
       : url.pathname.endsWith('/stables') ? [{id:uid(1),name:'Synthetic stable'}]
-      : url.pathname.endsWith('/conversations') ? [{id:CHAT,stable_id:uid(1),is_group:true,title:'Synthetic group'}]
+      : url.pathname.endsWith('/conversations') ? controls.loadedConversations ?? [{id:CHAT,stable_id:uid(1),is_group:true,title:'Synthetic group'}]
+      : url.pathname.endsWith('/conversation_members') ? controls.loadedConversationMembers ?? []
       : url.pathname.endsWith('/messages') ? (controls.loadedMessages??messages).map(message=>({id:message.id,conversation_id:CHAT,author_id:message.authorId||null,text:message.text,created_at:message.timestamp}))
       : url.pathname.endsWith('/get_member_directory') ? [{id:A,full_name:'Anna'},{id:B,full_name:'Bo'}] : [];
     return new globalThis.Response(JSON.stringify(rows),{status:200,headers:{'content-type':'application/json'}});
@@ -191,7 +193,7 @@ test('SDK HTTP/storage exceptions log only feature and safe class/code, without 
 });
 async function loadFixture(){
  const f=await contextFixture();f.controls.loadMode=true;f.stateRef.current.currentStableId=uid(1);
- const deps={...f.dependencies,...scheduleHelpers,refreshRequestId:{current:0},setHydrating(){},setRefreshing(){},setRefreshError(){},setLastRefreshedAt(){},loadPendingOwnerStable:async()=>null,loadPendingJoinCode:async()=>null,loadDefaultPassDraft:async()=>[],fetchPaddocks:async()=>({data:[],error:null}),defaultPassesStableId:{current:''},autoAssignmentAttempts:{current:new Map()},showToast(){},POSTS_PAGE_SIZE:50,resolvePostsCursor:()=>null};
+ const deps={...f.dependencies,...scheduleHelpers,...groupHelpers,refreshRequestId:{current:0},setHydrating(){},setRefreshing(){},setRefreshError(){},setLastRefreshedAt(){},loadPendingOwnerStable:async()=>null,loadPendingJoinCode:async()=>null,loadDefaultPassDraft:async()=>[],fetchPaddocks:async()=>({data:[],error:null}),defaultPassesStableId:{current:''},autoAssignmentAttempts:{current:new Map()},showToast(){},POSTS_PAGE_SIZE:50,resolvePostsCursor:()=>null};
  const load=(await compile(`export default ({${Object.keys(deps).join(',')}})=>(${callback('loadAppData')});`)).default(deps);
  return {...f,load};
 }
@@ -267,4 +269,22 @@ test('recovered private creation keeps unread explicitly unknown until own compl
 
 test('actual hydration with no loaded message rows keeps complete unread and neutral history copy',async()=>{
  const f=await loadFixture();f.controls.loadedMessages=[];assert.equal((await f.load()).success,true);assert.equal(f.stateRef.current.messages[0].unreadCount,4);assert.equal(f.stateRef.current.messages[0].description,'Ingen meddelandehistorik har laddats');assert.deepEqual(f.stateRef.current.conversations[CHAT]??[],[]);assert.deepEqual(f.requests.find(request=>request.rpc==='own_chat_read_state').body.message_ids,[]);
+});
+
+
+test('custom hydration preserves its own title, explicit participants and owner role rather than stable-wide access', async()=>{
+ const f=await loadFixture();
+ f.controls.loadedConversations=[{id:OTHER_CHAT,stable_id:uid(1),chat_kind:'stable',is_group:true,title:'Stallet'}, {id:CHAT,stable_id:uid(1),chat_kind:'custom',is_group:true,title:'Kvällsteamet',created_by_user_id:A}];
+ f.controls.loadedConversationMembers=[{conversation_id:CHAT,user_id:A,member_role:'owner'},{conversation_id:CHAT,user_id:B,member_role:'member'}];
+ assert.equal((await f.load()).success,true);
+ const preview=f.stateRef.current.messages.find(row=>row.id===CHAT);
+ assert.equal(preview.chatKind,'custom');assert.equal(preview.title,'Kvällsteamet');assert.deepEqual(preview.participantIds,[A,B]);assert.deepEqual(preview.participantRoles,{[A]:'owner',[B]:'member'});
+});
+
+test('custom hydration excludes a stable co-member without explicit participation and never caches its messages', async()=>{
+ const f=await loadFixture();
+ f.controls.loadedConversations=[{id:OTHER_CHAT,stable_id:uid(1),chat_kind:'stable',is_group:true,title:'Stallet'}, {id:CHAT,stable_id:uid(1),chat_kind:'custom',is_group:true,title:'Hemlig grupp',created_by_user_id:B}];
+ f.controls.loadedConversationMembers=[{conversation_id:CHAT,user_id:B,member_role:'owner'}];
+ assert.equal((await f.load()).success,true);
+ assert.ok(!f.stateRef.current.messages.some(row=>row.id===CHAT));assert.equal(f.stateRef.current.conversations[CHAT],undefined);
 });
