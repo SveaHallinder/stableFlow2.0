@@ -1,6 +1,6 @@
 # StableFlow: sammanhängande onboarding och daglig användning
 
-Datum: 2026-10-23. Status: **visuellt granskningsförslag; inte godkänt för integration ännu.**
+Datum: 2026-10-23. Uppdaterat: 2026-10-24. Status: **godkänt för implementation av användaren; integrerat och lokalt verifierat.**
 
 ## Problem och önskat resultat
 
@@ -61,7 +61,7 @@ Medlem: **Inbjuden e-post och eventuell kod → befintlig konto-/mejlverifiering
 | Mitt stall | Stall/gård, medlemmar/inbjudningar, hagar, anläggning, kontakter, rutiner, inställningar och moderering |
 | Konto från avataren | Profil, egna standard-/veckopass, notiser, säkerhet och befintligt säkert kontoraderingsflöde |
 
-Mobil stalladministration är ny UI-integration eftersom den nuvarande adminrutten begränsas till webb. Implementationen behöver återanvända samma actions och guards; konceptet får inte tolkas som att native-stödet redan är färdigt.
+Mobil stalladministration återanvänder nu samma actions och behörighetskontroller. Mobil webblayout är verifierad; fysisk Expo Go-enhet är ännu inte slutprovad.
 
 ## Visuella regler
 
@@ -88,10 +88,14 @@ Varje del verifieras mot sina faktiska actions, återförsök, stallbyte och äg
 
 Förhandsvisning: `design-preview/` på http://127.0.0.1:4173/. QA-stegen finns i dess README. Den är inte kopplad till Supabase och ändrar inte Expo-appen.
 
-Det skriftliga och visuella förslaget behöver granskas innan huvudvyerna ersätts. Detta är den konkreta avstämningspunkten; ingen extra generell kravintervju behövs för att börja nästa fas efter ett ja.
+Användaren godkände implementationen efter den visuella revisionen: ”implementera den nya designen nu tack slay”. Den riktiga Expo-appen finns på http://localhost:8081/. Prototypen på port 4173 är fortsatt en separat referens.
 
 ## Visuell revision efter återkoppling
 
-Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Användaren valde därefter originalets klara blått och rent vitt. De alternativa paletterna och den tillfälliga färgväljaren är borttagna. Färgvalet är bekräftat; ikonförslaget och helheten är fortfarande under visuell granskning, inte godkända för integration.
+Användaren avvisade det första förslagets färger och ikoner. Förhandsvisningen använder nu rent vitt, svart, neutralt grått och #0099FF; inga blågrå sidbakgrunder eller dekorativa pastellgradienter. Originalhästen behålls, medan övriga ikoner kommer från befintliga Ionicons med kontur och fylld aktiv symbol. Användaren valde därefter originalets klara blått och rent vitt. De alternativa paletterna och den tillfälliga färgväljaren är borttagna. Den reviderade helheten godkändes därefter för implementation.
 
 Användarens senaste precisering: behåll originalets blå identitet men ta bort blå bakgrundsplattor. Detta omfattar primärknappar, aktiv navigation, tidsmarkeringar och motsvarande väder-/valytor. Valda kontroller ska fortsatt gå att identifiera genom ikon, text, neutral yta eller kant.
+
+## Lokal integrationskontroll 2026-10-24
+
+957 tester, lint, TypeScript och webbexport passerar. Den befintliga ägarsessionen användes för läsande UI-prov av fem huvudvyer, profil, Mitt stall, hästprofil och onboarding. Responsiva prov omfattar 320/390/1280 px; fysisk native-enhet och ny registrering/mejlleverans ingår inte i detta designprov. Ett separat backendfritt QA-läge används för tilldelningsprovet utan ändring av riktiga pass. Inga dependencies, schema- eller providerinställningar ändras.

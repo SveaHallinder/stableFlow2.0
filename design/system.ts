@@ -37,8 +37,8 @@ export const systemStatus = {
 
 export const systemGradients = {
   background: [color.bg, color.bg] as const,
-  action: ['#2196F3', color.tint] as const,
-  weather: ['#007AFF', '#AAD2FE'] as const,
+  action: ['#FFFFFF', '#FFFFFF'] as const,
+  weather: ['#FFFFFF', '#FFFFFF'] as const,
 };
 
 export const systemFonts = {
@@ -112,9 +112,9 @@ export const systemRadius = radius;
 
 export const quickActionVariants = {
   primary: {
-    gradient: ['#0099FF', '#0099FF'] as [string, string],
+    gradient: ['#FFFFFF', '#FFFFFF'] as [string, string],
     icon: color.tint,
-    accentBorder: '#0099FF',
+    accentBorder: '#EAEAEA',
     shadow: 'rgba(0, 153, 255, 0.04)',
   },
   accent: {

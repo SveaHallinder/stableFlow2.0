@@ -9,16 +9,13 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { theme } from '@/components/theme';
 import { Avatar } from '@/components/Avatar';
 import { color, space, radius } from '@/design/tokens';
 import type { ActionResult, PostComment } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
-import HeartIcon from '@/assets/images/figma/heart.svg';
-import CommentIcon from '@/assets/images/figma/comment.svg';
-import MoreIcon from '@/assets/images/figma/more.svg';
 
 export type PostData = {
   id: string;
@@ -134,7 +131,7 @@ export const PostCard = React.memo(function PostCard({
             accessibilityRole="button"
             accessibilityLabel="Rapportera inlägg"
           >
-            <MoreIcon />
+            <Ionicons name="flag-outline" size={19} color={palette.secondaryText} />
           </TouchableOpacity>
         ) : null}
         {canDelete && onDelete ? (
@@ -145,7 +142,7 @@ export const PostCard = React.memo(function PostCard({
             accessibilityRole="button"
             accessibilityLabel="Ta bort inlägg"
           >
-            <MoreIcon />
+            <Ionicons name="trash-outline" size={19} color={palette.secondaryText} />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -187,7 +184,7 @@ export const PostCard = React.memo(function PostCard({
                   accessibilityRole="button"
                   accessibilityLabel="Rapportera kommentar"
                 >
-                  <Feather name="flag" size={13} color={palette.secondaryText} />
+                  <Ionicons name="flag-outline" size={13} color={palette.secondaryText} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -205,7 +202,7 @@ export const PostCard = React.memo(function PostCard({
           accessibilityLabel={isLiked ? 'Ta bort gilla' : 'Gilla inlägg'}
           accessibilityState={{ selected: isLiked, disabled: !canInteract || likePending, busy: likePending }}
         >
-          <HeartIcon />
+          <Ionicons name={isLiked ? "heart" : "heart-outline"} size={21} color={isLiked ? palette.primary : palette.primaryText} />
           <Text style={[styles.actionText, isLiked && styles.actionTextActive]}>{likePending ? 'Sparar…' : data.likes}</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -216,7 +213,7 @@ export const PostCard = React.memo(function PostCard({
           accessibilityRole="button"
           accessibilityLabel="Kommentera"
         >
-          <CommentIcon />
+          <Ionicons name="chatbubble-outline" size={20} color={palette.primaryText} />
           <Text style={styles.actionText}>{data.comments}</Text>
         </TouchableOpacity>
       </View>
@@ -256,10 +253,11 @@ export const PostCard = React.memo(function PostCard({
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    paddingVertical: 15,
-    paddingHorizontal: 0,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 22,
+    padding: 18,
     gap: 15,
   },
   header: {
@@ -282,9 +280,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   author: {
-    fontSize: 17,
-    fontFamily: theme.fonts.regular,
-    fontWeight: '400',
+    fontSize: 15,
+    fontFamily: theme.fonts.semibold,
+    fontWeight: '600',
     color: color.text,
   },
   timestamp: {
@@ -303,7 +301,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontFamily: theme.fonts.regular,
     color: color.text,
-    lineHeight: 19,
+    lineHeight: 23,
     fontWeight: '400',
   },
   postImage: {
@@ -395,7 +393,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: theme.fonts.regular,
     minHeight: 44,
     color: palette.primaryText,
@@ -404,7 +402,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -415,6 +415,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 });

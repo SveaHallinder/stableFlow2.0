@@ -1,14 +1,14 @@
 import React from 'react';
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { HeaderIconButton } from '@/components/Primitives';
+import { ONBOARDING_FINISH_ROUTE, OWNER_ONBOARDING_STEPS } from '@/lib/onboarding-flow';
 
 type OnboardingShellProps = {
   title: string;
@@ -46,13 +46,12 @@ export function OnboardingShell({
   showProgress = true,
 }: OnboardingShellProps) {
   const router = useRouter();
-  const { actions, derived } = useAppData();
+  const { actions } = useAppData();
   const progress = total > 0 ? (step / total) * 100 : 0;
   const showExit = Boolean(onExit || allowExit);
   const showFooter = Boolean(onNext || onBack || onSkip);
   const exitAriaLabel = exitLabel === 'Gör senare' ? 'Stäng onboarding' : exitLabel;
-  const canManageOnboarding = derived.canManageOnboardingAny;
-  const exitRoute = canManageOnboarding && Platform.OS === 'web' ? '/admin' : '/(tabs)';
+  const exitRoute = ONBOARDING_FINISH_ROUTE;
 
   const handleExit = React.useCallback(() => {
     if (onExit) {
@@ -70,7 +69,7 @@ export function OnboardingShell({
   }, [actions, allowExit, exitRoute, onExit, router]);
 
   return (
-    <LinearGradient colors={theme.gradients.background} style={styles.background}>
+    <View style={styles.background}>
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           title="Onboarding"
@@ -89,12 +88,12 @@ export function OnboardingShell({
             ) : null
           }
         />
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
           <View style={styles.stack}>
             <View style={styles.main}>
               <View style={styles.header}>
                 {showProgress ? (
-                  <Text style={styles.stepLabel}>Steg {step} av {total}</Text>
+                  <Text style={styles.stepLabel}>Steg {step} av {total}{total === 4 ? ` · ${OWNER_ONBOARDING_STEPS[step - 1]}` : ''}</Text>
                 ) : null}
                 <Text style={styles.title}>{title}</Text>
                 {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -111,18 +110,21 @@ export function OnboardingShell({
                 <View style={styles.footer}>
                   <View style={styles.footerRow}>
                     {onBack ? (
-                      <TouchableOpacity style={styles.secondaryButton} onPress={onBack} activeOpacity={0.85}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Tillbaka" style={styles.secondaryButton} onPress={onBack} activeOpacity={0.85}>
                         <Text style={styles.secondaryLabel}>Tillbaka</Text>
                       </TouchableOpacity>
                     ) : null}
                     {onSkip ? (
-                      <TouchableOpacity style={styles.ghostButton} onPress={onSkip} activeOpacity={0.85}>
+                      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Hoppa över" style={styles.ghostButton} onPress={onSkip} activeOpacity={0.85}>
                         <Text style={styles.ghostLabel}>Hoppa över</Text>
                       </TouchableOpacity>
                     ) : null}
                   </View>
                   {onNext ? (
                     <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel={nextLabel}
+                      accessibilityState={{ disabled: Boolean(disableNext) }}
                       style={[styles.primaryButton, disableNext && styles.primaryButtonDisabled]}
                       onPress={onNext}
                       activeOpacity={0.9}
@@ -137,6 +139,8 @@ export function OnboardingShell({
             {showExit ? (
               <View style={styles.exitFooter}>
                 <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel={exitLabel}
                   style={styles.exitButton}
                   onPress={handleExit}
                   activeOpacity={0.85}
@@ -148,37 +152,37 @@ export function OnboardingShell({
           </View>
         </ScrollView>
       </SafeAreaView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  background: { flex: 1 },
+  background: { flex: 1, backgroundColor: palette.background },
   safeArea: { flex: 1, backgroundColor: palette.background },
-  content: { paddingHorizontal: 20, paddingBottom: 32, flexGrow: 1 },
+  content: { paddingHorizontal: 24, paddingTop: 12, paddingBottom: 32, flexGrow: 1, width: '100%', maxWidth: 680, alignSelf: 'center' },
   stack: { flexGrow: 1, justifyContent: 'space-between', gap: 20 },
   main: { gap: 20 },
   header: { gap: 8 },
   stepLabel: { fontSize: 12, color: palette.secondaryText, textTransform: 'uppercase', letterSpacing: 0.4 },
-  title: { fontSize: 22, fontWeight: '700', color: palette.primaryText },
-  subtitle: { fontSize: 14, color: palette.secondaryText, lineHeight: 20 },
+  title: { fontSize: 30, fontFamily: 'Inter-SemiBold', color: palette.primaryText, letterSpacing: -0.8, lineHeight: 36 },
+  subtitle: { fontSize: 15, color: palette.secondaryText, lineHeight: 20 },
   progressTrack: {
-    height: 6,
+    height: 3,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
     overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
-    backgroundColor: palette.primary,
+    backgroundColor: palette.primaryText,
     borderRadius: radius.full,
   },
   body: { gap: 16 },
   footer: { gap: 12, marginTop: 8 },
   footerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   exitIconButton: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -197,16 +201,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.primary,
-    backgroundColor: palette.primary,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
   },
   exitButtonLabel: {
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '600',
     fontSize: 14,
   },
   primaryButton: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
+    minHeight: 50,
+    justifyContent: 'center',
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
@@ -214,15 +222,17 @@ const styles = StyleSheet.create({
   primaryButtonDisabled: {
     opacity: 0.5,
   },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600', fontSize: 15 },
+  primaryLabel: { color: palette.primaryText, fontWeight: '600', fontSize: 15 },
   secondaryButton: {
+    minHeight: 44, justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
   },
   secondaryLabel: { color: palette.primaryText, fontWeight: '600' },
   ghostButton: {
+    minHeight: 44, justifyContent: 'center',
     paddingVertical: 10,
     paddingHorizontal: 12,
     borderRadius: radius.full,

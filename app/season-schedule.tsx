@@ -257,8 +257,8 @@ export default function SeasonScheduleScreen() {
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
             <View style={styles.intro}>
               <Text style={styles.eyebrow}>{stable?.name ?? 'Ditt stall'}</Text>
-              <Text style={styles.heading}>En period. Ett gemensamt schema.</Text>
-              <Text style={styles.body}>Dagliga pass och fasta veckoval inom stallets valda datum. Enskilda ändringar och historik behålls.</Text>
+              <Text style={styles.heading}>Stallets fasta pass.</Text>
+              <Text style={styles.body}>Välj en period, lägg in stallets dagliga pass och fördela veckodagarna mellan er.</Text>
             </View>
             {loading || hydrating ? <View style={styles.loading}><ActivityIndicator color={palette.primary} /><Text style={styles.body}>Hämtar fasta pass…</Text></View> : null}
             {error || schedule.error ? <View style={styles.errorBox}>
@@ -445,34 +445,34 @@ const styles = StyleSheet.create({
   card: { padding: 18, gap: 12, borderRadius: 20 },
   cardTitle: { fontFamily: theme.fonts.medium, fontSize: 15, lineHeight: 22, color: palette.primaryText },
   period: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, minHeight: 78, backgroundColor: palette.surface, borderRadius: 16, borderWidth: 1, borderColor: palette.border },
-  selected: { borderColor: palette.primary, backgroundColor: palette.accentSoft },
+  selected: { borderColor: palette.primaryText, backgroundColor: palette.surfaceMuted },
   periodStatus: { fontFamily: theme.fonts.medium, fontSize: 11, color: palette.primary },
   warning: { color: palette.warning },
   flex: { flex: 1, minWidth: 0, gap: 3 },
   empty: { padding: 22, gap: 12, borderRadius: 20 },
-  emptyIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: palette.accentSoft, alignItems: 'center', justifyContent: 'center' },
-  input: { minHeight: 48, borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, fontFamily: theme.fonts.regular, fontSize: 15, color: palette.primaryText, backgroundColor: palette.surface, minWidth: 0 },
+  emptyIcon: { width: 48, height: 48, borderRadius: 16, backgroundColor: palette.surfaceMuted, alignItems: 'center', justifyContent: 'center' },
+  input: { minHeight: 48, borderWidth: 1, borderColor: palette.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 11, fontFamily: theme.fonts.regular, fontSize: 16, color: palette.primaryText, backgroundColor: palette.surface, minWidth: 0 },
   fieldLabel: { fontFamily: theme.fonts.medium, fontSize: 13, color: palette.primaryText },
   templateEditor: { paddingTop: 14, gap: 10, borderTopWidth: 1, borderTopColor: palette.borderMuted },
   timeRow: { flexDirection: 'row', gap: 12 },
   timeField: { flex: 1, gap: 7, minWidth: 0 },
   instructions: { minHeight: 74, textAlignVertical: 'top' },
   archived: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'space-between', gap: 6 },
-  preview: { backgroundColor: palette.accentSoft, borderRadius: 14, padding: 16, gap: 7 },
+  preview: { backgroundColor: palette.surfaceMuted, borderRadius: 14, padding: 16, gap: 7 },
   versionChoice: { backgroundColor: theme.tints.warning, borderRadius: 14, padding: 16, gap: 9 },
   previewCount: { fontFamily: theme.fonts.semibold, fontSize: 23, color: palette.primaryText },
-  primary: { minHeight: 48, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 14, backgroundColor: palette.primary, alignItems: 'center', justifyContent: 'center' },
-  primaryText: { fontFamily: theme.fonts.medium, fontSize: 14, lineHeight: 20, color: palette.inverseText, textAlign: 'center' },
+  primary: { minHeight: 48, paddingHorizontal: 14, paddingVertical: 13, borderRadius: 14, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, alignItems: 'center', justifyContent: 'center' },
+  primaryText: { fontFamily: theme.fonts.medium, fontSize: 14, lineHeight: 20, color: palette.primaryText, textAlign: 'center' },
   secondary: { minHeight: 46, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7 },
   disabled: { opacity: 0.5 },
   loading: { flexDirection: 'row', gap: 10, alignItems: 'center', padding: 10 },
-  progress: { padding: 16, gap: 8, borderRadius: 14, backgroundColor: palette.accentSoft },
+  progress: { padding: 16, gap: 8, borderRadius: 14, backgroundColor: palette.surfaceMuted },
   errorBox: { backgroundColor: theme.tints.error, padding: 14, borderRadius: 14, gap: 4 },
   error: { fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 19, color: palette.error },
   success: { fontFamily: theme.fonts.medium, fontSize: 14, lineHeight: 21, color: palette.success },
   weekCard: { padding: 0, borderRadius: 18, overflow: 'hidden' },
   templateHeader: { minHeight: 78, padding: 16, gap: 12, flexDirection: 'row', alignItems: 'center' },
-  templateIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: palette.accentSoft, alignItems: 'center', justifyContent: 'center' },
+  templateIcon: { width: 40, height: 40, borderRadius: 13, backgroundColor: palette.surfaceMuted, alignItems: 'center', justifyContent: 'center' },
   weekForm: { padding: 16, paddingTop: 0, gap: 12 },
   memberChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   member: { minHeight: 44, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 12, borderWidth: 1, borderColor: palette.border, justifyContent: 'center' },

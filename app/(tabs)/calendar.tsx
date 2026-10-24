@@ -14,7 +14,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { theme } from '@/components/theme';
@@ -58,13 +58,6 @@ import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { DateTimeField } from '@/components/DateTimeField';
 import { useAuth } from '@/context/AuthContext';
-import CalendarSun from '@/assets/images/figma/calendar-sun.svg';
-import CalendarClock from '@/assets/images/figma/calendar-clock.svg';
-import CalendarMoon from '@/assets/images/figma/calendar-moon.svg';
-import CalendarPrevious from '@/assets/images/figma/calendar-previous.svg';
-import CalendarNext from '@/assets/images/figma/calendar-next.svg';
-import CalendarPlus from '@/assets/images/figma/calendar-plus.svg';
-import CalendarCategory from '@/assets/images/figma/calendar-category.svg';
 import FeedingWarning from '@/assets/images/figma/feeding-warning.svg';
 import CleaningIcon from '@/assets/images/figma/cleaning.svg';
 import RiderAwayIcon from '@/assets/images/figma/rider-away.svg';
@@ -103,8 +96,8 @@ type EmptyStateConfig = {
 const WEEKDAY_LABELS = ['Mån', 'Tis', 'Ons', 'Tor', 'Fre', 'Lör', 'Sön'];
 
 const filterLabels: Record<Filter, string> = {
-  Pass: 'Stallschema',
-  Riddagar: 'Ridschema',
+  Pass: 'Stallpass',
+  Riddagar: 'Ridning',
   Ridhus: 'Ridhus',
   Tävling: 'Tävling',
   Vård: 'Vård',
@@ -278,6 +271,13 @@ function calculateDurationMinutes(startTime: string, endTime: string) {
   return diff;
 }
 
+function findVisibleCalendarAssignment(
+  assignments: Assignment[], assignmentId: string | undefined, stableId: string | undefined, isMember: boolean,
+) {
+  if (!assignmentId || !stableId || !isMember) return undefined;
+  return assignments.find(item => item.id === assignmentId && item.stableId === stableId);
+}
+
 export default function CalendarScreen() {
   const { state, actions, derived, hydrating } = useAppData();
   const { user: authUser } = useAuth();
@@ -297,10 +297,11 @@ export default function CalendarScreen() {
     currentUserId,
     currentStableId,
   } = state;
-  const { view, date, section, fromOnboarding, returnTo } = useLocalSearchParams<{
+  const { view, date, section, assignmentId, fromOnboarding, returnTo } = useLocalSearchParams<{
     view?: string | string[];
     date?: string | string[];
     section?: string | string[];
+    assignmentId?: string | string[];
     fromOnboarding?: string | string[];
     returnTo?: string | string[];
   }>();
@@ -368,7 +369,38 @@ export default function CalendarScreen() {
   const resolvedFilter = React.useMemo(() => resolveFilterFromSection(section), [section]);
   const [activeFilter, setActiveFilter] = React.useState<Filter>(resolvedFilter ?? 'Pass');
   const [passView, setPassView] = React.useState<PassView>(() => resolvePassView(view));
-  const [legendExpanded, setLegendExpanded] = React.useState(true);
+  const [legendExpanded, setLegendExpanded] = React.useState(false);
+  const [showMonthView, setShowMonthView] = React.useState(false);
+  const [selectedAgendaDate, setSelectedAgendaDate] = React.useState<string | null>(focusDate ?? toISODate(new Date()));
+  const weekNavigationScope = JSON.stringify([dateTimeScope, focusDate]);
+  const [weekNavigation, setWeekNavigation] = React.useState<{ scope: string; date: string } | null>(null);
+  const browsedWeekDate = weekNavigation?.scope === weekNavigationScope ? weekNavigation.date : undefined;
+  const [detailAssignmentId, setDetailAssignmentId] = React.useState<string | undefined>(undefined);
+  const [detailLoadError, setDetailLoadError] = React.useState<string | null>(null);
+  const openedAssignmentParam = React.useRef<string | undefined>(undefined);
+  const assignmentParam = Array.isArray(assignmentId) ? assignmentId[0] : assignmentId;
+  const isStableMember = Boolean(users[currentUserId]?.membership.some(entry => entry.stableId === currentStableId));
+  const detailAssignment = findVisibleCalendarAssignment(assignments, detailAssignmentId, currentStableId, isStableMember);
+
+  React.useEffect(() => {
+    setDetailAssignmentId(undefined);
+    setDetailLoadError(null);
+    openedAssignmentParam.current = undefined;
+    setSelectedAgendaDate(focusDate ?? toISODate(new Date()));
+  }, [currentStableId, currentUserId, focusDate]);
+
+  React.useEffect(() => {
+    if (hydrating || !assignmentParam || openedAssignmentParam.current === assignmentParam) return;
+    const item = findVisibleCalendarAssignment(assignments, assignmentParam, currentStableId, isStableMember);
+    if (!item) {
+      setDetailLoadError('Passet kunde inte hittas i det valda stallet. Välj ett pass i schemat eller uppdatera appen.');
+      return;
+    }
+    setDetailLoadError(null);
+    openedAssignmentParam.current = assignmentParam;
+    setActiveFilter('Pass');
+    setDetailAssignmentId(item.id);
+  }, [assignmentParam, assignments, currentStableId, hydrating, isStableMember]);
   const [categoryIndex, setCategoryIndex] = React.useState(0);
   const [monthCursor, setMonthCursor] = React.useState(() => startOfMonth(new Date()));
   const [arenaModalVisible, setArenaModalVisible] = React.useState(false);
@@ -716,46 +748,28 @@ export default function CalendarScreen() {
       });
     }
 
+    if (browsedWeekDate) {
+      const start = startOfWeek(new Date(`${browsedWeekDate}T12:00:00`));
+      const key = toISODate(start);
+      if (!grouped.has(key)) grouped.set(key, { start, end: endOfWeek(start), days: [] });
+    }
+
     return Array.from(grouped.values())
       .map((week) => ({ ...week, days: fillWeekDays(week.start, week.days) }))
       .sort((a, b) => a.start.getTime() - b.start.getTime());
-  }, [groupedDays, todayIso]);
+  }, [browsedWeekDate, groupedDays, todayIso]);
 
-  const [weekIndex, setWeekIndex] = React.useState(0);
-  const initializedWeekStableIdRef = React.useRef<string | undefined>(undefined);
-
-  React.useEffect(() => {
-    if (weekGroups.length === 0) {
-      setWeekIndex(0);
-      return;
-    }
-    if (initializedWeekStableIdRef.current !== currentStableId) {
-      initializedWeekStableIdRef.current = currentStableId;
-      setWeekIndex(findInitialWeekIndex(weekGroups));
-      return;
-    }
-    setWeekIndex((prev) => Math.min(prev, weekGroups.length - 1));
-  }, [currentStableId, weekGroups]);
-
-  React.useEffect(() => {
-    if (!focusDate || weekGroups.length === 0) {
-      return;
-    }
-    const parsed = new Date(`${focusDate}T00:00:00`);
-    if (Number.isNaN(parsed.getTime())) {
-      return;
-    }
-    const targetTime = parsed.getTime();
-    const index = weekGroups.findIndex(
-      (group) => targetTime >= group.start.getTime() && targetTime <= group.end.getTime(),
-    );
-    if (index >= 0) {
-      setWeekIndex(index);
-    }
-  }, [focusDate, weekGroups]);
+  const weekIndex = findInitialWeekIndex(
+    weekGroups, new Date(`${browsedWeekDate ?? focusDate ?? todayIso}T12:00:00`),
+  );
 
   const activeWeek = weekGroups[weekIndex] ?? weekGroups[0];
   const activeDays = React.useMemo(() => activeWeek?.days ?? [], [activeWeek]);
+  React.useEffect(() => {
+    if (selectedAgendaDate && activeDays.length && !activeDays.some(day => day.isoDate === selectedAgendaDate)) {
+      setSelectedAgendaDate(activeDays[0].isoDate);
+    }
+  }, [activeDays, selectedAgendaDate]);
 
   const upcomingDayGroups = React.useMemo(
     () =>
@@ -893,14 +907,14 @@ export default function CalendarScreen() {
     if (passView === 'open') {
       return regularDays.filter((day) => day.openSlots > 0);
     }
-    return regularDays;
-  }, [passView, regularDays]);
+    return selectedAgendaDate ? regularDays.filter(day => day.id === selectedAgendaDate) : regularDays;
+  }, [passView, regularDays, selectedAgendaDate]);
 
   const selectedCategory = competitionCategories[categoryIndex];
   const weekRangeLabel = activeWeek ? formatWeekRange(activeWeek.start, activeWeek.end) : '';
   const weekNumber = activeWeek ? getISOWeekNumber(activeWeek.start) : undefined;
-  const canGoPreviousWeek = weekIndex > 0;
-  const canGoNextWeek = weekGroups.length > 0 && weekIndex < weekGroups.length - 1;
+  const canGoPreviousWeek = Boolean(activeWeek);
+  const canGoNextWeek = Boolean(activeWeek);
 
   const dateOptions = React.useMemo(
     () =>
@@ -960,8 +974,8 @@ export default function CalendarScreen() {
   }, []);
 
   const handleCreateSlot = React.useCallback(() => {
-    setAssignmentModal({ visible: true, mode: 'create' });
-  }, []);
+    setAssignmentModal({ visible: true, mode: 'create', date: selectedAgendaDate ?? undefined });
+  }, [selectedAgendaDate]);
 
   const openRecurringModal = React.useCallback(() => {
     setRecurringForm(buildRecurringDefaults());
@@ -1113,17 +1127,22 @@ export default function CalendarScreen() {
   }, [activeHorses.length, activeRideTypes.length, openRideLogModal, toast]);
 
   const handlePrevWeek = React.useCallback(() => {
-    setWeekIndex((prev) => Math.max(0, prev - 1));
-  }, []);
+    if (!activeWeek) return;
+    const target = new Date(activeWeek.start);
+    target.setDate(target.getDate() - 7);
+    const targetDate = toISODate(target);
+    setWeekNavigation({ scope: weekNavigationScope, date: targetDate });
+    setSelectedAgendaDate(targetDate);
+  }, [activeWeek, weekNavigationScope]);
 
   const handleNextWeek = React.useCallback(() => {
-    setWeekIndex((prev) => {
-      if (weekGroups.length === 0) {
-        return prev;
-      }
-      return Math.min(weekGroups.length - 1, prev + 1);
-    });
-  }, [weekGroups.length]);
+    if (!activeWeek) return;
+    const target = new Date(activeWeek.start);
+    target.setDate(target.getDate() + 7);
+    const targetDate = toISODate(target);
+    setWeekNavigation({ scope: weekNavigationScope, date: targetDate });
+    setSelectedAgendaDate(targetDate);
+  }, [activeWeek, weekNavigationScope]);
 
   const handlePrevMonth = React.useCallback(() => {
     setMonthCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
@@ -1466,90 +1485,29 @@ export default function CalendarScreen() {
           showsVerticalScrollIndicator={false}
         >
           <DataSyncStatus />
+          {detailLoadError ? <Text accessibilityRole="alert" style={styles.detailLoadError}>{detailLoadError}</Text> : null}
           {noticeSaveError && !dayEventModalVisible && !arenaStatusModalVisible && <Text accessibilityRole="alert" style={{ color: palette.error }}>{noticeSaveError}</Text>}
           {noticeSaving && !dayEventModalVisible && !arenaStatusModalVisible && <Text style={styles.modalHint}>Sparar…</Text>}
-          {activeFilter === 'Pass' ? (
-            <TouchableOpacity
-              style={[styles.recurringButton, { alignSelf: 'flex-start' }]}
-              onPress={() => router.push('/season-schedule')}
-              activeOpacity={0.85}
-              accessibilityRole="button"
-              accessibilityLabel="Fasta pass"
-            >
-              <Feather name="calendar" size={14} color={palette.primary} />
-              <Text style={styles.recurringButtonText}>Fasta pass</Text>
-            </TouchableOpacity>
-          ) : null}
-          <Card tone="muted" style={[styles.filterRow, isDesktopWeb && styles.filterRowDesktop]}>
-            {filters.slice(0, 3).map((label) => {
+          <View style={styles.calendarIntro}>
+            <Text style={styles.calendarEyebrow}>{showOnboardingBack ? 'STEG 4 AV 4 · FÖRSTA PASSET' : 'STALLETS KALENDER'}</Text>
+            <Text style={styles.calendarHeading}>{showOnboardingBack ? 'Ditt första pass.' : 'En tydlig plan för dagen.'}</Text>
+            <Text style={styles.calendarDescription}>{showOnboardingBack ? 'Skapa ett pass och välj vem som ansvarar. Gå sedan tillbaka för att slutföra introduktionen.' : 'Välj vad du vill se och hitta nästa uppgift i schemat.'}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+            {filters.map(label => {
               const active = label === activeFilter;
               return (
-                <TouchableOpacity
-                  key={label}
-                  style={styles.filterButton}
-                  onPress={() => setActiveFilter(label)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={filterLabels[label]}
-                  accessibilityState={{ selected: active }}
-                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
-                >
-                  <Pill style={[styles.filterChip, active && styles.filterChipActive, isDesktopWeb && styles.filterChipDesktop]}>
-                    <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>
-                      {filterLabels[label]}
-                    </Text>
-                  </Pill>
+                <TouchableOpacity key={label} onPress={() => setActiveFilter(label)} activeOpacity={0.8}
+                  style={[styles.categoryButton, active && styles.categoryButtonActive]}
+                  accessibilityRole="button" accessibilityLabel={filterLabels[label]} accessibilityState={{ selected: active }}
+                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}>
+                  <Text style={[styles.categoryText, active && styles.categoryTextActive]}>{filterLabels[label]}</Text>
                 </TouchableOpacity>
               );
             })}
-          </Card>
+          </ScrollView>
 
-          <View style={[styles.subFilterRow, isDesktopWeb && styles.subFilterRowDesktop]}>
-            {activeFilter === 'Pass' ? passViewOptions.map((option) => {
-              const active = option.id === passView;
-              return (
-                <TouchableOpacity
-                  key={option.id}
-                  style={styles.utilityButton}
-                  onPress={() => setPassView(option.id)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={option.label}
-                  accessibilityState={{ selected: active }}
-                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
-                >
-                  <Pill style={[styles.subFilterChip, active && styles.subFilterChipActive, isDesktopWeb && styles.subFilterChipDesktop]}>
-                    <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
-                      {option.label}
-                    </Text>
-                  </Pill>
-                </TouchableOpacity>
-              );
-            }) : null}
-            {filters.slice(3).map((label) => {
-              const active = activeFilter === label;
-              return (
-                <TouchableOpacity
-                  key={label}
-                  style={styles.utilityButton}
-                  onPress={() => setActiveFilter(label)}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={filterLabels[label]}
-                  accessibilityState={{ selected: active }}
-                  {...(Platform.OS === 'web' ? { 'aria-pressed': active } : {})}
-                >
-                  <Pill style={[styles.subFilterChip, active && styles.subFilterChipActive]}>
-                    <Text style={[styles.subFilterText, active && styles.subFilterTextActive]}>
-                      {filterLabels[label]}
-                    </Text>
-                  </Pill>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          {activeFilter === 'Pass' && (isDesktopWeb || legendExpanded) && (
+          {activeFilter === 'Pass' && legendExpanded && (
             <View style={[styles.legendCard, isDesktopWeb && styles.legendCardDesktop]}>
               {legendItems.map((item) => (
                 <View key={item.label} style={styles.legendItem}>
@@ -1560,7 +1518,7 @@ export default function CalendarScreen() {
             </View>
           )}
 
-          {activeFilter === 'Pass' && isDesktopWeb && passView === 'all' ? (
+          {activeFilter === 'Pass' && isDesktopWeb && showMonthView && passView === 'all' ? (
             <View style={styles.monthSection}>
               <View style={styles.monthHeader}>
                 <TouchableOpacity
@@ -1570,7 +1528,7 @@ export default function CalendarScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Föregående månad"
                 >
-                  <CalendarPrevious />
+                  <Ionicons name="chevron-back-outline" size={20} color={palette.primaryText} />
                 </TouchableOpacity>
                 <Text style={styles.monthLabel}>{monthLabel}</Text>
                 <TouchableOpacity
@@ -1580,7 +1538,7 @@ export default function CalendarScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Nästa månad"
                 >
-                  <CalendarNext />
+                  <Ionicons name="chevron-forward-outline" size={20} color={palette.primaryText} />
                 </TouchableOpacity>
               </View>
               <View style={styles.monthWeekHeaderRow}>
@@ -1695,7 +1653,7 @@ export default function CalendarScreen() {
                 accessibilityLabel="Föregående vecka"
                 accessibilityState={{ disabled: !canGoPreviousWeek }}
               >
-                <CalendarPrevious />
+                <Ionicons name="chevron-back-outline" size={20} color={palette.primaryText} />
               </TouchableOpacity>
               <View style={styles.weekTitleBlock}>
                 <Text style={styles.weekTitle}>
@@ -1711,7 +1669,7 @@ export default function CalendarScreen() {
                 accessibilityLabel="Nästa vecka"
                 accessibilityState={{ disabled: !canGoNextWeek }}
               >
-                <CalendarNext />
+                <Ionicons name="chevron-forward-outline" size={20} color={palette.primaryText} />
               </TouchableOpacity>
             </View>
           ) : activeFilter === 'Pass' ? (
@@ -1734,7 +1692,40 @@ export default function CalendarScreen() {
             </View>
           ) : null}
 
-          {activeFilter === 'Pass' && (!isDesktopWeb || passView !== 'all') && (
+          {activeFilter === 'Pass' && (!isDesktopWeb || !showMonthView) && passView === 'all' ? (
+            <View style={styles.datePanel}>
+              <View style={styles.dateStrip}>
+                {activeDays.map(day => {
+                  const active = day.isoDate === selectedAgendaDate;
+                  return <TouchableOpacity key={day.isoDate} style={[styles.dateButton, active && styles.dateButtonActive]}
+                    onPress={() => setSelectedAgendaDate(day.isoDate)} activeOpacity={0.8}
+                    accessibilityRole="button" accessibilityLabel={`Visa ${day.isoDate}`} accessibilityState={{ selected: active }}>
+                    <Text style={styles.dateWeekday}>{formatShortWeekday(day.date)}</Text>
+                    <Text style={styles.dateNumber}>{day.date.getDate()}</Text>
+                    <View style={[styles.dateDot, day.assignments.length > 0 && styles.dateDotScheduled]} />
+                  </TouchableOpacity>;
+                })}
+              </View>
+              <TouchableOpacity style={styles.textControl} onPress={() => setSelectedAgendaDate(null)} accessibilityRole="button" accessibilityLabel="Visa hela veckan">
+                <Text style={styles.textControlLabel}>Visa hela veckan</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {activeFilter === 'Pass' ? <View style={styles.passToolbar}>
+            <View style={styles.passViewGroup}>
+              {passViewOptions.map(option => <TouchableOpacity key={option.id} onPress={() => setPassView(option.id)}
+                style={[styles.passViewButton, option.id === passView && styles.passViewButtonActive]} activeOpacity={0.8}
+                accessibilityRole="button" accessibilityLabel={option.label} accessibilityState={{ selected: option.id === passView }}>
+                <Text style={[styles.passViewText, option.id === passView && styles.passViewTextActive]}>{option.label}</Text>
+              </TouchableOpacity>)}
+            </View>
+            {isDesktopWeb ? <TouchableOpacity style={styles.textControl} onPress={() => setShowMonthView(value => !value)} accessibilityRole="button" accessibilityLabel={showMonthView ? 'Visa agenda' : 'Visa månad'}>
+              <Feather name={showMonthView ? 'list' : 'calendar'} size={16} color={palette.primaryText} />
+              <Text style={styles.textControlLabel}>{showMonthView ? 'Agenda' : 'Månad'}</Text>
+            </TouchableOpacity> : null}
+          </View> : null}
+
+          {activeFilter === 'Pass' && (!isDesktopWeb || !showMonthView || passView !== 'all') && (
             <View style={[styles.scheduleList, isDesktopWeb && styles.scheduleListDesktop]}>
               {visibleRegularDays.map((day) => (
                 <RegularDayCard
@@ -1742,7 +1733,7 @@ export default function CalendarScreen() {
                   day={day.day}
                   date={day.date}
                   isoDate={day.id}
-                  selected={day.selected}
+                  selected={selectedAgendaDate === day.id || (!selectedAgendaDate && day.selected)}
                   slots={day.slots}
                   openSlots={day.openSlots}
                   mineSlots={day.mineSlots}
@@ -1766,7 +1757,7 @@ export default function CalendarScreen() {
                       : undefined
                   }
                   onEditAssignment={canManageAssignments ? handleEditAssignment : undefined}
-                  onOpenSeasonAssignment={handleEditAssignment}
+                  onOpenSeasonAssignment={(id) => setDetailAssignmentId(id)}
                   onDeclineAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'decline') : undefined}
                   onCompleteAssignment={canCompleteAssignments ? (id) => handleAssignmentStatus(id, 'complete') : undefined}
                 />
@@ -1783,8 +1774,10 @@ export default function CalendarScreen() {
 
           {activeFilter === 'Pass' ? (
             <View style={[styles.recurringRow, isDesktopWeb && styles.recurringRowDesktop]}>
-              {!isDesktopWeb ? (
-                <TouchableOpacity
+              <TouchableOpacity style={styles.recurringButton} onPress={() => router.push('/season-schedule')} accessibilityRole="button" accessibilityLabel="Fasta pass">
+                <Feather name="calendar" size={16} color={palette.primaryText} /><Text style={styles.recurringButtonText}>Fasta pass</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
                   style={styles.legendToggle}
                   onPress={() => setLegendExpanded((expanded) => !expanded)}
                   activeOpacity={0.85}
@@ -1797,7 +1790,6 @@ export default function CalendarScreen() {
                   <Text style={styles.legendToggleText}>Färgförklaring</Text>
                   <Feather name={legendExpanded ? 'chevron-up' : 'chevron-down'} size={14} color={palette.secondaryText} />
                 </TouchableOpacity>
-              ) : null}
               {canManageAssignments ? (
                 <TouchableOpacity
                   style={styles.recurringButton}
@@ -1866,7 +1858,7 @@ export default function CalendarScreen() {
                 <Text style={styles.sectionTitle}>Ridlogg</Text>
                 {canManageRideLogs ? (
                   <TouchableOpacity style={styles.sectionActionButton} onPress={openRideLogModal}>
-                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Feather name="plus" size={14} color={palette.primaryText} />
                     <Text style={styles.sectionActionText}>Registrera</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1968,7 +1960,7 @@ export default function CalendarScreen() {
                   onPress={handlePrevMonth}
                   activeOpacity={0.8}
                 >
-                  <CalendarPrevious />
+                  <Ionicons name="chevron-back-outline" size={20} color={palette.primaryText} />
                 </TouchableOpacity>
                 <Text style={styles.monthLabel}>{monthLabel}</Text>
                 <TouchableOpacity
@@ -1976,7 +1968,7 @@ export default function CalendarScreen() {
                   onPress={handleNextMonth}
                   activeOpacity={0.8}
                 >
-                  <CalendarNext />
+                  <Ionicons name="chevron-forward-outline" size={20} color={palette.primaryText} />
                 </TouchableOpacity>
               </View>
               <View style={styles.monthWeekHeaderRow}>
@@ -2074,7 +2066,7 @@ export default function CalendarScreen() {
                 <Text style={styles.sectionTitle}>Ridhus-bokningar</Text>
                 {canManageArenaBookings ? (
                   <TouchableOpacity style={styles.sectionActionButton} onPress={openArenaModal}>
-                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Feather name="plus" size={14} color={palette.primaryText} />
                     <Text style={styles.sectionActionText}>Ny bokning</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -2141,7 +2133,7 @@ export default function CalendarScreen() {
                 <Text style={styles.sectionTitle}>Ridhusstatus</Text>
                 {canManageArenaStatus ? (
                   <TouchableOpacity style={styles.sectionActionButton} onPress={() => openArenaStatusModal('Harvat')}>
-                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Feather name="plus" size={14} color={palette.primaryText} />
                     <Text style={styles.sectionActionText}>Markera</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -2226,7 +2218,7 @@ export default function CalendarScreen() {
                 <Text style={styles.sectionTitle}>Dagshändelser</Text>
                 {canManageDayEvents ? (
                   <TouchableOpacity style={styles.sectionActionButton} onPress={openDayEventModal}>
-                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Feather name="plus" size={14} color={palette.primaryText} />
                     <Text style={styles.sectionActionText}>Lägg till</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -2285,7 +2277,7 @@ export default function CalendarScreen() {
             <View style={styles.competitionSection}>
               <TouchableOpacity style={styles.competitionCategory} onPress={handleCategoryToggle}>
                 <Text style={styles.competitionCategoryText}>{selectedCategory}</Text>
-                <CalendarCategory />
+                <Ionicons name="options-outline" size={20} color={palette.primaryText} />
               </TouchableOpacity>
               <View style={styles.competitionList}>
                 {competitionEvents.length > 0 ? (
@@ -2876,6 +2868,40 @@ export default function CalendarScreen() {
         onSave={actions.updateRecurringAssignmentSeries}
       /> : null}
 
+      <Modal visible={Boolean(detailAssignment)} transparent animationType="slide" onRequestClose={() => setDetailAssignmentId(undefined)}>
+        <View style={styles.modalBackdrop}>
+          <Card style={styles.modalCard}>
+            {detailAssignment ? <ScrollView contentContainerStyle={styles.assignmentDetail}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.calendarEyebrow}>STALLPASS</Text>
+                <TouchableOpacity style={styles.weekButton} onPress={() => setDetailAssignmentId(undefined)} accessibilityRole="button" accessibilityLabel="Stäng passdetaljer"><Feather name="x" size={20} color={palette.primaryText} /></TouchableOpacity>
+              </View>
+              <Text style={styles.detailTitle}>{detailAssignment.label}</Text>
+              <Text style={styles.modalHint}>{detailAssignment.date} · {detailAssignment.time}</Text>
+              <View style={styles.detailMeta}>
+                <Feather name="user" size={18} color={palette.secondaryText} />
+                <Text style={styles.detailBody}>{detailAssignment.assigneeId ? users[detailAssignment.assigneeId]?.name ?? 'Tilldelad medlem' : 'Ledigt pass'}</Text>
+              </View>
+              <Text style={styles.detailBody}>{stripAssignmentNoteMetadata(detailAssignment.note) || 'Inga särskilda instruktioner.'}</Text>
+              <Text style={styles.modalHint}>{detailAssignment.status === 'completed' ? 'Passet är klart.' : detailAssignment.status === 'assigned' ? 'Passet har en ansvarig.' : 'Passet saknar ansvarig.'}</Text>
+              {assignmentSaveErrors[detailAssignment.id] ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{assignmentSaveErrors[detailAssignment.id]}</Text> : null}
+              {detailAssignment.templateId ? <TouchableOpacity style={styles.detailButton} onPress={() => { const id = detailAssignment.id; setDetailAssignmentId(undefined); router.push({ pathname: '/season-schedule', params: { assignmentId: id } }); }} accessibilityRole="button" accessibilityLabel="Öppna fast pass och veckoval">
+                <Feather name="repeat" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>Fast pass · datum och veckoval</Text>
+              </TouchableOpacity> : null}
+              {canManageAssignments && !detailAssignment.templateId ? <TouchableOpacity style={styles.detailButton} onPress={() => { const id = detailAssignment.id; setDetailAssignmentId(undefined); handleEditAssignment(id); }} accessibilityRole="button" accessibilityLabel="Redigera detta pass">
+                <Feather name="edit-3" size={18} color={palette.primaryText} /><Text style={styles.modalPrimaryText}>Redigera och tilldela</Text>
+              </TouchableOpacity> : null}
+              {canClaimAssignments && detailAssignment.status === 'open' ? <TouchableOpacity style={styles.detailButton} disabled={claimingAssignmentIds.has(detailAssignment.id)} onPress={() => { void handleClaimAssignment(detailAssignment.id); }} accessibilityRole="button" accessibilityLabel="Ta detta pass">
+                <Text style={styles.modalPrimaryText}>{claimingAssignmentIds.has(detailAssignment.id) ? 'Tar pass…' : 'Ta passet'}</Text>
+              </TouchableOpacity> : null}
+              {canCompleteAssignments && detailAssignment.assigneeId === currentUserId && detailAssignment.status === 'assigned' ? <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.detailButton} disabled={savingAssignmentIds.has(detailAssignment.id)} onPress={() => { void handleAssignmentStatus(detailAssignment.id, 'decline'); }} accessibilityRole="button" accessibilityLabel="Släpp detta pass"><Text style={styles.modalPrimaryText}>Kan inte · släpp passet</Text></TouchableOpacity>
+                <TouchableOpacity style={styles.detailButton} disabled={savingAssignmentIds.has(detailAssignment.id)} onPress={() => { void handleAssignmentStatus(detailAssignment.id, 'complete'); }} accessibilityRole="button" accessibilityLabel="Markera detta pass klart"><Text style={styles.modalPrimaryText}>{savingAssignmentIds.has(detailAssignment.id) ? 'Sparar…' : 'Markera klart'}</Text></TouchableOpacity>
+              </View> : null}
+            </ScrollView> : null}
+          </Card>
+        </View>
+      </Modal>
       <NewAssignmentModal
         scopeKey={JSON.stringify([dateTimeScope, assignmentModal.mode, assignmentModal.assignmentId])}
         visible={assignmentModal.visible}
@@ -3067,7 +3093,7 @@ const RegularDayCard = React.memo(function RegularDayCard({
             isClaiming={claimingAssignmentIds.has(slot.id)}
             isSaving={savingAssignmentIds.has(slot.id)}
             saveError={assignmentSaveErrors[slot.id]}
-            onOpen={slot.templateId && onOpenSeasonAssignment ? () => onOpenSeasonAssignment(slot.id) : undefined}
+            onOpen={onOpenSeasonAssignment ? () => onOpenSeasonAssignment(slot.id) : undefined}
             openLabel={`Öppna ${slot.label} ${isoDate}`}
             onTake={
               slot.status === 'open' && onClaimOpenAssignment
@@ -3161,12 +3187,12 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
 
   const renderIcon = () => {
     if (icon === 'sun') {
-      return <CalendarSun />;
+      return <Ionicons name="sunny-outline" size={20} color={palette.primaryText} />;
     }
     if (icon === 'moon') {
-      return <CalendarMoon />;
+      return <Ionicons name="moon-outline" size={20} color={palette.primaryText} />;
     }
-    return <CalendarClock />;
+    return <Ionicons name="time-outline" size={20} color={palette.primaryText} />;
   };
 
   return (
@@ -3256,7 +3282,7 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                     accessibilityState={{ disabled: isSaving, busy: isSaving }}
                     activeOpacity={0.85}
                   >
-                    <Feather name="check" size={14} color={palette.inverseText} />
+                    <Feather name="check" size={14} color={palette.primaryText} />
                     <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
                       {isSaving ? 'Sparar…' : 'Klart'}
                     </Text>
@@ -3277,9 +3303,9 @@ const ScheduleIcon = React.memo(function ScheduleIcon({
                   accessibilityState={{ disabled: isClaiming, busy: isClaiming }}
                 >
                   {isClaiming ? (
-                    <ActivityIndicator size="small" color={palette.inverseText} />
+                    <ActivityIndicator size="small" color={palette.primaryText} />
                   ) : (
-                    <Feather name="plus" size={14} color={palette.inverseText} />
+                    <Feather name="plus" size={14} color={palette.primaryText} />
                   )}
                   <Text style={[styles.scheduleManageLabel, styles.scheduleTakeLabel]}>
                     {isClaiming ? 'Tar pass...' : 'Ta pass'}
@@ -3342,7 +3368,7 @@ const RidingDayRow = React.memo(function RidingDayRow({
           accessibilityRole="button"
           accessibilityLabel={`Registrera ridpass ${label}`}
         >
-          <CalendarPlus />
+          <Ionicons name="add-outline" size={20} color={palette.primaryText} />
           <Text style={styles.ridingRegisterText}>Registrera ridpass</Text>
         </TouchableOpacity>
       ) : null}
@@ -3651,6 +3677,38 @@ function resolveNoteColor(note: string) {
 }
 
 const styles = StyleSheet.create({
+  calendarIntro: { gap: 8, paddingTop: 6, paddingBottom: 4 },
+  calendarEyebrow: { fontFamily: theme.fonts.semibold, fontSize: 11, letterSpacing: 1.4, color: palette.secondaryText },
+  calendarHeading: { fontFamily: theme.fonts.semibold, fontSize: 27, lineHeight: 34, letterSpacing: -0.7, color: palette.primaryText },
+  calendarDescription: { fontFamily: theme.fonts.regular, fontSize: 14, lineHeight: 21, color: palette.secondaryText },
+  categoryRow: { gap: 8, paddingVertical: 2 },
+  categoryButton: { minHeight: 44, paddingHorizontal: 18, borderRadius: 14, borderWidth: 1, borderColor: palette.border, justifyContent: 'center', backgroundColor: palette.surface },
+  categoryButtonActive: { backgroundColor: palette.surfaceMuted, borderColor: palette.primaryText },
+  categoryText: { fontFamily: theme.fonts.regular, fontSize: 14, color: palette.secondaryText },
+  categoryTextActive: { fontFamily: theme.fonts.semibold, color: palette.primaryText },
+  datePanel: { gap: 8 },
+  dateStrip: { flexDirection: 'row', gap: 6 },
+  dateButton: { flex: 1, minWidth: 0, minHeight: 78, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', gap: 6, borderWidth: 1, borderColor: palette.border, borderRadius: 18, backgroundColor: palette.surface },
+  dateButtonActive: { backgroundColor: palette.surfaceMuted, borderColor: palette.primaryText },
+  dateWeekday: { fontFamily: theme.fonts.regular, fontSize: 11, color: palette.secondaryText },
+  dateNumber: { fontFamily: theme.fonts.semibold, fontSize: 18, color: palette.primaryText },
+  dateDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: 'transparent' },
+  dateDotScheduled: { backgroundColor: palette.primary },
+  textControl: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7, alignSelf: 'flex-start', paddingHorizontal: 4 },
+  textControlLabel: { fontFamily: theme.fonts.medium, fontSize: 12, color: palette.secondaryText },
+  passToolbar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  passViewGroup: { flexDirection: 'row', padding: 4, borderRadius: 14, backgroundColor: palette.surfaceMuted, gap: 3 },
+  passViewButton: { minHeight: 44, paddingHorizontal: 16, borderRadius: 10, justifyContent: 'center', borderWidth: 1, borderColor: 'transparent' },
+  passViewButtonActive: { backgroundColor: palette.surface, borderColor: palette.border },
+  passViewText: { fontFamily: theme.fonts.regular, fontSize: 13, color: palette.secondaryText },
+  passViewTextActive: { fontFamily: theme.fonts.semibold, color: palette.primaryText },
+  assignmentDetail: { gap: 16 },
+  detailTitle: { fontFamily: theme.fonts.semibold, fontSize: 25, lineHeight: 32, color: palette.primaryText, letterSpacing: -0.5 },
+  detailBody: { fontFamily: theme.fonts.regular, fontSize: 14, lineHeight: 21, color: palette.primaryText },
+  detailLoadError: { fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 20, color: palette.error },
+  detailMeta: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 14, borderTopWidth: 1, borderBottomWidth: 1, borderColor: palette.border },
+  detailButton: { minHeight: 48, flexShrink: 1, paddingHorizontal: 14, paddingVertical: 12, borderRadius: 14, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+
   filterButton: {
     flex: 1,
     minWidth: 0,
@@ -3700,13 +3758,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 9,
+    paddingHorizontal: 20,
     paddingBottom: 120,
     gap: 20,
     paddingTop: 10,
   },
   contentDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1120,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 36,
@@ -3716,7 +3774,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1120,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 36,
@@ -3728,13 +3786,13 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: radius.full,
     alignItems: 'center',
-    backgroundColor: palette.primary,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   onboardingBackText: {
     fontFamily: theme.fonts.semibold,
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '600',
   },
   filterRow: {
@@ -3978,7 +4036,7 @@ const styles = StyleSheet.create({
     opacity: 0.75,
   },
   monthDayCellToday: {
-    borderColor: palette.primary,
+    borderColor: palette.primaryText,
     borderWidth: 1,
   },
   monthDayHeader: {
@@ -4000,13 +4058,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: radius.full,
-    backgroundColor: palette.primaryText,
+    backgroundColor: palette.surfaceMuted,
   },
   todayPillText: {
     fontFamily: theme.fonts.bold,
     fontSize: 10,
     fontWeight: '700',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   monthEventRow: {
     flexDirection: 'row',
@@ -4076,7 +4134,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
@@ -4118,9 +4176,9 @@ const styles = StyleSheet.create({
     gap: 20,
   },
   scheduleListDesktop: {
-    maxWidth: 720,
+    maxWidth: 1048,
     width: '100%',
-    alignSelf: 'center',
+    alignSelf: 'flex-start',
   },
   emptyStateCard: {
     padding: 20,
@@ -4161,11 +4219,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptyStatePrimary: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   emptyStatePrimaryText: {
     fontFamily: theme.fonts.bold,
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '700',
   },
   emptyStateSecondary: {
@@ -4207,7 +4267,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   dayBadgeActive: {
-    backgroundColor: palette.primaryText,
+    backgroundColor: palette.surfaceMuted,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   dayBadgeText: {
     fontFamily: theme.fonts.medium,
@@ -4216,7 +4278,7 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   dayBadgeTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   dayStatusGroup: {
     flexDirection: 'row',
@@ -4298,7 +4360,7 @@ const styles = StyleSheet.create({
   scheduleHeaderRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: 10,
   },
@@ -4307,14 +4369,14 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexBasis: 160,
     minWidth: 0,
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     gap: 4,
   },
   scheduleTitleButton: {
     minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'flex-start',
     gap: 6,
   },
   scheduleActionColumn: {
@@ -4335,12 +4397,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scheduleLabel: {
-    fontFamily: theme.fonts.medium,
-    width: '100%',
-    fontSize: 12,
-    fontWeight: '500',
-    color: palette.secondaryText,
-    textAlign: 'right',
+    fontFamily: theme.fonts.semibold,
+    flexShrink: 1,
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.primaryText,
   },
   scheduleTag: {
     flexDirection: 'row',
@@ -4352,7 +4413,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   scheduleTagOpen: {
-    backgroundColor: 'rgba(10,132,255,0.12)',
+    backgroundColor: palette.surfaceMuted,
   },
   scheduleTagMissed: {
     backgroundColor: 'rgba(255,149,0,0.14)',
@@ -4436,18 +4497,19 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   scheduleTakeButton: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.primaryText,
   },
   scheduleManageButtonDisabled: {
     opacity: 0.65,
   },
   scheduleCompleteButton: {
-    backgroundColor: palette.success,
-    borderColor: palette.success,
+    backgroundColor: palette.surface,
+    borderColor: palette.border,
   },
   scheduleTakeLabel: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   dayFooterRow: {
     flexDirection: 'row',
@@ -4482,7 +4544,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayActionButtonPrimary: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   dayActionLabel: {
     fontFamily: theme.fonts.regular,
@@ -4491,7 +4555,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   dayActionLabelPrimary: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   ridingSection: {
     gap: 18,
@@ -4521,13 +4585,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     minHeight: 44,
     borderRadius: 33,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   sectionActionText: {
     fontFamily: theme.fonts.semibold,
     fontSize: 12,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   ridingList: {
     gap: 10,
@@ -4628,7 +4694,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
   },
@@ -4669,7 +4735,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
   },
@@ -4682,6 +4748,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusQuickButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radius.full,
@@ -4708,6 +4776,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalCard: {
+    maxHeight: '90%',
     width: '100%',
     maxWidth: 420,
     padding: space.lg,
@@ -4734,6 +4803,7 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   modalInput: {
+    minHeight: 48,
     fontFamily: theme.fonts.regular,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
@@ -4763,7 +4833,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   weekdayChipActive: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   weekdayText: {
     fontFamily: theme.fonts.semibold,
@@ -4772,7 +4844,7 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   weekdayTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   recurringAssignToggle: {
     marginTop: 4,
@@ -4781,12 +4853,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
   },
   recurringAssignToggleActive: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   recurringAssignText: {
     fontFamily: theme.fonts.semibold,
@@ -4795,19 +4869,22 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   recurringAssignTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   modalActions: {
+    flexWrap: 'wrap',
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 10,
     marginTop: 4,
   },
   modalGhostButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
   },
   modalGhostText: {
     fontFamily: theme.fonts.semibold,
@@ -4816,10 +4893,14 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   modalPrimaryButton: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   modalPrimaryButtonDisabled: {
     opacity: 0.5,
@@ -4828,7 +4909,7 @@ const styles = StyleSheet.create({
     fontFamily: theme.fonts.semibold,
     fontSize: 13,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   toneRow: {
     flexDirection: 'row',
@@ -4849,8 +4930,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   selectorChipActive: {
-    borderColor: palette.primary,
-    backgroundColor: palette.surfaceTint,
+    borderColor: palette.primaryText,
+    backgroundColor: palette.surfaceMuted,
   },
   selectorChipText: {
     fontFamily: theme.fonts.semibold,
@@ -4873,8 +4954,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   toneChipActive: {
-    borderColor: palette.primary,
-    backgroundColor: palette.surfaceTint,
+    borderColor: palette.primaryText,
+    backgroundColor: palette.surfaceMuted,
   },
   toneLabel: {
     fontFamily: theme.fonts.semibold,
@@ -4903,8 +4984,8 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   ridingRowActive: {
-    backgroundColor: palette.surfaceTint,
-    borderColor: palette.primary,
+    backgroundColor: palette.surfaceMuted,
+    borderColor: palette.primaryText,
     borderWidth: StyleSheet.hairlineWidth,
   },
   ridingLabel: {
@@ -4919,8 +5000,8 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   ridingLabelActive: {
-    backgroundColor: palette.primaryText,
-    color: palette.inverseText,
+    backgroundColor: palette.surfaceMuted,
+    color: palette.primaryText,
   },
   ridingSubtitle: {
     fontFamily: theme.fonts.regular,
@@ -5068,6 +5149,6 @@ const styles = StyleSheet.create({
     fontFamily: theme.fonts.bold,
     fontSize: 10,
     fontWeight: '700',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 });

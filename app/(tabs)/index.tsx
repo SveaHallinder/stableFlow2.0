@@ -19,13 +19,12 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
+import { AppIcon } from '@/components/AppIcon';
 import { LinearGradient } from 'expo-linear-gradient';
 import HeartIcon from '@/assets/images/figma/heart.svg';
 import SpeechBubbleIcon from '@/assets/images/figma/comment.svg';
-import CloudSun from '@/assets/images/figma/weather.svg';
 import UserGroupsIcon from '@/assets/images/figma/group.svg';
 import SearchIcon from '@/assets/images/figma/search.svg';
-import MoreIcon from '@/assets/images/figma/more.svg';
 import { theme } from '@/components/theme';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
@@ -95,7 +94,6 @@ export default function OverviewScreen() {
   } = state;
   const toast = useToast();
   const isDesktopWeb = useIsDesktopWeb();
-  const isWeb = Platform.OS === 'web';
   const { tour } = useLocalSearchParams<{ tour?: string }>();
   const activeAssignments = React.useMemo(
     () => assignments.filter((assignment) => assignment.stableId === currentStableId),
@@ -107,6 +105,7 @@ export default function OverviewScreen() {
   );
   const [messagesExpanded, setMessagesExpanded] = React.useState(false);
   const [postsExpanded, setPostsExpanded] = React.useState(false);
+  const [horseStatusExpanded, setHorseStatusExpanded] = React.useState(false);
   const [eventsModalVisible, setEventsModalVisible] = React.useState(false);
   const [eventSaving, setEventSaving] = React.useState(false);
   const eventSavingRef = React.useRef(false);
@@ -240,6 +239,10 @@ export default function OverviewScreen() {
   const todayDayGroup = React.useMemo(
     () => groupedDays.find((day) => day.isoDate === todayIso),
     [groupedDays, todayIso],
+  );
+  const todayAgendaAssignments = React.useMemo(
+    () => [...(todayDayGroup?.assignments ?? [])].sort((a, b) => a.time.localeCompare(b.time)),
+    [todayDayGroup],
   );
 
   const myAssignedUpcoming = React.useMemo(() => {
@@ -529,6 +532,15 @@ export default function OverviewScreen() {
   const handleOpenCalendar = React.useCallback(() => {
     router.push('/calendar?view=all');
   }, [router]);
+  const handleOpenAssignment = React.useCallback((assignmentId: string) => {
+    const assignment = activeAssignments.find((item) => item.id === assignmentId);
+    if (!assignment) return;
+    router.push({ pathname: '/calendar', params: {
+      assignmentId: assignment.id, date: assignment.date, section: 'pass',
+      view: assignment.assigneeId === currentUserId ? 'mine' : 'all',
+    } });
+  }, [activeAssignments, currentUserId, router]);
+
 
   const handleSubmitEvent = React.useCallback(async () => {
     if (eventSavingRef.current) return;
@@ -604,19 +616,9 @@ export default function OverviewScreen() {
         >
           <Text style={styles.startHerePrimaryText}>Starta onboarding</Text>
         </TouchableOpacity>
-        {isWeb ? (
-          <TouchableOpacity
-            style={styles.startHereSecondary}
-            onPress={handleOpenAdmin}
-            activeOpacity={0.9}
-          >
-            <Text style={styles.startHereSecondaryText}>Öppna admin</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.startHereHint}>
-            <Text style={styles.startHereHintText}>Admin finns i webben.</Text>
-          </View>
-        )}
+        <TouchableOpacity style={styles.startHereSecondary} onPress={handleOpenAdmin} activeOpacity={0.9}>
+          <Text style={styles.startHereSecondaryText}>Mitt stall</Text>
+        </TouchableOpacity>
       </View>
     </Card>
   ) : null;
@@ -757,14 +759,16 @@ export default function OverviewScreen() {
                         paddingHorizontal: 10,
                         paddingVertical: 6,
                         borderRadius: 999,
-                        backgroundColor: isChecked ? palette.surfaceTint : palette.primary,
+                        backgroundColor: palette.surface,
+                        borderWidth: 1,
+                        borderColor: palette.border,
                       }}
                     >
                       <Text
                         style={{
                           fontSize: 12,
                           fontFamily: theme.fonts.medium,
-                          color: isChecked ? palette.secondaryText : palette.inverseText,
+                          color: isChecked ? palette.secondaryText : palette.primaryText,
                         }}
                       >
                         {feedSavingHorseId === item.horse.id ? 'Sparar…' : isChecked ? 'Klart' : 'Markera klart'}
@@ -824,9 +828,9 @@ export default function OverviewScreen() {
                       disabled={feedSavingHorseId !== null}
                       accessibilityRole="button"
                       activeOpacity={0.85}
-                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.primary }}
+                      style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border }}
                     >
-                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.inverseText }}>
+                      <Text style={{ fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primaryText }}>
                         {feedSavingHorseId === item.horse.id ? 'Sparar…' : 'Spara avvikelse'}
                       </Text>
                     </TouchableOpacity>
@@ -981,7 +985,7 @@ export default function OverviewScreen() {
 
   const quickActionsSection = (
     <View style={styles.quickActionsSection}>
-      <Text style={styles.sectionTitle}>Snabbval</Text>
+      <Text style={styles.sectionTitle}>Nära till hands</Text>
       <View style={styles.quickActionGrid}>
         {quickActions.map((action) => (
           <QuickActionCard
@@ -1171,82 +1175,82 @@ export default function OverviewScreen() {
     </View>
   );
 
-  const statusPreview = (todayOverview.myHorseSummaries.length
-    ? todayOverview.myHorseSummaries
-    : todayOverview.horseStatusGaps).slice(0, 2);
-  const nextDaysPreview = calendarPreviewGroups.filter((day) => day.isoDate !== todayIso).slice(0, 2);
+  const firstName = state.users[currentUserId]?.name?.trim().split(/\s+/)[0];
+  const openTodayAssignment = todayOverview.openTasksToday[0];
   const overviewSection = (
-    <View style={styles.overviewSection}>
-      <View style={styles.overviewRow}>
-        <WeatherPanel
-          stableLocation={stableLocation}
-          onEditLocation={isOwner ? () => router.push('/(onboarding)/stable-details') : undefined}
-        />
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Öppna dagens stallpass"
-          onPress={handleOpenCalendar}
-          activeOpacity={0.8}
-          style={styles.calendarPreview}
-        >
-          <View style={styles.calendarToday}>
-            <Text style={styles.calendarWeekday}>{new Date().toLocaleDateString('sv-SE', { weekday: 'long' })}</Text>
-            <Text style={styles.calendarDate}>{new Date().toLocaleDateString('sv-SE', { month: 'short', day: 'numeric' })}</Text>
-            {(todayDayGroup?.assignments ?? []).slice(0, 2).map((assignment) => (
-              <View key={assignment.id} style={[styles.calendarTag, assignment.status === 'open' && styles.calendarTagOpen]}>
-                <Text numberOfLines={1} style={styles.calendarTagText}>{assignment.label}</Text>
-              </View>
-            ))}
-            {!todayDayGroup?.assignments.length ? <Text style={styles.previewEmpty}>Inga pass idag</Text> : null}
-          </View>
-          <View style={styles.calendarNext}>
-            {nextDaysPreview.length ? nextDaysPreview.map((day) => (
-              <View key={day.isoDate} style={styles.calendarNextDay}>
-                <Text numberOfLines={1} style={styles.calendarNextDate}>{formatShortDate(day.isoDate)}</Text>
-                <Text numberOfLines={1} style={styles.calendarTagText}>{day.assignments[0]?.label}</Text>
-              </View>
-            )) : <Text style={styles.previewEmpty}>Se hela schemat →</Text>}
-          </View>
+    <View style={styles.workspaceHero}>
+      <View style={styles.workspaceGreeting}>
+        <Text style={styles.workspaceDate}>{todayDateLabel}</Text>
+        <Text accessibilityRole="header" style={styles.workspaceTitle}>{firstName ? `Hej, ${firstName}.` : 'Välkommen till stallet.'}</Text>
+        <Text style={styles.workspaceSubtitle}>En liten överblick. En lugnare stallvardag.</Text>
+      </View>
+      <WeatherPanel stableLocation={stableLocation} isDesktop={isDesktopWeb} onEditLocation={isOwner ? () => router.push('/(onboarding)/stable-details') : undefined} />
+    </View>
+  );
+  const nextPassSection = (
+    <View style={styles.workspaceSection}>
+      <View style={styles.workspaceSectionHeader}>
+        <Text accessibilityRole="header" style={styles.workspaceSectionTitle}>Mitt närmaste pass</Text>
+        <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/calendar?view=mine')} style={styles.workspaceTextAction}>
+          <Text style={styles.workspaceLink}>Mitt schema</Text>
         </TouchableOpacity>
       </View>
-      <View style={styles.overviewRow}>
-        <TouchableOpacity
-          accessibilityRole="button"
-          accessibilityLabel="Öppna häststatus"
-          onPress={() => router.push('/stable-horses')}
-          style={styles.horsePreview}
-          activeOpacity={0.8}
-        >
-          <View style={styles.previewHeader}>
-            <Text style={styles.previewTitle}>Häststatus</Text>
-            <MoreIcon />
+      <Card style={styles.workspaceNextPass}>
+        {myNextAssignment ? <>
+          <View style={styles.workspaceSectionHeader}>
+            <Text style={styles.workspaceDate}>{myNextAssignment.date === todayIso ? 'Idag' : formatShortDate(myNextAssignment.date)} · {myNextAssignmentTimeLabel}</Text>
+            <Text style={styles.workspacePersonalLabel}>Ditt pass</Text>
           </View>
-          {statusPreview.map((item) => (
-            <Text key={item.horse.id} numberOfLines={1} style={styles.previewBody}>
-              {item.horse.name} · {item.status?.checked ? 'Kollad idag' : 'Ej kollad idag'}
-            </Text>
-          ))}
-          {!statusPreview.length ? <Text style={styles.previewBody}>{state.horses.some((horse) => horse.stableId === currentStableId) ? 'Inga luckor i dagstatus' : 'Lägg till din första häst'}</Text> : null}
-        </TouchableOpacity>
-        <View style={styles.quickPreview}>
-          <Text style={styles.quickPreviewTitle}>Snabbval</Text>
-          <View style={styles.quickPreviewActions}>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !canManageDayEvents }}
-              disabled={!canManageDayEvents}
-              onPress={() => setEventsModalVisible(true)}
-              style={[styles.quickPreviewButton, !canManageDayEvents && styles.quickActionCardDisabled]}
-              activeOpacity={0.8}
-            >
-              <View style={styles.quickPreviewPill}><Text style={styles.quickPreviewButtonText}>Händelse</Text></View>
-            </TouchableOpacity>
-            <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/feed')} style={styles.quickPreviewButton} activeOpacity={0.8}>
-              <View style={styles.quickPreviewPill}><Text style={styles.quickPreviewButtonText}>Inlägg</Text></View>
+          <View style={styles.workspacePassHeading}>
+            <View style={styles.workspaceTypeIcon}><AppIcon name="calendar" size={23} /></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.workspacePassTitle}>{myNextAssignment.label}</Text>
+              <Text style={styles.workspaceSubtitle}>{stableName}</Text>
+            </View>
+          </View>
+          {derived.cleanAssignmentNote(myNextAssignment.note) ? <Text style={styles.workspacePassNote}>{derived.cleanAssignmentNote(myNextAssignment.note)}</Text> : null}
+          <View style={styles.workspacePassFooter}>
+            <Text style={styles.workspaceSubtitle}>Detaljer, instruktioner och klarmarkering.</Text>
+            <TouchableOpacity accessibilityRole="button" onPress={() => handleOpenAssignment(myNextAssignment.id)} style={styles.workspaceButton} activeOpacity={0.8}>
+              <Feather name="arrow-right" size={17} color={palette.primaryText} /><Text style={styles.workspaceButtonText}>Öppna mitt pass</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </> : <>
+          <Text style={styles.workspacePassTitle}>Inget pass tilldelat just nu.</Text>
+          <Text style={styles.workspacePassNote}>Dina kommande pass visas här. Du kan också se vad som är ledigt i schemat.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/calendar?view=open')} style={styles.workspaceButton}><Text style={styles.workspaceButtonText}>Se lediga pass</Text><Feather name="arrow-right" size={17} color={palette.primaryText} /></TouchableOpacity>
+        </>}
+      </Card>
+    </View>
+  );
+  const agendaSection = (
+    <View style={styles.workspaceSection}>
+      <View style={styles.workspaceSectionHeader}>
+        <Text accessibilityRole="header" style={styles.workspaceSectionTitle}>Dagen i stallet</Text>
+        <TouchableOpacity accessibilityRole="button" onPress={handleOpenCalendar} style={styles.workspaceTextAction}><Text style={styles.workspaceLink}>Hela schemat</Text></TouchableOpacity>
       </View>
+      <Card style={styles.workspaceAgenda}>
+        {todayAgendaAssignments.map((assignment) => (
+          <TouchableOpacity key={assignment.id} accessibilityRole="button" accessibilityLabel={`Öppna ${assignment.label} ${assignment.time}`} onPress={() => handleOpenAssignment(assignment.id)} style={styles.workspaceAgendaRow} activeOpacity={0.8}>
+            <Text style={styles.workspaceTime}>{assignment.time}</Text>
+            <View style={styles.workspaceAgendaIcon}><Feather name={assignment.status === 'completed' ? 'check' : 'clock'} size={17} color={palette.primaryText} /></View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.workspaceAgendaTitle}>{assignment.label}</Text>
+              <Text style={styles.workspaceSubtitle}>{assignment.status === 'completed' ? 'Klart · ' : ''}{assignment.assigneeId ? state.users[assignment.assigneeId]?.name ?? 'Tilldelad medlem' : 'Ledigt · Ansvarig behövs'}</Text>
+            </View>
+            <Feather name="chevron-right" size={17} color={palette.secondaryText} />
+          </TouchableOpacity>
+        ))}
+        {!todayAgendaAssignments.length ? <View style={styles.workspaceEmpty}><Text style={styles.workspaceAgendaTitle}>Inga stallpass idag</Text><Text style={styles.workspaceSubtitle}>Kommande pass och stallets övriga aktiviteter finns i schemat.</Text></View> : null}
+      </Card>
+    </View>
+  );
+  const horseStatusSection = (
+    <View style={styles.workspaceSection}>
+      <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded: horseStatusExpanded }} onPress={() => setHorseStatusExpanded(value => !value)} style={styles.workspaceDisclosure}>
+        <AppIcon name="horse" size={22} focused /><Text style={styles.workspaceDisclosureText}>Häststatus & ansvar</Text><Feather name={horseStatusExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={palette.primaryText} />
+      </TouchableOpacity>
+      {horseStatusExpanded ? prioritySection : null}
     </View>
   );
 
@@ -1255,7 +1259,7 @@ export default function OverviewScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Dagens översikt"
+          title="Idag"
           primaryAction={
             <HeaderIconButton accessibilityLabel="Sök" onPress={handleOpenSearch}>
               <SearchIcon />
@@ -1273,46 +1277,30 @@ export default function OverviewScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {isDesktopWeb ? <View style={styles.todayHeading}>
-            <Text style={styles.todayContext}>{todayDateLabel} · {stableName}</Text>
-            <Text accessibilityRole="header" style={styles.todayTitle}>Dagens arbete</Text>
-            <Text style={styles.todaySubtitle}>Foder, viktiga notiser och dina nästa pass.</Text>
-          </View> : null}
-          {isDesktopWeb ? (
-            <>
-              {startHereSection}
-              {stableAlertsSection}
-              {overviewSection}
-              {feedSection}
+          {startHereSection}
+          {stableAlertsSection}
+          {overviewSection}
+          {openTodayAssignment ? <TouchableOpacity accessibilityRole="button" onPress={() => handleOpenAssignment(openTodayAssignment.id)} style={styles.workspaceStaffing} activeOpacity={0.8}>
+            <Feather name="users" size={20} color={palette.warning} />
+            <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.workspaceAgendaTitle}>Ett pass behöver bemannas</Text><Text style={styles.workspaceSubtitle}>{openTodayAssignment.label} · {openTodayAssignment.time}</Text></View>
+            <Feather name="chevron-right" size={18} color={palette.secondaryText} />
+          </TouchableOpacity> : null}
+          <View style={isDesktopWeb ? styles.desktopRow : styles.workspaceSection}>
+            <View style={isDesktopWeb ? styles.desktopRowMain : styles.workspaceSection}>
+              {nextPassSection}
+              {agendaSection}
               {quickActionsSection}
-              <View style={styles.desktopRow}>
-                <View style={styles.desktopRowMain}>
-                  {prioritySection}
-                  {summarySection}
-                  {missedSection}
-                </View>
-                <View style={styles.desktopRowSide}>
-                  {messagesSection}
-                  {eventsSection}
-                  {postsSection}
-                </View>
-              </View>
-            </>
-          ) : (
-            <>
-              {startHereSection}
-              {stableAlertsSection}
-              {overviewSection}
               {feedSection}
-              {messagesSection}
-              {postsSection}
-              {quickActionsSection}
-              {prioritySection}
+            </View>
+            <View style={isDesktopWeb ? styles.desktopRowSide : styles.workspaceSection}>
               {summarySection}
+              {horseStatusSection}
+              {postsSection}
+              {messagesSection}
               {missedAssignments.length ? missedSection : null}
               {eventsSection}
-            </>
-          )}
+            </View>
+          </View>
       </ScrollView>
     </SafeAreaView>
       <QuickActionSheet
@@ -1397,7 +1385,7 @@ export default function OverviewScreen() {
   );
 }
 
-function WeatherPanel({ stableLocation, onEditLocation }: { stableLocation?: string; onEditLocation?: () => void }) {
+function WeatherPanel({ stableLocation, onEditLocation, isDesktop = false }: { stableLocation?: string; onEditLocation?: () => void; isDesktop?: boolean }) {
   const { data: weather, status, error, retry } = useWeather(stableLocation);
   const locationError = error === 'Ort ej hittad' || error === 'Ange stallets ort';
   const canPress = Boolean(weather) || (status === 'error' && (!locationError || Boolean(onEditLocation)));
@@ -1425,14 +1413,13 @@ function WeatherPanel({ stableLocation, onEditLocation }: { stableLocation?: str
         }
       }}
     >
-    <LinearGradient colors={theme.gradients.weather} style={styles.weatherTile}>
+    <LinearGradient colors={theme.gradients.weather} style={[styles.weatherTile, isDesktop && styles.weatherTileDesktop]}>
       <View>
-        <Text numberOfLines={1} style={styles.weatherTileLocation}>{weather?.location ?? (stableLocation?.trim() || 'Väder')}</Text>
+        <Text numberOfLines={1} style={[styles.weatherTileLocation, isDesktop && styles.weatherTileLocationDesktop]}>{weather?.location ?? (stableLocation?.trim() || 'Väder')}</Text>
         <Text style={styles.weatherTileTemperature}>{weather ? '≈' : ''}{weather ? `${weather.temperature}°` : '—'}</Text>
       </View>
       {status !== 'error' ? <View style={styles.weatherTileIcon}>
-        {status === 'loading' ? <ActivityIndicator size="small" color="#FFFFFF" />
-          : symbol === 3 || symbol === 4 ? <CloudSun /> : <Feather name={icon} size={28} color="#FFFFFF" />}
+        {status === 'loading' ? <ActivityIndicator size="small" color={palette.primaryText} /> : <Feather name={icon} size={26} color={palette.primaryText} />}
       </View> : null}
       <View>
         <Text numberOfLines={2} style={styles.weatherTileCaption}>{weather?.summary ?? (status === 'loading' ? 'Hämtar väder' : error ?? 'Ej tillgängligt')}</Text>
@@ -1695,6 +1682,34 @@ function formatEventTime(value: string) {
 }
 
 const styles = StyleSheet.create({
+  workspaceHero: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16, paddingVertical: 14 },
+  workspaceGreeting: { flex: 1, minWidth: 0, gap: 10 },
+  workspaceDate: { fontFamily: theme.fonts.medium, fontSize: 11, lineHeight: 17, color: palette.secondaryText },
+  workspaceTitle: { fontFamily: theme.fonts.semibold, fontSize: 30, lineHeight: 37, letterSpacing: -1, color: palette.primaryText },
+  workspaceSubtitle: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 19, color: palette.secondaryText },
+  workspaceSection: { gap: 18 },
+  workspaceSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
+  workspaceSectionTitle: { fontFamily: theme.fonts.semibold, fontSize: 18, lineHeight: 25, letterSpacing: -0.4, color: palette.primaryText },
+  workspaceTextAction: { minHeight: 44, justifyContent: 'center' },
+  workspaceLink: { fontFamily: theme.fonts.medium, fontSize: 12, color: palette.primary },
+  workspaceNextPass: { padding: 22, gap: 21 },
+  workspacePersonalLabel: { fontFamily: theme.fonts.medium, fontSize: 11, color: palette.success },
+  workspacePassHeading: { flexDirection: 'row', gap: 13, alignItems: 'center' },
+  workspaceTypeIcon: { width: 44, height: 44, borderRadius: 13, backgroundColor: palette.surfaceTint, alignItems: 'center', justifyContent: 'center' },
+  workspacePassTitle: { fontFamily: theme.fonts.semibold, fontSize: 22, lineHeight: 29, letterSpacing: -0.6, color: palette.primaryText },
+  workspacePassNote: { fontFamily: theme.fonts.regular, fontSize: 14, lineHeight: 23, color: palette.secondaryText },
+  workspacePassFooter: { gap: 14, paddingTop: 16, borderTopWidth: 1, borderTopColor: palette.border },
+  workspaceButton: { alignSelf: 'flex-start', minHeight: 46, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9 },
+  workspaceButtonText: { fontFamily: theme.fonts.semibold, fontSize: 13, color: palette.primaryText },
+  workspaceAgenda: { paddingHorizontal: 20, paddingVertical: 5 },
+  workspaceAgendaRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 17, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: palette.border },
+  workspaceTime: { width: 38, fontFamily: theme.fonts.regular, fontSize: 11, color: palette.secondaryText },
+  workspaceAgendaIcon: { width: 30, height: 30, borderRadius: 10, backgroundColor: palette.surfaceTint, alignItems: 'center', justifyContent: 'center' },
+  workspaceAgendaTitle: { fontFamily: theme.fonts.semibold, fontSize: 13, lineHeight: 20, color: palette.primaryText },
+  workspaceEmpty: { paddingVertical: 23, gap: 5 },
+  workspaceStaffing: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: palette.surfaceTint, borderRadius: 14, borderWidth: 1, borderColor: palette.border },
+  workspaceDisclosure: { minHeight: 52, paddingHorizontal: 15, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: palette.border, borderRadius: 13 },
+  workspaceDisclosureText: { flex: 1, fontFamily: theme.fonts.medium, fontSize: 13, color: palette.primaryText },
   overviewSection: { gap: 10 },
   overviewRow: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
   calendarPreview: {
@@ -1732,11 +1747,13 @@ const styles = StyleSheet.create({
   feedingRow: { backgroundColor: 'transparent', paddingHorizontal: 0, paddingVertical: 4, borderRadius: 0 },
   sectionMore: { minHeight: 44, paddingLeft: 12, justifyContent: 'center' },
   syncStatus: { paddingHorizontal: 20 },
-  weatherTile: { width: 100, minHeight: 100, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 12, justifyContent: 'space-between' },
-  weatherTileLocation: { fontFamily: theme.fonts.medium, fontSize: 12, lineHeight: 15, color: '#FFFFFF', maxWidth: 80 },
-  weatherTileTemperature: { fontFamily: theme.fonts.semibold, fontSize: 17, lineHeight: 22, color: '#FFFFFF' },
-  weatherTileCaption: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 15, color: '#FFFFFF' },
-  weatherTileSource: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: '#FFFFFF' },
+  weatherTile: { width: 114, minHeight: 126, borderRadius: 16, borderWidth: 1, borderColor: palette.border, paddingHorizontal: 12, paddingVertical: 12, justifyContent: 'space-between', gap: 9 },
+  weatherTileDesktop: { width: 220, paddingHorizontal: 16, paddingVertical: 14 },
+  weatherTileLocation: { fontFamily: theme.fonts.medium, fontSize: 12, lineHeight: 15, color: palette.primaryText, maxWidth: 80 },
+  weatherTileLocationDesktop: { maxWidth: 170 },
+  weatherTileTemperature: { fontFamily: theme.fonts.semibold, fontSize: 17, lineHeight: 22, color: palette.primaryText },
+  weatherTileCaption: { fontFamily: theme.fonts.regular, fontSize: 12, lineHeight: 15, color: palette.primaryText },
+  weatherTileSource: { fontFamily: theme.fonts.regular, fontSize: 10, lineHeight: 13, color: palette.primaryText },
   weatherTileAction: { fontFamily: theme.fonts.medium, fontSize: 11, lineHeight: 15, color: palette.primaryText, marginTop: 4 },
   weatherTileIcon: { position: 'absolute', right: 12, top: 36, width: 30, height: 30 },
   background: {
@@ -2216,13 +2233,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   startHerePrimaryText: {
     fontFamily: theme.fonts.semibold,
     fontSize: 14,
     fontWeight: '700',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   startHereSecondary: {
     flex: 1,
@@ -2634,9 +2653,11 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 14,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   sheetPrimaryButtonDisabled: {
     backgroundColor: palette.surfaceTint,
@@ -2646,7 +2667,7 @@ const styles = StyleSheet.create({
     fontFamily: theme.fonts.semibold,
     fontSize: 15,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   sheetPrimaryLabelDisabled: {
     color: palette.primaryText,
@@ -3113,14 +3134,14 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: radius.full,
     paddingHorizontal: 6,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   messageBadgeText: {
     fontFamily: theme.fonts.semibold,
     fontSize: 10,
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '600',
   },
   messageAuthor: {
@@ -3199,10 +3220,12 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: radius.full,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: palette.border,
   },
-  tourPrimaryText: { fontSize: 14, fontWeight: '700', color: palette.inverseText },
+  tourPrimaryText: { fontSize: 14, fontWeight: '700', color: palette.primaryText },
   userRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

@@ -11,7 +11,8 @@ for (const screen of ['horse', 'today']) {
     await expect(page.getByText('StableFlow QA Stable').first()).toBeVisible({ timeout: 20_000 });
     if (screen === 'horse') {
       await page.goto('/stable-horses');
-      await page.getByRole('button', { name: 'Status för StableFlow QA Horse', exact: true }).click();
+      await page.getByRole('button', { name: 'Öppna StableFlow QA Horse', exact: true }).click();
+      await page.getByRole('tab', { name: 'Foder', exact: true }).click();
       await expect(page.getByText('Foderplan', { exact: true })).toBeVisible();
     }
 
@@ -66,7 +67,8 @@ test('a confirmed feed save survives reload in the QA stable', async ({ page }) 
   const endpoint = `${new URL(loadResponse.url()).origin}/rest/v1/feed_checks`;
   await expect(page.getByText('StableFlow QA Stable').first()).toBeVisible();
   await page.goto('/stable-horses');
-  await page.getByRole('button', { name: 'Status för StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('tab', { name: 'Foder', exact: true }).click();
   await expect(page.getByText('Foderplan', { exact: true })).toBeVisible();
   const note = `QA confirmed feed ${Date.now()}`;
   let saved;
@@ -86,6 +88,7 @@ test('a confirmed feed save survives reload in the QA stable', async ({ page }) 
     saved = confirmed;
     await expect(page.getByText('Foderkoll registrerad.', { exact: true })).toBeVisible();
     await page.reload();
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText(note, { exact: false }).first()).toBeVisible();
   } finally {
     if (saved) {
@@ -125,7 +128,8 @@ test('marking feeding preserves a deviation entered from another phone', async (
   const endpoint = `${new URL(initial.url()).origin}/rest/v1/feed_checks`;
   await expect(page.getByText('StableFlow QA Stable').first()).toBeVisible();
   await page.goto('/stable-horses');
-  await page.getByRole('button', { name: 'Status för StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('tab', { name: 'Foder', exact: true }).click();
   await expect(page.getByText('Foderplan', { exact: true })).toBeVisible();
   const horseId = new URL(page.url()).pathname.split('/').pop();
   const today = new Date();
@@ -150,6 +154,7 @@ test('marking feeding preserves a deviation entered from another phone', async (
     expect(await response.json()).toMatchObject({ deviation_note: note });
     await expect(page.getByText(note, { exact: false }).first()).toBeVisible();
     await page.reload();
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText(note, { exact: false }).first()).toBeVisible();
   } finally {
     test.setTimeout(90_000);

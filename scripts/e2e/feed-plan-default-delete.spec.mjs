@@ -37,6 +37,7 @@ for (const access of ['admin', 'horse-owner']) {
       await page.route('**/rest/v1/horses*', route => route.fulfill({ json: horses.map(row => row.id === horse.id ? { ...row, owner_user_id: membership[0].user_id } : row) }));
     }
     await page.goto(`/horses/${horse.id}`);
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText(fixture.label, { exact: true })).toBeVisible();
     const remove = page.getByRole('button', { name: 'Ta bort stallplan', exact: true });
     if (access === 'horse-owner') {

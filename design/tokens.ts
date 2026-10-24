@@ -16,12 +16,12 @@ export const space = {
 };
 
 export const color = {
-  bg: '#FDFDFD',
+  bg: '#FFFFFF',
   card: '#FFFFFF',
   cardGlass: '#F5F5F5',
-  text: '#000000',
-  textMuted: '#767676',
-  divider: '#F0F0F0',
+  text: '#111111',
+  textMuted: '#6A6A6A',
+  divider: '#EAEAEA',
   tint: '#0099FF',
 };
 

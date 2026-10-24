@@ -39,6 +39,7 @@ for (const action of ['create', 'update', 'delete']) {
       return route.fulfill({ json: action === 'delete' ? [{ id: fixture.id }] : payload });
     });
     await page.goto(`/horses/${horse.id}`);
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText('Foderplan', { exact: true })).toBeVisible();
     const title = page.getByPlaceholder('Titel, t.ex. Morgonfoder');
     const note = page.getByPlaceholder('Notering (frivillig)');

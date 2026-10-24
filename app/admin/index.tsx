@@ -25,6 +25,7 @@ import { radius } from '@/design/tokens';
 import { useAppData } from '@/context/AppDataContext';
 import { useToast } from '@/components/ToastProvider';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
+import { canOpenOwnerWorkspace } from '@/lib/onboarding-flow';
 
 const palette = theme.colors;
 
@@ -37,6 +38,7 @@ type AdminLink = {
 };
 
 const adminLinks: AdminLink[] = [
+  { title: 'Säsongsschema', description: 'Datumperioder, dagliga pass och återkommande veckofördelning.', route: '/season-schedule', action: 'Planera fasta pass' },
   {
     title: 'Stall & inställningar',
     description: 'Skapa stall/gårdar, sätt event-synlighet, ridhus och ridpass-typer.',
@@ -108,10 +110,10 @@ export default function AdminDashboard() {
   const toast = useToast();
   const { state, actions, derived } = useAppData();
   const isDesktopWeb = useIsDesktopWeb();
-  const isWeb = Platform.OS === 'web';
 
   const currentUser = state.users[state.currentUserId];
-  const canManageOnboarding = derived.canManageOnboardingAny;
+  const [activeQuickAction, setActiveQuickAction] = React.useState<'stable' | 'invite' | 'horse' | 'paddock' | null>(null);
+  const canManageOnboarding = canOpenOwnerWorkspace(derived);
   const stableCount = state.stables.length;
   const farmCount = state.farms.length;
   const currentStableId = state.currentStableId;
@@ -399,41 +401,6 @@ export default function AdminDashboard() {
       quickMemberDraft.email.trim().length > 0,
   );
 
-  if (!isWeb) {
-    return (
-      <LinearGradient colors={theme.gradients.background} style={styles.background}>
-        <SafeAreaView style={styles.safeArea}>
-          <ScreenHeader
-            style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-            title="Admin"
-            showSearch={false}
-            left={
-              <HeaderIconButton accessibilityLabel="Tillbaka" onPress={() => router.replace('/')}>
-                <Feather name="chevron-left" size={18} color={palette.primaryText} />
-              </HeaderIconButton>
-            }
-          />
-          <View style={styles.mobileGate}>
-            <Card tone="muted" style={styles.mobileGateCard}>
-              <Text style={styles.mobileGateTitle}>Admin finns på webben</Text>
-              <Text style={styles.mobileGateText}>
-                Admincenter är gjort för större skärmar. Öppna StableFlow i webben för att
-                hantera stall, medlemmar och hästar.
-              </Text>
-              <TouchableOpacity
-                style={styles.mobileGateButton}
-                onPress={() => router.replace('/')}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.mobileGateButtonText}>Till överblick</Text>
-              </TouchableOpacity>
-            </Card>
-          </View>
-        </SafeAreaView>
-      </LinearGradient>
-    );
-  }
-
   if (!canManageOnboarding) {
     return (
       <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -463,7 +430,7 @@ export default function AdminDashboard() {
           <>
             <ScreenHeader
               style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-              title="Admin"
+              title="Mitt stall"
               left={
                 <HeaderIconButton
                   accessibilityRole="button"
@@ -484,59 +451,37 @@ export default function AdminDashboard() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
-              <Card tone="muted" style={styles.card}>
-                <Text style={styles.sectionTitle}>Översikt</Text>
-                <View style={styles.statRow}>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{stableCount}</Text>
-                    <Text style={styles.statLabel}>Stall</Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{farmCount}</Text>
-                    <Text style={styles.statLabel}>Gårdar</Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{memberCount}</Text>
-                    <Text style={styles.statLabel}>Medlemmar</Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{horseCount}</Text>
-                    <Text style={styles.statLabel}>Hästar</Text>
-                  </View>
-                </View>
-              </Card>
-
-              <Card tone="muted" style={styles.card}>
-                <Text style={styles.sectionTitle}>Onboarding</Text>
-                <Text style={styles.sectionHint}>
-                  {currentUser?.onboardingDismissed
-                    ? 'Onboarding är dold just nu. Du kan starta den när du vill.'
-                    : 'Onboarding är aktiv för nya konton utan stall.'}
-                </Text>
+              <View style={styles.workspaceIntro}>
+                <Text style={styles.workspaceTitle}>{state.stables.find(stable => stable.id === currentStableId)?.name || 'Din stallverksamhet'}</Text>
+                <Text style={styles.sectionHint}>{memberCount} {memberCount === 1 ? 'medlem' : 'medlemmar'} · {horseCount} {horseCount === 1 ? 'häst' : 'hästar'} · {stableCount} stall{farmCount ? ` · ${farmCount} ${farmCount === 1 ? 'gård' : 'gårdar'}` : ''}</Text>
+              </View>
+              {!derived.onboardingComplete ? <Card style={styles.card}>
+                <Text style={styles.sectionTitle}>Gör klart ditt stall</Text>
+                <Text style={styles.sectionHint}>Fortsätt där du slutade. Dina sparade stall, hästar och pass finns kvar.</Text>
                 <View style={styles.actionRow}>
-                  <TouchableOpacity
-                    style={styles.primaryButton}
-                    onPress={handleStartOnboarding}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.primaryLabel}>Starta onboarding</Text>
+                  <TouchableOpacity accessibilityRole="button" style={styles.primaryButton} onPress={handleStartOnboarding} activeOpacity={0.85}>
+                    <Text style={styles.primaryLabel}>Fortsätt komma igång</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.secondaryButton}
-                    onPress={handleDismissOnboarding}
-                    activeOpacity={0.85}
-                  >
-                    <Text style={styles.secondaryLabel}>Dölj onboarding</Text>
-                  </TouchableOpacity>
+                  {!currentUser?.onboardingDismissed ? <TouchableOpacity accessibilityRole="button" style={styles.secondaryButton} onPress={handleDismissOnboarding} activeOpacity={0.85}><Text style={styles.secondaryLabel}>Påminn mig senare</Text></TouchableOpacity> : null}
                 </View>
-              </Card>
-
+              </Card> : <TouchableOpacity accessibilityRole="button" style={styles.onboardingLink} onPress={handleStartOnboarding}><Text style={styles.linkCardCta}>Visa stallets introduktion</Text></TouchableOpacity>}
               <Card tone="muted" style={styles.card}>
-                <Text style={styles.sectionTitle}>Snabbåtgärder</Text>
-                <Text style={styles.sectionHint}>
-                  Skapa stall, bjud in medlemmar och lägg till hästar direkt här.
-                </Text>
-                {state.stables.length > 0 ? (
+                <Text style={styles.sectionTitle}>Vad vill du göra?</Text>
+                <Text style={styles.sectionHint}>Välj en uppgift. Du kan ändra detaljer och roller i respektive verktyg nedanför.</Text>
+                <View style={styles.quickActionGrid}>
+                  {([
+                    { id: 'invite', title: 'Bjud in medlem', description: 'Få med hela stallet', icon: 'user-plus' },
+                    { id: 'horse', title: 'Lägg till häst', description: 'En ny häst i stallet', icon: 'plus-circle' },
+                    { id: 'paddock', title: 'Skapa hage', description: 'Fördela stallets hästar', icon: 'map' },
+                    { id: 'stable', title: 'Skapa stall', description: 'Utöka din verksamhet', icon: 'home' },
+                  ] as const).map(item => <TouchableOpacity key={item.id} accessibilityRole="button" accessibilityState={{ expanded: activeQuickAction === item.id }} style={[styles.quickActionTile, activeQuickAction === item.id && styles.quickActionTileActive]} disabled={creatingStable || savingInvite || savingHorse || savingPaddock} onPress={() => setActiveQuickAction(activeQuickAction === item.id ? null : item.id)}>
+                    <Feather name={item.icon} size={21} color={palette.primaryText} />
+                    <Text style={styles.quickActionTitle}>{item.title}</Text>
+                    <Text style={styles.sectionHint}>{item.description}</Text>
+                  </TouchableOpacity>)}
+                </View>
+                {activeQuickAction ? <View style={styles.formHeading}><Text style={styles.sectionHint}>Formuläret sparas först när du väljer knappen nedan.</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Stäng formulär" style={styles.closeForm} disabled={creatingStable || savingInvite || savingHorse || savingPaddock} onPress={() => setActiveQuickAction(null)}><Feather name="x" size={20} color={palette.primaryText} /></TouchableOpacity></View> : null}
+                {activeQuickAction && state.stables.length > 0 ? (
                   <View style={styles.chipRow}>
                     {state.stables.map((stable) => {
                       const active = stable.id === quickStableId;
@@ -555,16 +500,18 @@ export default function AdminDashboard() {
                       );
                     })}
                   </View>
-                ) : (
-                  <Text style={styles.sectionHint}>Skapa ditt första stall för att låsa upp fler åtgärder.</Text>
-                )}
+                ) : state.stables.length === 0 ? (
+                  <Text style={styles.sectionHint}>Skapa ditt första stall för att bjuda in medlemmar och lägga till hästar.</Text>
+                ) : null}
 
                 <View style={[styles.quickStack, isDesktopWeb && styles.quickStackDesktop]}>
-                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
+                  {activeQuickAction === 'stable' ? <View style={styles.quickSection}>
                     <Text style={styles.quickTitle}>Skapa stall</Text>
                     {stableCreateError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{stableCreateError}</Text> : null}
                     {creatingStable ? <Text accessibilityLiveRegion="polite">Skapar stallet…</Text> : null}
+                    <Text style={styles.fieldLabel}>Stallets namn</Text>
                     <TextInput
+                      accessibilityLabel="Stallets namn"
                       placeholder="Stallnamn"
                       placeholderTextColor={palette.mutedText}
                       editable={!creatingStable}
@@ -574,7 +521,9 @@ export default function AdminDashboard() {
                       }
                       style={styles.input}
                     />
+                    <Text style={styles.fieldLabel}>Plats (valfritt)</Text>
                     <TextInput
+                      accessibilityLabel="Plats (valfritt)"
                       placeholder="Plats (valfritt)"
                       placeholderTextColor={palette.mutedText}
                       editable={!creatingStable}
@@ -623,9 +572,9 @@ export default function AdminDashboard() {
                     >
                       <Text style={styles.primaryLabel}>Skapa stall</Text>
                     </TouchableOpacity>
-                  </View>
+                  </View> : null}
 
-                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
+                  {activeQuickAction === 'invite' ? <View style={styles.quickSection}>
                     <Text style={styles.quickTitle}>Bjud in medlem</Text>
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
@@ -650,7 +599,9 @@ export default function AdminDashboard() {
                     </View>
                     <InviteReceipt confirmation={inviteReceipt} />
                     {inviteError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{inviteError}</Text>}
+                    <Text style={styles.fieldLabel}>Medlemmens namn</Text>
                     <TextInput
+                      accessibilityLabel="Medlemmens namn"
                       placeholder="Namn"
                       placeholderTextColor={palette.mutedText}
                       value={quickMemberDraft.name}
@@ -660,7 +611,9 @@ export default function AdminDashboard() {
                       }
                       style={styles.input}
                     />
+                    <Text style={styles.fieldLabel}>E-postadress</Text>
                     <TextInput
+                      accessibilityLabel="E-postadress"
                       placeholder="E-post"
                       placeholderTextColor={palette.mutedText}
                       value={quickMemberDraft.email}
@@ -684,15 +637,17 @@ export default function AdminDashboard() {
                     >
                       <Text style={styles.primaryLabel}>{savingInvite ? 'Skapar inbjudan…' : 'Skapa inbjudan'}</Text>
                     </TouchableOpacity>
-                  </View>
+                  </View> : null}
 
-                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
+                  {activeQuickAction === 'horse' ? <View style={styles.quickSection}>
                     <Text style={styles.quickTitle}>Lägg till häst</Text>
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
                     ) : null}
                     {horseSaveError && <Text accessibilityRole="alert" style={{ color: palette.error }}>{horseSaveError}</Text>}
+                    <Text style={styles.fieldLabel}>Hästens namn</Text>
                     <TextInput
+                      accessibilityLabel="Hästens namn"
                       placeholder="Hästens namn"
                       placeholderTextColor={palette.mutedText}
                       value={quickHorseDraft.name}
@@ -712,9 +667,9 @@ export default function AdminDashboard() {
                     >
                       <Text style={styles.primaryLabel}>{savingHorse ? 'Sparar…' : 'Lägg till häst'}</Text>
                     </TouchableOpacity>
-                  </View>
+                  </View> : null}
 
-                  <View style={[styles.quickSection, isDesktopWeb && styles.quickSectionDesktop]}>
+                  {activeQuickAction === 'paddock' ? <View style={styles.quickSection}>
                     <Text style={styles.quickTitle}>Skapa hage</Text>
                     {paddockError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{paddockError}</Text> : null}
                     {savingPaddock ? <Text accessibilityLiveRegion="polite">Sparar hagen…</Text> : null}
@@ -724,7 +679,9 @@ export default function AdminDashboard() {
                     {!quickStableId ? (
                       <Text style={styles.sectionHint}>Välj ett stall först.</Text>
                     ) : null}
+                    <Text style={styles.fieldLabel}>Hagens namn</Text>
                     <TextInput
+                      accessibilityLabel="Hagens namn"
                       placeholder="Namn på hage"
                       placeholderTextColor={palette.mutedText}
                       editable={!savingPaddock && state.paddockLinksReady}
@@ -774,12 +731,13 @@ export default function AdminDashboard() {
                     >
                       <Text style={styles.primaryLabel}>Skapa hage</Text>
                     </TouchableOpacity>
-                  </View>
+                  </View> : null}
                 </View>
               </Card>
 
               <StableInviteList confirmation={inviteReceipt} />
 
+              <View style={styles.toolsHeading}><Text style={styles.sectionTitle}>Hantera stallet</Text><Text style={styles.sectionHint}>Medlemmar, planering och allt runt hästarna.</Text></View>
               <View style={[styles.cardGrid, isDesktopWeb && styles.cardGridDesktop]}>
                 {adminLinks.map((link) => (
                   <TouchableOpacity
@@ -801,7 +759,7 @@ export default function AdminDashboard() {
                         link.route === '/calendar' ? 'calendar' : 'settings'
                       }
                       size={20}
-                      color={palette.primary}
+                      color={palette.primaryText}
                     />
                     <Text style={styles.linkCardTitle}>{link.title}</Text>
                     <Text style={styles.linkCardDesc} numberOfLines={2}>{link.description}</Text>
@@ -818,44 +776,21 @@ export default function AdminDashboard() {
 }
 
 const styles = StyleSheet.create({
+  fieldLabel: { fontSize: 13, fontFamily: 'Inter-Medium', color: palette.primaryText },
+  workspaceIntro: { gap: 8, paddingVertical: 12 },
+  workspaceTitle: { fontSize: 28, lineHeight: 34, letterSpacing: -0.8, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
+  onboardingLink: { minHeight: 44, justifyContent: 'center' },
+  quickActionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  quickActionTile: { flexBasis: '46%', flexGrow: 1, minWidth: 130, padding: 18, gap: 8, minHeight: 140, borderWidth: 1, borderColor: palette.border, borderRadius: radius.lg, backgroundColor: palette.surface },
+  quickActionTileActive: { borderColor: palette.primaryText, backgroundColor: palette.surfaceMuted },
+  quickActionTitle: { fontSize: 15, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
+  formHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  closeForm: { minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center', marginLeft: 'auto' },
+  toolsHeading: { gap: 6, paddingTop: 12 },
   background: { flex: 1 },
   safeArea: { flex: 1, backgroundColor: palette.background },
   pageHeader: { marginBottom: 8 },
   pageHeaderDesktop: { paddingHorizontal: 0 },
-  mobileGate: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
-  mobileGateCard: {
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    borderWidth: 0,
-    backgroundColor: palette.surfaceTint,
-    gap: 12,
-  },
-  mobileGateTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: palette.primaryText,
-  },
-  mobileGateText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: palette.secondaryText,
-  },
-  mobileGateButton: {
-    marginTop: 4,
-    paddingVertical: 12,
-    borderRadius: radius.full,
-    alignItems: 'center',
-    backgroundColor: palette.primary,
-  },
-  mobileGateButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: palette.inverseText,
-  },
   headerIconButton: {
     width: 36,
     height: 36,
@@ -920,13 +855,14 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
-    minWidth: 120,
+    minWidth: 90,
   },
   statValue: { fontSize: 18, fontWeight: '700', color: palette.primaryText },
   statLabel: { fontSize: 12, color: palette.secondaryText },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   primaryButton: {
-    backgroundColor: palette.primary,
+    minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: palette.border,
+    backgroundColor: palette.surface,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: radius.full,
@@ -939,7 +875,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     maxWidth: 400,
   },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600' },
+  primaryLabel: { color: palette.primaryText, fontWeight: '600' },
   secondaryButton: {
     paddingVertical: 10,
     paddingHorizontal: 16,
@@ -951,17 +887,19 @@ const styles = StyleSheet.create({
   },
   secondaryLabel: { color: palette.primaryText, fontWeight: '600' },
   input: {
+    minHeight: 48,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
     borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
     color: palette.primaryText,
     backgroundColor: palette.surface,
   },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
+    minHeight: 44, justifyContent: 'center',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: radius.full,
@@ -969,15 +907,11 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  chipActive: { backgroundColor: palette.surface, borderColor: palette.primary },
   chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chipTextActive: { color: palette.primaryText, fontWeight: '600' },
   quickStack: { gap: 16 },
-  quickStackDesktop: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
-  },
+  quickStackDesktop: { maxWidth: 620 },
   quickSection: {
     padding: 14,
     borderRadius: radius.lg,
@@ -986,11 +920,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     gap: 10,
   },
-  quickSectionDesktop: {
-    flexBasis: '48%',
-    flexGrow: 1,
-    minWidth: 260,
-  },
+  quickSectionDesktop: { maxWidth: 620 },
   quickTitle: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
   desktopShell: { flex: 1, flexDirection: 'row' },
   desktopSidebar: { width: 280, paddingHorizontal: 24, paddingTop: 24 },

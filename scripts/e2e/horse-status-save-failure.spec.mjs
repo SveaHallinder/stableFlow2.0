@@ -16,7 +16,7 @@ test('horse status remains unmarked when saving fails', async ({ page }) => {
   await page.getByRole('button', { name: 'Logga in', exact: true }).last().click();
   await expect(page.getByText('StableFlow QA Stable').first()).toBeVisible({ timeout: 20_000 });
   await page.goto('/stable-horses');
-  await page.getByRole('button', { name: 'Status för StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna StableFlow QA Horse', exact: true }).click();
   const hayRow = page.getByText('Hö', { exact: true }).locator('..');
   await hayRow.getByText('Markera', { exact: true }).click();
   try {
@@ -45,7 +45,7 @@ test('marking hay preserves water changed by another phone', async ({ page }) =>
   const endpoint = `${new URL(initial.url()).origin}/rest/v1/horse_day_statuses`;
   await expect(page.getByText('StableFlow QA Stable').first()).toBeVisible();
   await page.goto('/stable-horses');
-  await page.getByRole('button', { name: 'Status för StableFlow QA Horse', exact: true }).click();
+  await page.getByRole('button', { name: 'Öppna StableFlow QA Horse', exact: true }).click();
   const horseId = new URL(page.url()).pathname.split('/').pop();
   const today = new Date();
   const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;

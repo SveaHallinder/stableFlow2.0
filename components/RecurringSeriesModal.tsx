@@ -71,7 +71,8 @@ export function RecurringSeriesModal({ scopeKey, assignments, initialSeriesId, o
     <Modal visible transparent animationType="slide" onRequestClose={close}>
       <View style={styles.overlay}>
         <ScrollView style={styles.sheet} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title}>Redigera återkommande pass</Text>
+          <Text style={styles.eyebrow}>ÅTERKOMMANDE PASS</Text>
+          <Text style={styles.title}>Ändra en serie</Text>
           <Text style={styles.hint}>Namn, starttid och sluttid ändras bara på framtida öppna pass i serien. Datumen behålls. Tilldelade, klara och redan startade pass bevaras.</Text>
           <Text style={styles.hint}>Svensk stalltid (Europe/Stockholm). Serverns klocka avgör framtid. Högst {MAX_RECURRING_ASSIGNMENTS_PER_BATCH} pass per ändring.</Text>
           {!series.length ? <Text style={styles.hint}>Inga serier har laddats. Äldre pass utan serie-ID grupperas inte automatiskt. Skapa en ny serie eller uppdatera schemat.</Text> : <>
@@ -104,13 +105,14 @@ const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'center', padding: 16, backgroundColor: 'rgba(0,0,0,0.4)' },
   sheet: { backgroundColor: theme.colors.background, borderRadius: 18, maxHeight: '90%', width: '100%', maxWidth: 560, alignSelf: 'center' },
   content: { padding: 20, gap: 12 },
-  title: { fontSize: 20, fontWeight: '700', color: theme.colors.primaryText },
-  heading: { fontSize: 15, fontWeight: '600', color: theme.colors.primaryText },
-  hint: { fontSize: 14, lineHeight: 21, color: theme.colors.secondaryText },
-  input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, color: theme.colors.primaryText },
-  option: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12 },
-  selected: { borderColor: theme.colors.primary },
+  eyebrow: { fontFamily: theme.fonts.semibold, fontSize: 11, letterSpacing: 1.3, color: theme.colors.secondaryText },
+  title: { fontFamily: theme.fonts.semibold, fontSize: 24, fontWeight: '700', color: theme.colors.primaryText },
+  heading: { fontFamily: theme.fonts.medium, fontSize: 15, fontWeight: '600', color: theme.colors.primaryText },
+  hint: { fontFamily: theme.fonts.regular, fontSize: 14, lineHeight: 21, color: theme.colors.secondaryText },
+  input: { minHeight: 48, fontFamily: theme.fonts.regular, fontSize: 16, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, color: theme.colors.primaryText },
+  option: { minHeight: 44, justifyContent: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12 },
+  selected: { borderColor: theme.colors.primaryText, backgroundColor: theme.colors.surfaceMuted },
   error: { color: theme.colors.error, fontSize: 14, lineHeight: 21 },
-  button: { backgroundColor: theme.colors.primary, borderRadius: 10, padding: 14, alignItems: 'center' },
-  buttonText: { color: theme.colors.inverseText, fontWeight: '600' },
+  button: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 14, alignItems: 'center' },
+  buttonText: { fontFamily: theme.fonts.semibold, color: theme.colors.primaryText, fontWeight: '600' },
 });

@@ -87,6 +87,8 @@ export default function FeedScreen() {
   const [groupError, setGroupError] = React.useState<string | null>(null);
   const [focusComposerTick, setFocusComposerTick] = React.useState(0);
   const [isComposerOpen, setIsComposerOpen] = React.useState(false);
+  const [showGroupOptions, setShowGroupOptions] = React.useState(false);
+  const [showGroupManager, setShowGroupManager] = React.useState(false);
 
   const currentStable = stables.find((stable) => stable.id === currentStableId);
   const currentFarmId = currentStable?.farmId;
@@ -424,7 +426,7 @@ export default function FeedScreen() {
   }, []);
 
   React.useEffect(() => {
-    if (!isDesktopWeb && !isComposerOpen && (postContent.trim() || postImage)) {
+    if (!isComposerOpen && (postContent.trim() || postImage)) {
       setIsComposerOpen(true);
     }
   }, [isComposerOpen, isDesktopWeb, postContent, postImage]);
@@ -446,6 +448,11 @@ export default function FeedScreen() {
     scrollRef.current?.scrollTo({ y: 0, animated: true });
     requestAnimationFrame(() => composerInputRef.current?.focus());
   }, [focusComposerTick]);
+
+  const handleToggleGroupManager = React.useCallback(() => {
+    if (groupSavingRef.current || publishingRef.current) return;
+    setShowGroupManager((visible) => !visible);
+  }, []);
 
   const handleResetFilters = React.useCallback(() => {
     setGroupFilter('all');
@@ -661,9 +668,12 @@ export default function FeedScreen() {
     return sections;
   }, [customGroups, farmGroup, horseGroups, stableGroupIdValue]);
 
+  const selectedAudienceNames = groupSections.flatMap((section) => section.options
+    .filter((option) => option.locked || selectedGroups.includes(option.id))
+    .map((option) => option.label));
   const canPublish = postContent.trim().length > 0 && !publishing && !groupSaving;
   const canUseCamera = Platform.OS !== 'web';
-  const shouldShowComposer = canPublishPost && (isDesktopWeb || isComposerOpen);
+  const shouldShowComposer = canPublishPost && isComposerOpen;
   const composerCard = shouldShowComposer ? (
     <Card tone="muted" style={styles.composerCard}>
       <View style={styles.composerHeader}>
@@ -730,7 +740,11 @@ export default function FeedScreen() {
       {postImage ? (
         <Image source={{ uri: postImage }} style={styles.composerImage} />
       ) : null}
-      <View style={styles.groupPicker}>
+      <TouchableOpacity accessibilityRole="button" accessibilityState={{ expanded: showGroupOptions }} onPress={() => setShowGroupOptions(!showGroupOptions)} style={styles.groupDisclosure}>
+        <Text style={[styles.composerActionText, { flex: 1 }]}>Synligt för {selectedAudienceNames.join(', ')}</Text>
+        <Text style={styles.composerSubtitle}>{showGroupOptions ? 'Dölj' : 'Ändra'}</Text>
+      </TouchableOpacity>
+      <View style={[styles.groupPicker, !showGroupOptions && styles.hiddenPanel]} accessibilityElementsHidden={!showGroupOptions} importantForAccessibility={showGroupOptions ? 'auto' : 'no-hide-descendants'}>
         {groupSections.map((section) => (
           <View key={section.title} style={styles.groupSection}>
             <Text style={styles.groupLabel}>{section.title}</Text>
@@ -768,9 +782,14 @@ export default function FeedScreen() {
         ))}
       </View>
       {canEditGroups ? (
-        <View style={styles.groupManager}>
+        <View>
+          <TouchableOpacity accessibilityRole="button" disabled={groupSaving || publishing} accessibilityState={{ expanded: showGroupManager, disabled: groupSaving || publishing }} onPress={handleToggleGroupManager} style={styles.groupDisclosure}>
+            <Text style={styles.composerActionText}>Hantera egna grupper</Text>
+            <Text style={styles.composerSubtitle}>{showGroupManager ? 'Dölj' : 'Visa'}</Text>
+          </TouchableOpacity>
           {groupError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{groupError}</Text> : null}
           {groupSaving ? <Text accessibilityLiveRegion="polite" style={{ color: palette.mutedText }}>Sparar gruppändring…</Text> : null}
+        <View style={[styles.groupManager, !showGroupManager && styles.hiddenPanel]} accessibilityElementsHidden={!showGroupManager} importantForAccessibility={showGroupManager ? 'auto' : 'no-hide-descendants'}>
           <View style={styles.groupManagerHeader}>
             <Text style={styles.groupManagerTitle}>Egna grupper</Text>
             <Text style={styles.groupManagerHint}>Skapa för flöden och målgrupper.</Text>
@@ -820,6 +839,7 @@ export default function FeedScreen() {
             <Text style={styles.groupEmpty}>Inga egna grupper ännu.</Text>
           )}
         </View>
+        </View>
       ) : null}
       {publishError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{publishError}</Text> : null}
       <View style={styles.composerFooter}>
@@ -842,7 +862,7 @@ export default function FeedScreen() {
 
 
   const composerClosedCard =
-    canPublishPost && !isDesktopWeb && !isComposerOpen ? (
+    canPublishPost && !isComposerOpen ? (
       <Card tone="muted" style={styles.composerClosedCard}>
         <View style={styles.composerClosedRow}>
           <Avatar
@@ -1067,7 +1087,7 @@ export default function FeedScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Feed"
+          title="Flöde"
         />
         {isDesktopWeb ? (
           <>
@@ -1208,6 +1228,8 @@ export default function FeedScreen() {
 }
 
 const styles = StyleSheet.create({
+  hiddenPanel: { display: 'none' },
+  groupDisclosure: { minHeight: 44, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
   background: {
     flex: 1,
   },
@@ -1218,11 +1240,11 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 22,
     paddingBottom: 50,
-    gap: 10,
-    paddingTop: 0,
+    gap: 20,
+    paddingTop: 10,
   },
   contentDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 48,
@@ -1245,7 +1267,7 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
   pageHeaderDesktop: {
-    maxWidth: 1400,
+    maxWidth: 1100,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 48,
@@ -1284,7 +1306,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.primary,
+    color: palette.primaryText,
   },
   loadMoreText: {
     fontSize: 13,
@@ -1300,6 +1322,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   composerCard: {
+    borderRadius: 22,
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderWidth: 1,
@@ -1307,6 +1330,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   composerClosedCard: {
+    borderRadius: 22,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
@@ -1322,7 +1346,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -1330,7 +1356,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 
   composerHeader: {
@@ -1366,7 +1392,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: theme.fonts.regular,
     color: palette.primaryText,
     textAlignVertical: 'top',
@@ -1409,7 +1435,8 @@ const styles = StyleSheet.create({
   readOnlyCard: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: palette.border,
     gap: 6,
   },
   readOnlyTitle: {
@@ -1426,7 +1453,8 @@ const styles = StyleSheet.create({
   importantAlertsCard: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: palette.border,
     gap: 12,
   },
   importantAlertsHeader: {
@@ -1500,7 +1528,7 @@ const styles = StyleSheet.create({
   },
   groupChipLocked: {
     backgroundColor: palette.surfaceTint,
-    borderColor: palette.primary,
+    borderColor: palette.primaryText,
   },
   groupChipText: {
     fontSize: 12,
@@ -1509,7 +1537,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   groupChipTextActive: {
-    color: palette.primary,
+    color: palette.primaryText,
   },
   groupManager: {
     gap: 10,
@@ -1542,7 +1570,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 13,
+    fontSize: 16,
     fontFamily: theme.fonts.regular,
     color: palette.primaryText,
     minHeight: 44,
@@ -1551,7 +1579,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -1562,7 +1592,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   groupList: {
     gap: 8,
@@ -1617,7 +1647,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     minHeight: 44,
     justifyContent: 'center',
   },
@@ -1628,7 +1660,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   filterScroll: {
     paddingHorizontal: 0,
@@ -1692,12 +1724,13 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   filterChipTextActive: {
-    color: palette.primary,
+    color: palette.primaryText,
   },
   panelCard: {
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: palette.border,
     gap: 10,
   },
   panelTitle: {
@@ -1715,7 +1748,8 @@ const styles = StyleSheet.create({
   emptyCard: {
     paddingHorizontal: 16,
     paddingVertical: 16,
-    borderWidth: 0,
+    borderWidth: 1,
+    borderColor: palette.border,
     gap: 10,
   },
   emptyTitle: {
@@ -1746,10 +1780,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptyActionPrimary: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   emptyActionPrimaryText: {
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '700',
   },
   emptyActionSecondary: {

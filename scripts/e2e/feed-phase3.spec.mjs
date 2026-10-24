@@ -64,6 +64,7 @@ test.describe('Phase 3 — Feed e2e against qaDemo state', () => {
   test('Hästprofil visar foderplan, status och historik', async ({ page }) => {
     await bootDemo(page);
     await page.goto(`${BASE_URL}/horses/qa-horse-main?qaDemo=1`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText('Foderplan', { exact: true })).toBeVisible({ timeout: 15000 });
     await page.screenshot({ path: `${SCREEN_DIR}/03-horse-profile.png`, fullPage: true });
     // Tre slots ska finnas (slot-rubrikerna; "Morgonfoder" kan dyka upp 2x: rubrik + plan-label)
@@ -82,6 +83,7 @@ test.describe('Phase 3 — Feed e2e against qaDemo state', () => {
   test('Markera klart fungerar och slot-rubriken uppdateras till "Klart idag"', async ({ page }) => {
     await bootDemo(page);
     await page.goto(`${BASE_URL}/horses/qa-horse-main?qaDemo=1`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText('Foderplan', { exact: true })).toBeVisible({ timeout: 15000 });
     // Hitta lunch-blocket: slot-rubriken har "Lunchfoder" och borde inte vara klart från seed.
     // Vi klickar första "Markera klart" (lunch eller kväll, vi tar första som inte är klar)
@@ -99,6 +101,7 @@ test.describe('Phase 3 — Feed e2e against qaDemo state', () => {
   test('Avvikelse-formulär sparar deviation', async ({ page }) => {
     await bootDemo(page);
     await page.goto(`${BASE_URL}/horses/qa-horse-main?qaDemo=1`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText('Foderplan', { exact: true })).toBeVisible({ timeout: 15000 });
     // Klicka första Avvikelse-knappen
     await page.getByText('Avvikelse', { exact: true }).first().click();
@@ -113,6 +116,7 @@ test.describe('Phase 3 — Feed e2e against qaDemo state', () => {
   test('Lägg till hästplan (override) ersätter stallstandarden i UI', async ({ page }) => {
     await bootDemo(page);
     await page.goto(`${BASE_URL}/horses/qa-horse-main?qaDemo=1`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(page.getByText('Foderplan', { exact: true })).toBeVisible({ timeout: 15000 });
     // Lunch har troligen ingen plan i seed → "Lägg till hästplan"
     const addBtn = page.getByText('Lägg till hästplan', { exact: true }).first();

@@ -311,7 +311,8 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   primaryButton: {
-    backgroundColor: palette.primary,
+    minHeight: 48, borderWidth: 1, borderColor: palette.border,
+    backgroundColor: palette.surface,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -323,7 +324,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontSize: 14,
     fontWeight: '700',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   errorText: {
     fontSize: 13,
@@ -334,7 +335,7 @@ const styles = StyleSheet.create({
     color: palette.secondaryText,
   },
   acceptAllButton: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
@@ -346,7 +347,7 @@ const styles = StyleSheet.create({
   acceptAllText: {
     fontSize: 13,
     fontWeight: '700',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -380,7 +381,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: palette.surfaceMuted,
   },
   inlineButtonDisabled: {
     opacity: 0.6,

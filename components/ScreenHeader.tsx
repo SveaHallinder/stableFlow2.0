@@ -1,17 +1,13 @@
 import React from 'react';
 import type { ReactNode } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
-import { StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { StyleSheet, Text, TouchableOpacity, View, type StyleProp, type ViewStyle } from 'react-native';
+import { useGlobalSearchParams, usePathname, useRouter } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import Logo from '@/assets/images/figma/logo.svg';
-import SearchIcon from '@/assets/images/figma/search.svg';
-import {
-  HeaderActionButton,
-  HeaderIconButton,
-  PageHeader,
-  headerStyles,
-} from '@/components/Primitives';
+import { HeaderActionButton, HeaderIconButton } from '@/components/Primitives';
+import { Avatar } from '@/components/Avatar';
 import { systemFonts, systemPalette } from '@/design/system';
+import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 
 type ScreenHeaderProps = {
@@ -19,10 +15,10 @@ type ScreenHeaderProps = {
   style?: StyleProp<ViewStyle>;
   left?: ReactNode;
   right?: ReactNode;
-  children?: ReactNode; // Allow custom content in center
+  children?: ReactNode;
   showSearch?: boolean;
   onPressSearch?: () => void;
-  showLogo?: boolean; // Control if logo should show by default
+  showLogo?: boolean;
   subtitle?: string;
   meta?: ReactNode | string;
   primaryActionLabel?: string;
@@ -31,165 +27,79 @@ type ScreenHeaderProps = {
   primaryActionDisabled?: boolean;
 };
 
+const primaryPaths = new Set(['/', '/stable-horses', '/calendar', '/feed', '/messages']);
+
+function AccountShortcut() {
+  const router = useRouter();
+  const { state } = useAppData();
+  const user = state.users[state.currentUserId];
+  return (
+    <TouchableOpacity
+      accessibilityRole="button"
+      accessibilityLabel="Öppna profil och mitt stall"
+      onPress={() => router.push('/profile')}
+      style={styles.accountButton}
+      activeOpacity={0.8}
+    >
+      {user?.avatar ? <Avatar source={user.avatar} style={styles.avatar} /> : (
+        <Text style={styles.initials}>{user?.name?.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toLocaleUpperCase('sv-SE') || '·'}</Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 export const ScreenHeader = ({
-  title,
-  style,
-  left,
-  right,
-  children,
-  showSearch = true,
-  onPressSearch,
-  showLogo = true,
-  subtitle,
-  meta,
-  primaryActionLabel,
-  onPressPrimaryAction,
-  primaryAction,
-  primaryActionDisabled,
+  title, style, left, right, children, showSearch = true, onPressSearch,
+  showLogo = true, subtitle, meta, primaryActionLabel, onPressPrimaryAction,
+  primaryAction, primaryActionDisabled,
 }: ScreenHeaderProps) => {
   const router = useRouter();
+  const pathname = usePathname();
+  const params = useGlobalSearchParams();
   const isDesktopWeb = useIsDesktopWeb();
-
-  // Resolve left content — hide logo on desktop (sidebar has it)
-  const resolvedLeft = typeof left !== 'undefined'
-    ? left
-    : showLogo && !isDesktopWeb
-      ? <View style={styles.logo}><Logo /></View>
-      : null;
-
-  // Resolve right content
-  const resolvedRight =
-    typeof right !== 'undefined'
-      ? right
-      : primaryAction
-        ? primaryAction
-        : primaryActionLabel
-          ? (
-            <HeaderActionButton
-              label={primaryActionLabel}
-              onPress={onPressPrimaryAction}
-              disabled={primaryActionDisabled}
-              style={primaryActionDisabled && styles.actionDisabled}
-              textStyle={primaryActionDisabled && styles.actionDisabledText}
-            />
-          )
-          : showSearch
-        ? (
-          <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch ?? (() => router.push('/search'))}>
-            <SearchIcon />
-          </HeaderIconButton>
-        )
-        : null;
-
-  const resolvedMeta =
-    typeof meta === 'string' ? <Text style={styles.metaText}>{meta}</Text> : meta;
-
-  if (isDesktopWeb) {
-    return (
-      <View style={[styles.desktopHeader, style]}>
-        {resolvedLeft ? <View style={styles.desktopBack}>{resolvedLeft}</View> : null}
-        <View style={styles.desktopHeaderLeft}>
-          {children ?? (
-            <>
-              <Text numberOfLines={1} style={styles.titleDesktop}>{title}</Text>
-              {subtitle ? <Text numberOfLines={1} style={styles.subtitleDesktop}>{subtitle}</Text> : null}
-              {resolvedMeta}
-            </>
-          )}
-        </View>
-        <View style={styles.desktopHeaderRight}>
-          {resolvedRight}
-        </View>
-      </View>
-    );
-  }
+  const fromOnboarding = Array.isArray(params.fromOnboarding) ? params.fromOnboarding[0] : params.fromOnboarding;
+  const showAccount = primaryPaths.has(pathname) && fromOnboarding !== '1';
+  const resolvedLeft = left !== undefined ? left : showLogo && !isDesktopWeb ? (
+    <View style={styles.logo}><Logo width={28} height={31} /></View>
+  ) : null;
+  const resolvedRight = right !== undefined ? right : primaryAction ?? (primaryActionLabel ? (
+    <HeaderActionButton label={primaryActionLabel} onPress={onPressPrimaryAction} disabled={primaryActionDisabled} />
+  ) : showSearch ? (
+    <HeaderIconButton accessibilityLabel="Sök" onPress={onPressSearch ?? (() => router.push('/search'))}>
+      <Ionicons name="search-outline" size={21} color={systemPalette.textPrimary} />
+    </HeaderIconButton>
+  ) : null);
 
   return (
-    <PageHeader
-      style={[{
-        marginBottom: 0,
-        justifyContent: 'space-between',
-        paddingVertical: 0,
-        paddingHorizontal: 15,
-      }, style]}
-      title={title}
-      left={resolvedLeft}
-      right={resolvedRight}
-    >
-      {children ?? (
+    <View style={[styles.header, isDesktopWeb && styles.desktopHeader, style]}>
+      <View style={styles.leading}>
+        {resolvedLeft}
         <View style={styles.titleStack}>
-          <Text numberOfLines={1} style={headerStyles.title}>{title}</Text>
-          {subtitle ? <Text numberOfLines={1} style={headerStyles.subtitle}>{subtitle}</Text> : null}
-          {resolvedMeta}
+          {children ?? <>
+            <Text accessibilityRole="header" numberOfLines={1} style={[styles.title, isDesktopWeb && styles.titleDesktop]}>{title}</Text>
+            {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+            {typeof meta === 'string' ? <Text style={styles.subtitle}>{meta}</Text> : meta}
+          </>}
         </View>
-      )}
-    </PageHeader>
+      </View>
+      <View style={styles.actions}>{resolvedRight}{showAccount ? <AccountShortcut /> : null}</View>
+    </View>
   );
 };
 
 export default ScreenHeader;
 
 const styles = StyleSheet.create({
-  logo: {
-    width: 32.456,
-    height: 35,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  titleStack: {
-    maxWidth: '100%',
-    alignItems: 'center',
-    gap: 2,
-  },
-  desktopHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 20,
-    paddingHorizontal: 4,
-    minHeight: 80,
-  },
-  desktopHeaderLeft: {
-    flex: 1,
-    minWidth: 0,
-    gap: 4,
-  },
-  desktopBack: {
-    marginRight: 16,
-    flexShrink: 0,
-  },
-  desktopHeaderRight: {
-    flexShrink: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  titleDesktop: {
-    fontFamily: systemFonts.medium,
-    fontSize: 32,
-    fontWeight: '700',
-    color: systemPalette.textPrimary,
-    letterSpacing: -0.8,
-    lineHeight: 40,
-  },
-  subtitleDesktop: {
-    fontFamily: systemFonts.regular,
-    fontSize: 15,
-    fontWeight: '400',
-    color: systemPalette.textMuted,
-    letterSpacing: -0.2,
-  },
-  metaText: {
-    fontFamily: systemFonts.regular,
-    fontSize: 13,
-    color: systemPalette.textMuted,
-    letterSpacing: -0.1,
-  },
-  actionDisabled: {
-    backgroundColor: systemPalette.surfaceGlass,
-    borderColor: systemPalette.border,
-  },
-  actionDisabledText: {
-    color: systemPalette.textMuted,
-  },
+  header: { minHeight: 76, paddingVertical: 14, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  leading: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  logo: { width: 28, height: 31, alignItems: 'center', justifyContent: 'center' },
+  titleStack: { flex: 1, minWidth: 0, gap: 4 },
+  title: { fontFamily: systemFonts.semibold, fontSize: 24, lineHeight: 31, letterSpacing: -0.7, color: systemPalette.textPrimary },
+  subtitle: { fontFamily: systemFonts.regular, fontSize: 13, lineHeight: 20, color: systemPalette.textSecondary },
+  desktopHeader: { minHeight: 94, paddingVertical: 22, paddingHorizontal: 4 },
+  titleDesktop: { fontSize: 30, lineHeight: 38, letterSpacing: -0.9 },
+  actions: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  accountButton: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  avatar: { width: 34, height: 34, borderRadius: 17 },
+  initials: { width: 34, height: 34, lineHeight: 34, textAlign: 'center', borderRadius: 17, overflow: 'hidden', backgroundColor: systemPalette.surfaceAlt, color: systemPalette.textPrimary, fontFamily: systemFonts.medium, fontSize: 11 },
 });

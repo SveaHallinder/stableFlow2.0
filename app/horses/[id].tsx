@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { Card, HeaderIconButton } from '@/components/Primitives';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { DataSyncStatus } from '@/components/DataSyncStatus';
@@ -50,6 +50,13 @@ export default function HorseProfileScreen() {
   const horseId = Array.isArray(rawId) ? rawId[0] : rawId;
   const horse = horseId ? state.horses.find((item) => item.id === horseId) : undefined;
   const horseAge = horse ? getHorseAge(horse) : undefined;
+  const [section, setSection] = React.useState<'overview' | 'feed' | 'riding' | 'care'>('overview');
+  const sectionProps = (id: typeof section) => ({
+    testID: `horse-section-${id}`,
+    style: section === id ? styles.profilePanel : styles.hiddenPanel,
+    accessibilityElementsHidden: section !== id,
+    importantForAccessibility: section === id ? 'auto' as const : 'no-hide-descendants' as const,
+  });
   const todayIso = toISODate(new Date());
   const stableId = horse?.stableId ?? state.currentStableId;
   const dateTimeScope = JSON.stringify([authUser?.id, state.sessionUserId, state.currentUserId, state.currentStableId, stableId, horseId]);
@@ -105,13 +112,13 @@ export default function HorseProfileScreen() {
             showSearch={false}
             left={
               <HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}>
-                <Feather name="arrow-left" size={18} color={palette.primaryText} />
+                <Ionicons name="arrow-back" size={18} color={palette.primaryText} />
               </HeaderIconButton>
             }
           />
           <View style={styles.centerEmpty}>
             <Card style={styles.emptyCard}>
-              <Feather name="alert-circle" size={22} color={palette.primary} />
+              <Ionicons name="alert-circle-outline" size={22} color={palette.primary} />
               <Text style={styles.emptyTitle}>Hästen hittades inte.</Text>
               <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace('/stable-horses')}>
                 <Text style={styles.primaryButtonText}>Till Hästar</Text>
@@ -133,12 +140,12 @@ export default function HorseProfileScreen() {
           showSearch={false}
           left={
             <HeaderIconButton accessibilityLabel="Tillbaka" onPress={handleBack}>
-              <Feather name="arrow-left" size={18} color={palette.primaryText} />
+              <Ionicons name="arrow-back" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }
           primaryAction={
             <HeaderIconButton accessibilityLabel="Öppna hästlistan" onPress={() => router.push('/stable-horses')}>
-              <Feather name="list" size={18} color={palette.primaryText} />
+              <Ionicons name="list-outline" size={18} color={palette.primaryText} />
             </HeaderIconButton>
           }
         />
@@ -170,8 +177,28 @@ export default function HorseProfileScreen() {
             {horse.note ? <Text style={styles.heroNote}>{horse.note}</Text> : null}
           </Card>
 
-          <View style={styles.sectionGrid}>
-            <SectionCard title="Dagens status" icon="check-circle" inGrid>
+          <View accessibilityRole="tablist" style={styles.profileTabs}>
+            {([
+              { id: 'overview', label: 'Översikt' },
+              { id: 'feed', label: 'Foder' },
+              { id: 'riding', label: 'Ridning' },
+              { id: 'care', label: 'Vård' },
+            ] as const).map((tab) => (
+              <TouchableOpacity
+                key={tab.id}
+                accessibilityRole="tab"
+                accessibilityLabel={tab.label}
+                accessibilityState={{ selected: section === tab.id }}
+                onPress={() => setSection(tab.id)}
+                style={[styles.profileTab, section === tab.id && styles.profileTabActive]}
+              >
+                <Text style={[styles.profileTabText, section === tab.id && styles.profileTabTextActive]}>{tab.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View {...sectionProps('overview')}>
+            <SectionCard title="Dagens status" icon="checkmark-circle-outline">
               {horse ? (
                 <DailyStatusEditor
                   status={status}
@@ -194,7 +221,38 @@ export default function HorseProfileScreen() {
               ) : null}
             </SectionCard>
 
-            <SectionCard title="Foderplan" icon="clipboard" inGrid>
+            <SectionCard title="Ägare/ansvariga" icon="people-outline">
+              <InfoRow label="Ägare" value={owner?.name ?? 'Ingen ägare satt'} />
+              {responsibleUsers.length ? (
+                responsibleUsers.map((user) => {
+                  const responsibility = getHorseResponsibility(state, horse.id, user.id);
+                  return (
+                    <InfoRow
+                      key={user.id}
+                      label={responsibility?.kind ?? 'Ansvar'}
+                      value={user.name}
+                    />
+                  );
+                })
+              ) : (
+                <Text style={styles.emptyText}>Inga ansvariga är kopplade ännu.</Text>
+              )}
+            </SectionCard>
+            <View style={styles.overviewActions}>
+              <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/paddocks')} style={styles.outlineAction}>
+                <Ionicons name="map-outline" size={16} color={palette.primaryText} />
+                <Text style={styles.primaryButtonText}>Hagar</Text>
+              </TouchableOpacity>
+              {canEditDefaults ? (
+                <TouchableOpacity accessibilityRole="button" onPress={() => router.push('/stables?section=horses')} style={styles.outlineAction}>
+                  <Ionicons name="create-outline" size={16} color={palette.primaryText} />
+                  <Text style={styles.primaryButtonText}>Hantera hästar</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+          <View {...sectionProps('feed')}>
+            <SectionCard title="Foderplan" icon="clipboard-outline">
               {horse ? (
                 <FeedPlanList
                   horseId={horse.id}
@@ -259,121 +317,107 @@ export default function HorseProfileScreen() {
               ) : null}
             </SectionCard>
           </View>
-
-          <SectionCard title="Ridning/träning" icon="calendar">
-            {horse ? (
-              <PlannedRidesEditor
-                scopeKey={dateTimeScope}
-                stableId={stableId}
-                horseId={horse.id}
-                stable={stable}
-                rides={state.plannedRides.filter(
-                  (ride) =>
-                    ride.stableId === stableId &&
-                    ride.horseId === horse.id &&
-                    ride.status !== 'cancelled',
-                )}
-                canEdit={derived.permissions.canManageRideLogs || isOwner}
-                canComplete={derived.permissions.canManageRideLogs}
-                logs={state.rideLogs.filter((log) => log.stableId === stableId && log.horseId === horse.id)}
-                onCreate={async (input) => {
-                  const result = await actions.createPlannedRide(input);
-                  if (result.success) toast.showToast('Ridpass planerat.', 'success');
-                  return result;
-                }}
-                onUpdate={async (input) => {
-                  const result = await actions.updatePlannedRide(input);
-                  if (result.success) toast.showToast('Ridpass uppdaterat.', 'success');
-                  return result;
-                }}
-                onDelete={async (id) => {
-                  const result = await actions.deletePlannedRide(id);
-                  if (result.success) toast.showToast('Ridpass borttaget.', 'success');
-                  return result;
-                }}
-                onComplete={async (input) => {
-                  const result = await actions.completePlannedRide(input);
-                  if (result.success) toast.showToast('Ridpass loggat.', 'success');
-                  return result;
-                }}
-              />
-            ) : null}
-            <View style={styles.rideHistoryBlock}>
-              <Text style={styles.feedHistoryTitle}>Senaste loggade pass</Text>
-              {rideLogs.length ? (
-                <View style={styles.rideList}>
-                  {rideLogs.map((log) => {
-                    const rideType = stable?.rideTypes?.find((item) => item.id === log.rideTypeId);
-                    return (
-                      <View key={log.id} style={styles.rideRow}>
-                        <View style={styles.rideDot} />
-                        <View style={styles.rideBody}>
-                          <Text style={styles.rideTitle}>{rideType?.label ?? 'Ridpass'}</Text>
-                          <Text style={styles.rideMeta}>
-                            {[log.date, log.length, log.note].filter(Boolean).join(' · ')}
-                          </Text>
+          <View {...sectionProps('riding')}>
+            <SectionCard title="Ridning/träning" icon="calendar-outline">
+              {horse ? (
+                <PlannedRidesEditor
+                  scopeKey={dateTimeScope}
+                  stableId={stableId}
+                  horseId={horse.id}
+                  stable={stable}
+                  rides={state.plannedRides.filter(
+                    (ride) =>
+                      ride.stableId === stableId &&
+                      ride.horseId === horse.id &&
+                      ride.status !== 'cancelled',
+                  )}
+                  canEdit={derived.permissions.canManageRideLogs || isOwner}
+                  canComplete={derived.permissions.canManageRideLogs}
+                  logs={state.rideLogs.filter((log) => log.stableId === stableId && log.horseId === horse.id)}
+                  onCreate={async (input) => {
+                    const result = await actions.createPlannedRide(input);
+                    if (result.success) toast.showToast('Ridpass planerat.', 'success');
+                    return result;
+                  }}
+                  onUpdate={async (input) => {
+                    const result = await actions.updatePlannedRide(input);
+                    if (result.success) toast.showToast('Ridpass uppdaterat.', 'success');
+                    return result;
+                  }}
+                  onDelete={async (id) => {
+                    const result = await actions.deletePlannedRide(id);
+                    if (result.success) toast.showToast('Ridpass borttaget.', 'success');
+                    return result;
+                  }}
+                  onComplete={async (input) => {
+                    const result = await actions.completePlannedRide(input);
+                    if (result.success) toast.showToast('Ridpass loggat.', 'success');
+                    return result;
+                  }}
+                />
+              ) : null}
+              <View style={styles.rideHistoryBlock}>
+                <Text style={styles.feedHistoryTitle}>Senaste loggade pass</Text>
+                {rideLogs.length ? (
+                  <View style={styles.rideList}>
+                    {rideLogs.map((log) => {
+                      const rideType = stable?.rideTypes?.find((item) => item.id === log.rideTypeId);
+                      return (
+                        <View key={log.id} style={styles.rideRow}>
+                          <View style={styles.rideDot} />
+                          <View style={styles.rideBody}>
+                            <Text style={styles.rideTitle}>{rideType?.label ?? 'Ridpass'}</Text>
+                            <Text style={styles.rideMeta}>
+                              {[log.date, log.length, log.note].filter(Boolean).join(' · ')}
+                            </Text>
+                          </View>
                         </View>
-                      </View>
-                    );
-                  })}
-                </View>
-              ) : (
-                <Text style={styles.emptyText}>Ingen ridning eller träning loggad ännu.</Text>
-              )}
-            </View>
-          </SectionCard>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={styles.emptyText}>Ingen ridning eller träning loggad ännu.</Text>
+                )}
+              </View>
+            </SectionCard>
 
-          <SectionCard title="Vård" icon="heart">
-            {horse ? (
-              <CareEventsEditor
-                scopeKey={dateTimeScope}
-                stableId={stableId}
-                horseId={horse.id}
-                horseName={horse.name}
-                events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
-                contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
-                canEdit={derived.permissions.canManageCareEvents}
-                onCreate={async (input) => {
-                  const result = await actions.createCareEvent(input);
-                  if (result.success) toast.showToast('Vårdhändelse skapad.', 'success');
-                  return result;
-                }}
-                onComplete={async (input) => {
-                  const result = await actions.completeCareEvent(input);
-                  if (result.success) toast.showToast('Vårdhändelse markerad klar.', 'success');
-                  return result;
-                }}
-                onCancel={async (id) => {
-                  const result = await actions.updateCareEvent({ id, updates: { status: 'cancelled' } });
-                  if (result.success) toast.showToast('Vårdhändelse avbokad.', 'success');
-                  return result;
-                }}
-                onDelete={async (id) => {
-                  const result = await actions.deleteCareEvent(id);
-                  if (result.success) toast.showToast('Vårdhändelse borttagen.', 'success');
-                  return result;
-                }}
-              />
-            ) : null}
-          </SectionCard>
+          </View>
+          <View {...sectionProps('care')}>
+            <SectionCard title="Vård" icon="heart-outline">
+              {horse ? (
+                <CareEventsEditor
+                  scopeKey={dateTimeScope}
+                  stableId={stableId}
+                  horseId={horse.id}
+                  horseName={horse.name}
+                  events={state.careEvents.filter((event) => event.stableId === stableId && event.horseIds.includes(horse.id))}
+                  contacts={state.externalContacts.filter((contact) => contact.stableId === stableId)}
+                  canEdit={derived.permissions.canManageCareEvents}
+                  onCreate={async (input) => {
+                    const result = await actions.createCareEvent(input);
+                    if (result.success) toast.showToast('Vårdhändelse skapad.', 'success');
+                    return result;
+                  }}
+                  onComplete={async (input) => {
+                    const result = await actions.completeCareEvent(input);
+                    if (result.success) toast.showToast('Vårdhändelse markerad klar.', 'success');
+                    return result;
+                  }}
+                  onCancel={async (id) => {
+                    const result = await actions.updateCareEvent({ id, updates: { status: 'cancelled' } });
+                    if (result.success) toast.showToast('Vårdhändelse avbokad.', 'success');
+                    return result;
+                  }}
+                  onDelete={async (id) => {
+                    const result = await actions.deleteCareEvent(id);
+                    if (result.success) toast.showToast('Vårdhändelse borttagen.', 'success');
+                    return result;
+                  }}
+                />
+              ) : null}
+            </SectionCard>
 
-          <SectionCard title="Ägare/ansvariga" icon="users">
-            <InfoRow label="Ägare" value={owner?.name ?? 'Ingen ägare satt'} />
-            {responsibleUsers.length ? (
-              responsibleUsers.map((user) => {
-                const responsibility = getHorseResponsibility(state, horse.id, user.id);
-                return (
-                  <InfoRow
-                    key={user.id}
-                    label={responsibility?.kind ?? 'Ansvar'}
-                    value={user.name}
-                  />
-                );
-              })
-            ) : (
-              <Text style={styles.emptyText}>Inga ansvariga är kopplade ännu.</Text>
-            )}
-          </SectionCard>
+          </View>
         </ScrollView>
       </SafeAreaView>
     </LinearGradient>
@@ -387,7 +431,7 @@ function SectionCard({
   inGrid,
 }: {
   title: string;
-  icon: keyof typeof Feather.glyphMap;
+  icon: keyof typeof Ionicons.glyphMap;
   children: React.ReactNode;
   inGrid?: boolean;
 }) {
@@ -395,7 +439,7 @@ function SectionCard({
     <Card style={[styles.sectionCard, inGrid ? styles.sectionCardInGrid : null]}>
       <View style={styles.sectionHeader}>
         <View style={styles.sectionIcon}>
-          <Feather name={icon} size={16} color={palette.primary} />
+          <Ionicons name={icon} size={16} color={palette.primary} />
         </View>
         <Text style={styles.sectionTitle}>{title}</Text>
       </View>
@@ -497,10 +541,10 @@ function DailyStatusEditor({ status, canEdit, onUpdate }: DailyStatusEditorProps
           !canEdit && styles.statusEditorButtonDisabled,
         ]}
       >
-        <Feather
-          name={value ? 'check-circle' : 'circle'}
+        <Ionicons
+          name={value ? 'checkmark-circle-outline' : 'ellipse-outline'}
           size={14}
-          color={value ? palette.inverseText : palette.primaryText}
+          color={palette.primaryText}
         />
         <Text
           style={[
@@ -664,10 +708,10 @@ function FeedPlanList({
                   accessibilityState={{ disabled: savingSlot !== null, busy: savingSlot === slot }}
                   activeOpacity={0.85}
                 >
-                  <Feather
-                    name={check?.checkedAt ? 'check-circle' : 'check'}
+                  <Ionicons
+                    name={check?.checkedAt ? 'checkmark-circle-outline' : 'checkmark'}
                     size={14}
-                    color={check?.checkedAt ? palette.secondaryText : palette.inverseText}
+                    color={check?.checkedAt ? palette.secondaryText : palette.primaryText}
                   />
                   <Text
                     style={
@@ -688,7 +732,7 @@ function FeedPlanList({
                   }}
                   activeOpacity={0.85}
                 >
-                  <Feather name="alert-circle" size={14} color={palette.primaryText} />
+                  <Ionicons name="alert-circle-outline" size={14} color={palette.primaryText} />
                   <Text style={styles.feedActionButtonTextSecondary}>Avvikelse</Text>
                 </TouchableOpacity>
               ) : null}
@@ -706,7 +750,7 @@ function FeedPlanList({
                   }
                   activeOpacity={0.85}
                 >
-                  <Feather name="edit-2" size={14} color={palette.primaryText} />
+                  <Ionicons name="create-outline" size={14} color={palette.primaryText} />
                   <Text style={styles.feedActionButtonTextSecondary}>
                     {override ? 'Ändra hästplan' : 'Lägg till hästplan'}
                   </Text>
@@ -726,7 +770,7 @@ function FeedPlanList({
                   }
                   activeOpacity={0.85}
                 >
-                  <Feather name="server" size={14} color={palette.primaryText} />
+                  <Ionicons name="layers-outline" size={14} color={palette.primaryText} />
                   <Text style={styles.feedActionButtonTextSecondary}>
                     {fallback ? 'Ändra stallplan' : 'Lägg till stallplan'}
                   </Text>
@@ -750,7 +794,7 @@ function FeedPlanList({
                   }}
                   activeOpacity={0.85}
                 >
-                  <Feather name="trash-2" size={14} color={palette.inverseText} />
+                  <Ionicons name="trash-outline" size={14} color={palette.error} />
                   <Text style={styles.feedActionButtonText}>
                     {planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'default' ? 'Tar bort stallplan…' : 'Ta bort stallplan'}
                   </Text>
@@ -765,7 +809,7 @@ function FeedPlanList({
                   onPress={() => handlePlanWrite(slot, 'delete', () => onDelete(override.id))}
                   activeOpacity={0.85}
                 >
-                  <Feather name="trash-2" size={14} color={palette.inverseText} />
+                  <Ionicons name="trash-outline" size={14} color={palette.error} />
                   <Text style={styles.feedActionButtonText}>
                     {planPending?.slot === slot && planPending.action === 'delete' && planPending.mode === 'override' ? 'Tar bort hästplan…' : 'Ta bort hästplan'}
                   </Text>
@@ -1072,7 +1116,7 @@ function PlannedRidesEditor({
                     }}
                     activeOpacity={0.85}
                   >
-                    <Feather name="check" size={14} color={palette.inverseText} />
+                    <Ionicons name="checkmark" size={14} color={palette.primaryText} />
                     <Text style={styles.feedActionButtonText}>Slutför ridpass</Text>
                   </TouchableOpacity> : null}
                   <TouchableOpacity
@@ -1089,8 +1133,8 @@ function PlannedRidesEditor({
                     onPress={() => handleRideWrite(() => onDelete(ride.id), ride.id, true)}
                     activeOpacity={0.85}
                   >
-                    <Feather name="trash-2" size={14} color={palette.inverseText} />
-                    <Text style={styles.feedActionButtonText}>Ta bort</Text>
+                    <Ionicons name="trash-outline" size={14} color={palette.error} />
+                    <Text style={[styles.feedActionButtonText, { color: palette.error }]}>Ta bort</Text>
                   </TouchableOpacity>
                 </View>
               ) : null}
@@ -1271,7 +1315,7 @@ function PlannedRidesEditor({
             onPress={() => { newRideId.current = generateId(); setRideError(null); setCreating(true); }}
             activeOpacity={0.85}
           >
-            <Feather name="plus" size={14} color={palette.primaryText} />
+            <Ionicons name="add" size={14} color={palette.primaryText} />
             <Text style={styles.feedActionButtonTextSecondary}>Planera ridpass</Text>
           </TouchableOpacity>
         )
@@ -1412,7 +1456,7 @@ function CareEventsEditor({
               }}
               activeOpacity={0.85}
             >
-              <Feather name="check" size={14} color={palette.inverseText} />
+              <Ionicons name="checkmark" size={14} color={palette.primaryText} />
               <Text style={styles.feedActionButtonText}>Slutför vård</Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1431,8 +1475,8 @@ function CareEventsEditor({
               onPress={() => handleWrite(() => onDelete(event.id), event.id, true)}
               activeOpacity={0.85}
             >
-              <Feather name="trash-2" size={14} color={palette.inverseText} />
-              <Text style={styles.feedActionButtonText}>Ta bort</Text>
+              <Ionicons name="trash-outline" size={14} color={palette.error} />
+              <Text style={[styles.feedActionButtonText, { color: palette.error }]}>Ta bort</Text>
             </TouchableOpacity>
           </View>
         ) : null}
@@ -1687,7 +1731,7 @@ function CareEventsEditor({
             onPress={() => { newEventId.current = generateId(); setSaveError(null); setCreating(true); }}
             activeOpacity={0.85}
           >
-            <Feather name="plus" size={14} color={palette.primaryText} />
+            <Ionicons name="add" size={14} color={palette.primaryText} />
             <Text style={styles.feedActionButtonTextSecondary}>Lägg till vårdhändelse</Text>
           </TouchableOpacity>
         )
@@ -1697,6 +1741,15 @@ function CareEventsEditor({
 }
 
 const styles = StyleSheet.create({
+  profilePanel: { gap: 18 },
+  hiddenPanel: { display: 'none' },
+  profileTabs: { flexDirection: 'row', padding: 4, borderRadius: 16, backgroundColor: palette.surfaceMuted },
+  profileTab: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  profileTabActive: { backgroundColor: palette.surface },
+  profileTabText: { fontSize: 14, fontFamily: theme.fonts.medium, color: palette.secondaryText },
+  profileTabTextActive: { fontFamily: theme.fonts.semibold, color: palette.primaryText },
+  overviewActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  outlineAction: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 44, paddingHorizontal: 16, borderWidth: 1, borderColor: palette.border, borderRadius: 14, backgroundColor: palette.surface },
   background: {
     flex: 1,
   },
@@ -1732,9 +1785,9 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   heroCard: {
-    padding: 14,
+    padding: 22,
     gap: 14,
-    borderRadius: radius.sm,
+    borderRadius: radius.xl,
     backgroundColor: palette.surface,
   },
   heroTop: {
@@ -1756,9 +1809,9 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   heroTitle: {
-    fontSize: 17,
-    fontFamily: theme.fonts.medium,
-    fontWeight: '500',
+    fontSize: 25,
+    fontFamily: theme.fonts.semibold,
+    fontWeight: '600',
     color: palette.primaryText,
   },
   heroMeta: {
@@ -1779,9 +1832,9 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   sectionCard: {
-    padding: 14,
+    padding: 20,
     gap: 12,
-    borderRadius: radius.sm,
+    borderRadius: radius.xl,
     backgroundColor: palette.surface,
   },
   sectionCardInGrid: {
@@ -1801,9 +1854,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sectionTitle: {
-    fontSize: 17,
-    fontFamily: theme.fonts.regular,
-    fontWeight: '400',
+    fontSize: 18,
+    fontFamily: theme.fonts.semibold,
+    fontWeight: '600',
     color: palette.primaryText,
   },
   sectionBody: {
@@ -1842,7 +1895,9 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     marginTop: 6,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   rideBody: {
     flex: 1,
@@ -1894,13 +1949,15 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   primaryButtonText: {
     fontSize: 13,
     fontFamily: theme.fonts.medium,
     fontWeight: '500',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   feedList: {
     gap: 14,
@@ -1978,7 +2035,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.full,
   },
   feedActionButtonPrimary: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   feedActionButtonSecondary: {
     backgroundColor: palette.surfaceTint,
@@ -1987,13 +2046,15 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   feedActionButtonDanger: {
-    backgroundColor: '#B3261E',
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.error,
   },
   feedActionButtonText: {
     fontSize: 12,
     fontFamily: theme.fonts.medium,
     fontWeight: '500',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   feedActionButtonTextSecondary: {
     fontSize: 12,
@@ -2028,7 +2089,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     backgroundColor: palette.surface,
     color: palette.primaryText,
-    fontSize: 14,
+    fontSize: 16,
   },
   feedFormActions: {
     flexDirection: 'row',
@@ -2094,7 +2155,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surfaceTint,
   },
   statusEditorButtonActive: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.primaryText,
   },
   statusEditorButtonDisabled: {
     opacity: 0.5,
@@ -2106,7 +2169,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   statusEditorButtonTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   rideHistoryBlock: {
     marginTop: 14,
@@ -2145,7 +2208,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
   },
   plannedRideStatusDone: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   plannedRideStatusText: {
     fontSize: 11,

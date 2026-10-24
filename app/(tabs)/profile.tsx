@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   ActivityIndicator,
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -92,7 +91,6 @@ export default function ProfileScreen() {
     () => new Set(),
   );
   const isDesktopWeb = useIsDesktopWeb();
-  const isWeb = Platform.OS === 'web';
   const currentStable = state.stables.find((stable) => stable.id === currentStableId);
   const resolvedSection = Array.isArray(section) ? section[0] : section;
   const hasStable = Boolean(currentStableId && currentStable);
@@ -320,7 +318,7 @@ export default function ProfileScreen() {
       <Text style={styles.infoTitle}>Inget stall valt</Text>
       <Text style={styles.infoText}>
         {canManageAdmin
-          ? 'Starta uppstarten från Överblick eller öppna Admin i webben för att skapa ett stall.'
+          ? 'Starta uppstarten från Idag eller öppna Mitt stall för att skapa ett stall.'
           : 'Gå till Överblick för att skapa stall eller invänta en inbjudan.'}
       </Text>
       <View style={styles.infoActionRow}>
@@ -341,20 +339,20 @@ export default function ProfileScreen() {
   ) : null;
 
   const adminSection =
-    isWeb && canManageAdmin ? (
+    canManageAdmin ? (
       <Card tone="muted" style={styles.adminCard}>
-        <Text style={styles.adminTitle}>Admincenter</Text>
+        <Text style={styles.adminTitle}>Mitt stall</Text>
         <Text style={styles.adminText}>
-          Hantera stall, medlemmar, hästar och scheman i adminvyn.
+          Medlemmar, inbjudningar, rutiner och stallinställningar — samlat på ett ställe.
         </Text>
         <TouchableOpacity
           style={styles.adminAction}
           onPress={() => router.push('/admin')}
           activeOpacity={0.85}
           accessibilityRole="button"
-          accessibilityLabel="Öppna admin"
+          accessibilityLabel="Öppna mitt stall"
         >
-          <Text style={styles.adminActionText}>Öppna admin</Text>
+          <Text style={styles.adminActionText}>Öppna mitt stall</Text>
         </TouchableOpacity>
       </Card>
     ) : null;
@@ -595,7 +593,7 @@ const AssignmentCard = React.memo(function AssignmentCard({
           accessibilityLabel={isPending ? 'Tar passet' : `Ta ${formatAssignmentTitle(assignment)}`}
           accessibilityState={{ disabled: isPending, busy: isPending }}
         >
-          {isPending ? <ActivityIndicator size="small" color={palette.inverseText} /> : null}
+          {isPending ? <ActivityIndicator size="small" color={palette.primaryText} /> : null}
           <Text style={styles.assignmentActionLabel}>
             {isPending ? 'Tar pass...' : 'Ta passet'}
           </Text>
@@ -823,7 +821,9 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -832,7 +832,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   infoSecondaryAction: {
     minHeight: 44,
@@ -873,7 +873,9 @@ const styles = StyleSheet.create({
     minHeight: 44,
     justifyContent: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -882,7 +884,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   defaultPassAnchor: {
     width: '100%',
@@ -952,7 +954,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   defaultPassChipTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   sectionBlock: {
     gap: 14,
@@ -1026,7 +1028,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginTop: 4,
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -1038,7 +1042,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
   awayCard: {
     gap: 12,

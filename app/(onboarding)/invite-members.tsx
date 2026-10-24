@@ -244,13 +244,13 @@ export default function OnboardingMembers() {
     <OnboardingShell
       title="Medlemmar"
       subtitle="Valfritt: Bjud in personer och välj deras roll."
-      step={5}
-      total={6}
+      step={1}
+      total={1}
       allowExit={false}
       onNext={handleBack}
       disableNext={savingInvite}
-      nextLabel="Tillbaka"
-      showProgress
+      nextLabel="Tillbaka till introduktionen"
+      showProgress={false}
     >
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Välj stall</Text>
@@ -347,17 +347,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
+    minHeight: 48,
     color: palette.primaryText,
     backgroundColor: palette.surface,
   },
   primaryButton: {
-    backgroundColor: palette.primary,
+    minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: palette.border,
+    backgroundColor: palette.surface,
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
   },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600' },
+  primaryLabel: { color: palette.primaryText, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingVertical: 6,
@@ -367,9 +369,9 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  chipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chipTextActive: { color: palette.primaryText, fontWeight: '600' },
   roleList: { gap: 10 },
   roleCard: {
     padding: 12,
@@ -379,7 +381,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     gap: 6,
   },
-  roleCardActive: { borderColor: palette.primary, backgroundColor: palette.surfaceTint },
+  roleCardActive: { borderColor: palette.primaryText, backgroundColor: palette.surfaceTint },
   roleTitle: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
   roleTitleActive: { color: palette.primary },
   roleText: { fontSize: 12, color: palette.secondaryText },

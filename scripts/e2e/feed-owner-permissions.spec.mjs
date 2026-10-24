@@ -47,6 +47,7 @@ test('horse owner saves own feed check through the UI and sees it after reload',
     const horse = owner.horses.find((row) => row.owner_user_id === owner.userId);
     expect(horse, 'The QA owner must have an owned horse').toBeTruthy();
     await owner.page.goto(`/horses/${horse.id}`);
+    await owner.page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(owner.page.getByText('Foderplan', { exact: true })).toBeVisible();
     await owner.page.getByText('Avvikelse', { exact: true }).first().click();
     await owner.page.getByPlaceholder(/Hösilage tog slut/).fill(note);
@@ -65,6 +66,7 @@ test('horse owner saves own feed check through the UI and sees it after reload',
     expect(await response.json()).toMatchObject({ horse_id: horse.id, deviation_note: note });
     await expect(owner.page.getByText('Foderkoll registrerad.', { exact: true })).toBeVisible();
     await owner.page.reload();
+    await owner.page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(owner.page.getByText(note, { exact: false }).first()).toBeVisible();
   } finally {
     try {
@@ -120,6 +122,7 @@ test('guest cannot see feed write actions on another members horse', async ({ br
     const horse = guest.horses.find((row) => row.owner_user_id !== guest.userId);
     expect(horse).toBeTruthy();
     await guest.page.goto(`/horses/${horse.id}`);
+    await guest.page.getByRole('tab', { name: 'Foder', exact: true }).click();
     await expect(guest.page.getByText('Foderplan', { exact: true })).toBeVisible();
     await expect(guest.page.getByText('Avvikelse', { exact: true })).toHaveCount(0);
     await expect(guest.page.getByText('Markera klart', { exact: true })).toHaveCount(0);

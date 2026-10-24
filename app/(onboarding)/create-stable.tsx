@@ -63,7 +63,7 @@ export default function OnboardingStables() {
       title="Skapa stall"
       subtitle="Lägg in ett stall för att gå vidare."
       step={2}
-      total={6}
+      total={4}
       allowExit={false}
       onBack={handleBack}
       showProgress
@@ -112,12 +112,14 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
+    minHeight: 48,
     color: palette.primaryText,
     backgroundColor: palette.surface,
   },
   primaryButton: {
-    backgroundColor: palette.primary,
+    minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: palette.border,
+    backgroundColor: palette.surface,
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
@@ -125,5 +127,5 @@ const styles = StyleSheet.create({
   primaryButtonDisabled: {
     opacity: 0.6,
   },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600' },
+  primaryLabel: { color: palette.primaryText, fontWeight: '600' },
 });

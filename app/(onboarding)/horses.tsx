@@ -210,12 +210,13 @@ export default function OnboardingHorses() {
     <OnboardingShell
       title="Hästar"
       subtitle="Lägg till minst en häst för att gå vidare."
-      step={4}
-      total={6}
+      step={3}
+      total={4}
       allowExit={false}
-      onNext={handleBack}
-      disableNext={savingHorse}
-      nextLabel="Tillbaka"
+      onNext={stableHorses.length > 0 ? () => router.replace({ pathname: '/calendar', params: { fromOnboarding: '1', returnTo: typeof returnTo === 'string' ? returnTo : '/(onboarding)/setup' } }) : handleBack}
+      onBack={handleBack}
+      disableNext={savingHorse || stableHorses.length === 0}
+      nextLabel="Fortsätt till första passet"
       showProgress
     >
       {stables.length > 1 ? (
@@ -241,7 +242,9 @@ export default function OnboardingHorses() {
 
       <Card tone="muted" style={styles.card}>
         <Text style={styles.sectionTitle}>Ny häst</Text>
+        <Text style={styles.sectionLabel}>Hästens namn</Text>
         <TextInput editable={!savingHorse}
+          accessibilityLabel="Hästens namn"
           placeholder="Hästens namn"
           placeholderTextColor={palette.mutedText}
           value={draft.name}
@@ -279,7 +282,9 @@ export default function OnboardingHorses() {
         <Text style={styles.listMeta}>
           {draftAge !== undefined ? `${draftAge} år i år · åldern uppdateras automatiskt.` : 'Åldern beräknas automatiskt från födelseåret.'}
         </Text>
+        <Text style={styles.sectionLabel}>Anteckning (valfritt)</Text>
         <TextInput editable={!savingHorse}
+          accessibilityLabel="Anteckning (valfritt)"
           placeholder="Anteckning (valfritt)"
           placeholderTextColor={palette.mutedText}
           value={draft.note}
@@ -312,14 +317,16 @@ export default function OnboardingHorses() {
           {ownerMode === 'invite' ? (
             <>
               <TextInput editable={!savingHorse}
-                placeholder="Namn på ägare"
+                accessibilityLabel="Namn på ägare"
+          placeholder="Namn på ägare"
                 placeholderTextColor={palette.mutedText}
                 value={ownerDraft.name}
                 onChangeText={(text) => setOwnerDraft((prev) => ({ ...prev, name: text }))}
                 style={styles.input}
               />
               <TextInput editable={!savingHorse}
-                placeholder="Epost till ägare"
+                accessibilityLabel="Epost till ägare"
+          placeholder="Epost till ägare"
                 placeholderTextColor={palette.mutedText}
                 value={ownerDraft.email}
                 onChangeText={(text) => setOwnerDraft((prev) => ({ ...prev, email: text }))}
@@ -387,7 +394,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
+    minHeight: 48,
     color: palette.primaryText,
     backgroundColor: palette.surface,
   },
@@ -405,16 +413,17 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  toggleChipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  toggleChipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   toggleText: { fontSize: 12, color: palette.primaryText },
-  toggleTextActive: { color: palette.inverseText, fontWeight: '600' },
+  toggleTextActive: { color: palette.primaryText, fontWeight: '600' },
   primaryButton: {
-    backgroundColor: palette.primary,
+    minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: palette.border,
+    backgroundColor: palette.surface,
     paddingVertical: 12,
     borderRadius: radius.full,
     alignItems: 'center',
   },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600' },
+  primaryLabel: { color: palette.primaryText, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingVertical: 6,
@@ -424,9 +433,9 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  chipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chipTextActive: { color: palette.primaryText, fontWeight: '600' },
   list: { gap: 10 },
   listRow: {
     flexDirection: 'row',

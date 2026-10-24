@@ -2,7 +2,7 @@ import React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { usePathname, useRouter, type Href } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import Logo from '@/assets/images/figma/logo.svg';
 import { theme } from '@/components/theme';
 import { useAppData } from '@/context/AppDataContext';
@@ -15,7 +15,7 @@ const palette = theme.colors;
 type NavItem = {
   label: string;
   route: string;
-  icon: keyof typeof Feather.glyphMap;
+  icon: AppIconName;
   adminOnly?: boolean;
 };
 
@@ -25,29 +25,17 @@ type NavGroup = {
 };
 
 const navGroups: NavGroup[] = [
-  {
-    items: [
-      { label: 'Idag', route: '/', icon: 'layout' },
-      { label: 'Hästar', route: '/stable-horses', icon: 'activity' },
-      { label: 'Schema', route: '/calendar', icon: 'calendar' },
-      { label: 'Feed', route: '/feed', icon: 'edit-3' },
-      { label: 'Chat', route: '/messages', icon: 'message-circle' },
-    ],
-  },
-  {
-    title: 'Hantering',
-    items: [
-      { label: 'Admin', route: '/admin', icon: 'settings', adminOnly: true },
-      { label: 'Stall', route: '/stables', icon: 'home', adminOnly: true },
-      { label: 'Medlemmar', route: '/members', icon: 'users' },
-    ],
-  },
-  {
-    title: 'Konto',
-    items: [
-      { label: 'Profil', route: '/profile', icon: 'user' },
-    ],
-  },
+  { items: [
+    { label: 'Idag', route: '/', icon: 'home' },
+    { label: 'Hästar', route: '/stable-horses', icon: 'horse' },
+    { label: 'Schema', route: '/calendar', icon: 'calendar' },
+    { label: 'Flöde', route: '/feed', icon: 'feed' },
+    { label: 'Chatt', route: '/messages', icon: 'chat' },
+  ] },
+  { items: [
+    { label: 'Mitt stall', route: '/admin', icon: 'stable', adminOnly: true },
+    { label: 'Medlemmar', route: '/members', icon: 'stable' },
+  ] },
 ];
 
 type DesktopNavProps = {
@@ -84,7 +72,7 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
   const showSidebarHeader = isSidebar && showHeader;
 
   // Flatten for inline variant
-  const allItems = navGroups.flatMap((group) => group.items);
+  const allItems = [...navGroups.flatMap((group) => group.items), { label: 'Profil', route: '/profile', icon: 'home' as const, adminOnly: false }];
 
   if (!isSidebar) {
     return (
@@ -184,10 +172,11 @@ export function DesktopNav({ style, variant = 'inline', showHeader = true }: Des
                       isActive && styles.navItemActive,
                     ]}
                   >
-                    <Feather
+                    <AppIcon
                       name={item.icon}
+                      focused={isActive}
                       size={19}
-                      color={isActive ? palette.primary : palette.secondaryText}
+                      color={isActive ? palette.primaryText : palette.secondaryText}
                     />
                     <Text
                       style={[
@@ -251,8 +240,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   itemActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderColor: palette.primaryText,
   },
   label: {
     fontSize: 13,
@@ -260,7 +249,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   labelActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 
   // Sidebar variant
@@ -285,8 +274,9 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   brandTitle: {
-    fontSize: 19,
-    fontWeight: '700',
+    fontFamily: theme.fonts.semibold,
+    fontSize: 23,
+    fontWeight: '600',
     color: palette.primaryText,
     letterSpacing: -0.3,
   },
@@ -322,8 +312,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
   },
   stableChipActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderColor: palette.primaryText,
   },
   stableChipText: {
     fontSize: 13,
@@ -331,7 +321,7 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   stableChipTextActive: {
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 
   // Navigation body
@@ -353,7 +343,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   navItemActive: {
-    backgroundColor: palette.surfaceTint,
+    backgroundColor: 'transparent',
   },
   navLabel: {
     fontSize: 15,
@@ -362,7 +352,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
   },
   navLabelActive: {
-    color: palette.primary,
+    color: palette.primaryText,
     fontWeight: '600',
   },
 

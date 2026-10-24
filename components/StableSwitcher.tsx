@@ -135,7 +135,8 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   chipTextActive: {
-    color: palette.primary,
+    color: palette.primaryText,
+    fontFamily: theme.fonts.medium,
   },
   location: {
     fontFamily: theme.fonts.regular,

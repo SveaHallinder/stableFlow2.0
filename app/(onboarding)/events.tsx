@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  chipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chipTextActive: { color: palette.primaryText, fontWeight: '600' },
 });

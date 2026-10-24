@@ -8,9 +8,9 @@ async function bootDemo(page) {
   await expect(page.getByText('Läget i stallet')).toBeVisible({ timeout: 30000 });
 }
 
-async function openHorseProfile(page) {
+async function openHorseProfile(page, section = 'Översikt') {
   await page.goto(`${BASE_URL}/horses/qa-horse-main?qaDemo=1`, { waitUntil: 'domcontentloaded' });
-  await expect(page.getByText('Foderplan', { exact: true })).toBeVisible({ timeout: 15000 });
+  await page.getByRole('tab', { name: section, exact: true }).click();
 }
 
 test.describe('Phase 4 — Horse status + planned rides', () => {
@@ -39,7 +39,7 @@ test.describe('Phase 4 — Horse status + planned rides', () => {
 
   test('Planera ridpass via hästprofilen', async ({ page }) => {
     await bootDemo(page);
-    await openHorseProfile(page);
+    await openHorseProfile(page, 'Ridning');
     await page.getByText('Planera ridpass', { exact: true }).click();
     const dateInput = page.locator('input[placeholder="Datum (YYYY-MM-DD)"]');
     await dateInput.scrollIntoViewIfNeeded();
@@ -58,7 +58,7 @@ test.describe('Phase 4 — Horse status + planned rides', () => {
 
   test('Slutför planerat ridpass skapar ride log', async ({ page }) => {
     await bootDemo(page);
-    await openHorseProfile(page);
+    await openHorseProfile(page, 'Ridning');
     const slutforBtn = page.getByText('Slutför ridpass', { exact: true }).first();
     await slutforBtn.scrollIntoViewIfNeeded();
     await slutforBtn.click();
@@ -78,7 +78,7 @@ test.describe('Phase 4 — Horse status + planned rides', () => {
 
   test('Avboka planerat ridpass', async ({ page }) => {
     await bootDemo(page);
-    await openHorseProfile(page);
+    await openHorseProfile(page, 'Ridning');
     const avbokaBtn = page.getByText('Avboka', { exact: true }).first();
     if (!(await avbokaBtn.isVisible().catch(() => false))) {
       test.skip(true, 'Inga planerade pass att avboka i seed.');
@@ -89,7 +89,7 @@ test.describe('Phase 4 — Horse status + planned rides', () => {
 
   test('Ta bort planerat ridpass', async ({ page }) => {
     await bootDemo(page);
-    await openHorseProfile(page);
+    await openHorseProfile(page, 'Ridning');
     const tabortBtn = page.getByText('Ta bort', { exact: true }).first();
     if (!(await tabortBtn.isVisible().catch(() => false))) {
       test.skip(true, 'Inga planerade pass att ta bort i seed.');

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -11,16 +10,16 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import UserGroups from '@/assets/images/figma/group.svg';
+import { Ionicons } from '@expo/vector-icons';
 import { theme } from '@/components/theme';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Card } from '@/components/Primitives';
+import { Card, HeaderIconButton } from '@/components/Primitives';
 import { Avatar } from '@/components/Avatar';
 import { StableSwitcher } from '@/components/StableSwitcher';
 import { radius, space } from '@/design/tokens';
 import { systemPalette } from '@/design/system';
 import { useAppData } from '@/context/AppDataContext';
-import { useIsDesktopWeb, webStickyStyle } from '@/hooks/useIsDesktopWeb';
+import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
 
 const palette = theme.colors;
@@ -47,7 +46,7 @@ const MessageItem = React.memo(function MessageItem({
       <View style={styles.avatarBubble}>
         {item.group ? (
           <View style={styles.groupAvatar}>
-            <UserGroups />
+            <Ionicons name="people-outline" size={24} color={palette.primaryText} />
           </View>
         ) : (
           <Avatar
@@ -106,12 +105,9 @@ export default function MessagesScreen() {
     },
     [blockedUserIds, conversations, currentUserId],
   );
-  const isWeb = Platform.OS === 'web';
   const isDesktopWeb = useIsDesktopWeb();
-  const stickyPanelStyle = isDesktopWeb ? webStickyStyle : undefined;
   const canManageOnboarding = derived.permissions.canManageOnboarding;
-  const canOpenAdmin = canManageOnboarding && isWeb;
-  const adminHint = canManageOnboarding && !isWeb ? ' Admin finns i webben.' : '';
+  const canOpenAdmin = canManageOnboarding;
   const [filter, setFilter] = React.useState<MessageFilter>('all');
 
   const handleOpenConversation = (item: MessagePreview) => {
@@ -141,18 +137,19 @@ export default function MessagesScreen() {
   }, [messages, currentStableId, filter, isBlockedPrivateConversation]);
 
   const emptyStateActions = [
+    ...(filter !== 'all' ? [{ label: 'Visa alla chattar', onPress: () => setFilter('all'), variant: 'secondary' as const }] : []),
     { label: 'Hitta medlem', onPress: handleOpenMembers, variant: 'primary' as const },
     ...(canOpenAdmin
-      ? [{ label: 'Öppna admin', onPress: handleOpenAdmin, variant: 'secondary' as const }]
+      ? [{ label: 'Mitt stall', onPress: handleOpenAdmin, variant: 'secondary' as const }]
       : []),
   ];
 
   const emptyState = (
     <Card tone="muted" style={styles.emptyCard}>
-      <Text style={styles.emptyTitle}>Inga meddelanden ännu</Text>
+      <Text style={styles.emptyTitle}>{filter === 'all' ? 'Inga meddelanden ännu' : filter === 'group' ? 'Inga gruppchattar ännu' : 'Inga privata chattar ännu'}</Text>
       <Text style={styles.emptyText}>
         {canManageOnboarding
-          ? `Starta en chatt via en medlem eller bjud in fler via Admin.${adminHint}`
+          ? 'Starta en chatt via en medlem eller bjud in fler via Mitt stall.'
           : 'Öppna en medlem och tryck Chatta.'}
       </Text>
       <View style={styles.emptyActions}>
@@ -200,7 +197,7 @@ export default function MessagesScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScreenHeader
           style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-          title="Meddelanden"
+          title="Chatt"
         />
         <View style={styles.loadingContainer}>
           <ActivityIndicator color={palette.primary} />
@@ -213,7 +210,12 @@ export default function MessagesScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScreenHeader
         style={[styles.pageHeader, isDesktopWeb && styles.pageHeaderDesktop]}
-        title="Meddelanden"
+        title="Chatt"
+        primaryAction={
+          <HeaderIconButton accessibilityLabel="Starta en chatt via medlem" onPress={handleOpenMembers}>
+            <Ionicons name="create-outline" size={21} color={palette.primaryText} />
+          </HeaderIconButton>
+        }
       />
       {!isDesktopWeb ? <StableSwitcher /> : null}
       {refreshError && <Text accessibilityRole="alert" style={styles.emptyText}>{refreshError} Oläststatus kan inte bekräftas just nu.</Text>}
@@ -229,43 +231,24 @@ export default function MessagesScreen() {
           />
         }
       >
-        {isDesktopWeb ? (
-          <View style={styles.desktopLayout}>
-            <View style={[styles.desktopPanel, stickyPanelStyle]}>
-              <Card tone="muted" style={styles.panelCard}>
-                <Text style={styles.panelTitle}>Inkorg</Text>
-                <Text style={styles.panelText}>
-                  Håll koll på nya meddelanden och grupptrådar för ditt stall.
-                </Text>
-              </Card>
-              <Card tone="muted" style={styles.panelCard}>
-                <Text style={styles.panelTitle}>Snabbfilter</Text>
-                <View style={styles.panelChips}>
-                  {FILTER_OPTIONS.map((option) => {
-                    const active = filter === option.value;
-                    return (
-                      <TouchableOpacity
-                        key={option.value}
-                        style={[styles.panelChip, active && styles.panelChipActive]}
-                        onPress={() => setFilter(option.value)}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={[styles.panelChipText, active && styles.panelChipTextActive]}>
-                          {option.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </Card>
-            </View>
-            <View style={styles.desktopList}>
-              <View style={[styles.list, styles.listDesktop]}>{messageList}</View>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.list}>{messageList}</View>
-        )}
+        <View style={styles.panelChips}>
+          {FILTER_OPTIONS.map((option) => {
+            const active = filter === option.value;
+            return (
+              <TouchableOpacity
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[styles.panelChip, active && styles.panelChipActive]}
+                onPress={() => setFilter(option.value)}
+                activeOpacity={0.85}
+              >
+                <Text style={[styles.panelChipText, active && styles.panelChipTextActive]}>{option.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <View style={styles.list}>{messageList}</View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -288,13 +271,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    paddingHorizontal: 0,
+    paddingHorizontal: 22,
     paddingBottom: 120,
-    paddingTop: 0,
-    gap: 0,
+    paddingTop: 10,
+    gap: 24,
   },
   contentDesktop: {
-    maxWidth: 1100,
+    maxWidth: 960,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 40,
@@ -318,7 +301,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   pageHeaderDesktop: {
-    maxWidth: 1100,
+    maxWidth: 960,
     width: '100%',
     alignSelf: 'center',
     paddingHorizontal: 40,
@@ -333,15 +316,18 @@ const styles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 20,
-    minHeight: 80,
-    padding: 15,
+    borderRadius: 0,
+    minHeight: 94,
+    paddingVertical: 18,
+    paddingHorizontal: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border,
     backgroundColor: 'transparent',
   },
   itemDesktop: {
     paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 20,
+    paddingHorizontal: 0,
+    borderRadius: 0,
   },
   panelCard: {
     paddingHorizontal: 16,
@@ -399,10 +385,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   emptyActionPrimary: {
-    backgroundColor: palette.primary,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
   emptyActionPrimaryText: {
-    color: palette.inverseText,
+    color: palette.primaryText,
     fontWeight: '700',
   },
   emptyActionSecondary: {
@@ -419,6 +407,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   panelChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: radius.full,
@@ -428,7 +418,7 @@ const styles = StyleSheet.create({
   },
   panelChipActive: {
     backgroundColor: palette.surfaceTint,
-    borderColor: palette.primary,
+    borderColor: palette.primaryText,
   },
   panelChipText: {
     fontSize: 12,
@@ -437,12 +427,13 @@ const styles = StyleSheet.create({
     color: palette.primaryText,
   },
   panelChipTextActive: {
-    color: palette.primary,
+    color: palette.primaryText,
   },
   avatarBubble: {
     marginRight: 10,
   },
   groupAvatar: {
+    backgroundColor: palette.surfaceMuted,
     width: 50,
     height: 50,
     borderRadius: radius.full,
@@ -494,8 +485,8 @@ const styles = StyleSheet.create({
   itemPreview: {
     fontSize: 15,
     fontFamily: theme.fonts.regular,
-    color: palette.primaryText,
-    lineHeight: 19,
+    color: palette.secondaryText,
+    lineHeight: 21,
   },
   readStatusHint: {
     fontSize: 13,

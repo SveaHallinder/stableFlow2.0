@@ -37,7 +37,7 @@ test('ISSUE-001: WeatherPanel ends loading on error and shows only confirmed wea
     const scope = {
       React: { createElement: (type, props, ...children) => ({ type, props, children }) },
       useWeather: (location) => { assert.equal(location, 'Stallet'); return { data, status, error }; },
-      theme: { gradients: { weather: [] } }, styles: {},
+      theme: { gradients: { weather: [] } }, styles: {}, palette: { primaryText: '#111111' },
       LinearGradient: 'LinearGradient', View: 'View', Text: 'Text', ActivityIndicator: 'ActivityIndicator', CloudSun: 'CloudSun',
       TouchableOpacity: 'TouchableOpacity', Feather: 'Feather',
       Linking: { openURL: url => { opened.push(url); return Promise.resolve(); } },

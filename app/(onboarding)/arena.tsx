@@ -19,7 +19,7 @@ export default function OnboardingResources() {
   const router = useRouter();
   const toast = useToast();
   const params = useLocalSearchParams();
-  const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : undefined;
+  const returnTo = typeof params.returnTo === 'string' ? (params.returnTo as Href) : '/(onboarding)/setup';
   const { state, actions, hydrating } = useAppData();
   const { stables, currentStableId, farms } = state;
   const currentUser = state.users[state.currentUserId];
@@ -40,7 +40,7 @@ export default function OnboardingResources() {
   );
 
   const hasFarms = farms.length > 0;
-  const fallbackFarmId = activeStable?.farmId || farms[0]?.id || '';
+  const fallbackFarmId = activeStable?.farmId || '';
   const [activeFarmId, setActiveFarmId] = React.useState(fallbackFarmId);
   const activeFarm = React.useMemo(
     () => farms.find((farm) => farm.id === activeFarmId),
@@ -85,7 +85,7 @@ export default function OnboardingResources() {
       }
       return;
     }
-    const nextFarmId = activeStable?.farmId || farms[0]?.id || '';
+    const nextFarmId = activeStable?.farmId || '';
     if (!activeFarmId && nextFarmId) {
       setActiveFarmId(nextFarmId);
       return;
@@ -117,10 +117,10 @@ export default function OnboardingResources() {
     (stableId: string) => {
       if (savingRef.current) return;
       setActiveStableId(stableId);
-      setActiveFarmId(stables.find(stable => stable.id === stableId)?.farmId ?? farms[0]?.id ?? '');
+      setActiveFarmId(stables.find(stable => stable.id === stableId)?.farmId ?? '');
       actions.setCurrentStable(stableId);
     },
-    [actions, farms, stables],
+    [actions, stables],
   );
 
   const handleSelectFarm = React.useCallback((farmId: string) => {
@@ -198,10 +198,10 @@ export default function OnboardingResources() {
 
   return (
     <OnboardingShell
-      title="Resurser"
+      title="Ditt stall"
       subtitle={`Svara på två frågor om ridhus och volt för ${scopeLabel}.`}
-      step={3}
-      total={6}
+      step={2}
+      total={4}
       allowExit={false}
       onBack={handleBack}
       onNext={handleNext}
@@ -209,6 +209,13 @@ export default function OnboardingResources() {
       disableNext={saving}
       showProgress
     >
+      {activeStable ? <Card style={styles.card}>
+        <Text style={styles.sectionTitle}>{activeStable.name}</Text>
+        <Text style={styles.sectionHint}>{activeStable.location || 'Ingen plats angiven ännu'}</Text>
+        <TouchableOpacity accessibilityRole="button" style={styles.editDetails} disabled={saving} onPress={() => router.push('/(onboarding)/stable-details')}>
+          <Text style={styles.linkText}>Ändra namn och plats</Text>
+        </TouchableOpacity>
+      </Card> : null}
       {saveError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{saveError}</Text> : null}
       {useFarmResources ? (
         farms.length > 1 ? (
@@ -220,6 +227,9 @@ export default function OnboardingResources() {
                 return (
                   <TouchableOpacity
                     key={farm.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Välj gård ${farm.name}`}
+                    accessibilityState={{ selected: active, disabled: saving }}
                     style={[styles.chip, active && styles.chipActive]}
                     disabled={saving}
                     onPress={() => handleSelectFarm(farm.id)}
@@ -246,6 +256,9 @@ export default function OnboardingResources() {
               return (
                 <TouchableOpacity
                   key={stable.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Välj stall ${stable.name}`}
+                  accessibilityState={{ selected: active, disabled: saving }}
                   style={[styles.chip, active && styles.chipActive]}
                   disabled={saving}
                   onPress={() => handleSelectStable(stable.id)}
@@ -268,6 +281,9 @@ export default function OnboardingResources() {
           ].map((option) => (
             <TouchableOpacity
               key={option.label}
+              accessibilityRole="button"
+              accessibilityLabel={`Ridhus: ${option.label}`}
+              accessibilityState={{ selected: draft.hasArena === option.value, disabled: saving }}
               style={[styles.toggleChip, draft.hasArena === option.value && styles.toggleChipActive]}
               disabled={saving}
               onPress={() => { dirtyResourceRef.current.add('hasArena'); setDraft((prev) => ({ ...prev, hasArena: option.value })); }}
@@ -290,6 +306,9 @@ export default function OnboardingResources() {
           ].map((option) => (
             <TouchableOpacity
               key={option.label}
+              accessibilityRole="button"
+              accessibilityLabel={`Volt: ${option.label}`}
+              accessibilityState={{ selected: draft.hasRoundPen === option.value, disabled: saving }}
               style={[styles.toggleChip, draft.hasRoundPen === option.value && styles.toggleChipActive]}
               disabled={saving}
               onPress={() => { dirtyResourceRef.current.add('hasRoundPen'); setDraft((prev) => ({ ...prev, hasRoundPen: option.value })); }}
@@ -317,6 +336,8 @@ export default function OnboardingResources() {
 }
 
 const styles = StyleSheet.create({
+  editDetails: { minHeight: 44, justifyContent: 'center' },
+  linkText: { color: palette.primary, fontSize: 14, fontFamily: 'Inter-Medium' },
   card: { padding: 16, gap: 12, borderRadius: radius.lg },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
   sectionHint: { fontSize: 12, color: palette.secondaryText },
@@ -330,9 +351,9 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  toggleChipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  toggleChipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   toggleText: { fontSize: 12, color: palette.primaryText },
-  toggleTextActive: { color: palette.inverseText, fontWeight: '600' },
+  toggleTextActive: { color: palette.primaryText, fontWeight: '600' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingVertical: 6,
@@ -342,7 +363,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  chipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chipTextActive: { color: palette.primaryText, fontWeight: '600' },
 });

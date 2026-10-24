@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { color, radius, space } from '@/design/tokens';
 import { systemPalette } from '@/design/system';
+import { theme } from '@/components/theme';
+import { Feather } from '@expo/vector-icons';
 import type { ActionResult, AssignmentSlot } from '@/context/AppDataContext';
 import { generateId } from '@/lib/ids';
 import { isValidISODate, isValidTime } from '@/lib/dateValidation';
@@ -205,16 +207,26 @@ export function NewAssignmentModal({
       >
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={handleClose} disabled={pending !== null} />
         <ScrollView style={styles.sheetContainer} contentContainerStyle={styles.sheet} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title}>{title}</Text>
+          <View style={styles.header}>
+            <View style={styles.titleBlock}>
+              <Text style={styles.eyebrow}>STALLPASS</Text>
+              <Text style={styles.title}>{title}</Text>
+            </View>
+            <TouchableOpacity style={styles.closeButton} onPress={handleClose} disabled={pending !== null} accessibilityRole="button" accessibilityLabel="Stäng passformuläret">
+              <Feather name="x" size={22} color={color.text} />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.description}>Välj datum och tid, och vem som ansvarar. Återkommande pass skapar du från Schema.</Text>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Datum</Text>
-            <View style={styles.optionRow}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.optionRow}>
               {dateOptions.map((option) => {
                 const active = option.value === selectedDate;
                 return (
                   <TouchableOpacity
                     key={option.value}
                     disabled={pending !== null}
+                    accessibilityRole="button" accessibilityState={{ selected: active, disabled: pending !== null }}
                     style={[styles.optionChip, active && styles.optionChipActive]}
                     onPress={() => setSelectedDate(option.value)}
                   >
@@ -224,7 +236,7 @@ export function NewAssignmentModal({
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
           </View>
 
           <View style={styles.section}>
@@ -236,6 +248,7 @@ export function NewAssignmentModal({
                   <TouchableOpacity
                     key={slot.value}
                     disabled={pending !== null}
+                    accessibilityRole="button" accessibilityState={{ selected: active, disabled: pending !== null }}
                     style={[styles.optionChip, active && styles.optionChipActive]}
                     onPress={() => setSelectedSlot(slot.value)}
                   >
@@ -257,6 +270,7 @@ export function NewAssignmentModal({
                 setLabel(value);
                 setLabelTouched(true);
               }}
+              accessibilityLabel="Passets benämning"
               placeholder="Ex. Mockning, Harva ridhus"
               placeholderTextColor={color.textMuted}
               style={styles.compactInput}
@@ -290,6 +304,7 @@ export function NewAssignmentModal({
               editable={pending === null}
               value={note}
               onChangeText={setNote}
+              accessibilityLabel="Passets anteckning"
               placeholder="Beskrivning (valfritt)"
               placeholderTextColor={color.textMuted}
               style={styles.noteInput}
@@ -298,7 +313,7 @@ export function NewAssignmentModal({
             />
           </View>
 
-          {members ? <View>
+          {members ? <View style={styles.section}>
             <Text style={styles.assignToggleLabel}>Ansvarig</Text>
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Låt passet vara öppet" aria-pressed={assigneeId === null}
               disabled={pending !== null} style={[styles.assignToggle, assigneeId === null && styles.assignToggleActive]}
@@ -352,37 +367,49 @@ export function NewAssignmentModal({
 }
 
 const styles = StyleSheet.create({
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  titleBlock: { gap: 6, flex: 1 },
+  eyebrow: { fontFamily: theme.fonts.semibold, fontSize: 11, letterSpacing: 1.3, color: theme.colors.secondaryText },
+  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  description: { fontFamily: theme.fonts.regular, fontSize: 13, lineHeight: 20, color: theme.colors.secondaryText },
   overlay: {
     flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.2)',
+    justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.28)',
   },
-  backdrop: {
-    flex: 1,
-  },
+  backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
   sheet: {
     backgroundColor: color.card,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
+    borderBottomLeftRadius: Platform.OS === 'web' ? radius.xl : 0,
+    borderBottomRightRadius: Platform.OS === 'web' ? radius.xl : 0,
     paddingHorizontal: space.lg,
     paddingTop: space.lg,
     paddingBottom: space.xl,
     gap: 16,
   },
   sheetContainer: {
+    width: '100%',
+    maxWidth: 580,
     maxHeight: '90%',
     flexGrow: 0,
     backgroundColor: color.card,
     borderTopLeftRadius: radius.xl,
     borderTopRightRadius: radius.xl,
+    borderBottomLeftRadius: Platform.OS === 'web' ? radius.xl : 0,
+    borderBottomRightRadius: Platform.OS === 'web' ? radius.xl : 0,
   },
   errorText: {
+    fontFamily: theme.fonts.medium,
     color: systemPalette.error,
     fontSize: 14,
     lineHeight: 20,
   },
   title: {
-    fontSize: 20,
+    fontFamily: theme.fonts.semibold,
+    fontSize: 24,
     fontWeight: '600',
     color: color.text,
   },
@@ -390,6 +417,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionTitle: {
+    fontFamily: theme.fonts.medium,
     fontSize: 13,
     fontWeight: '600',
     color: color.text,
@@ -401,58 +429,76 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   optionChip: {
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: radius.full,
-    backgroundColor: 'rgba(15,22,34,0.08)',
+    backgroundColor: color.card,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   optionChipActive: {
-    backgroundColor: systemPalette.primary,
+    backgroundColor: theme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: color.text,
   },
   optionChipLabel: {
+    fontFamily: theme.fonts.regular,
     fontSize: 13,
     color: color.text,
   },
   optionChipLabelActive: {
-    color: systemPalette.textInverse,
+    color: color.text,
     fontWeight: '600',
   },
   noteInput: {
+    fontFamily: theme.fonts.regular,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: 'rgba(15,22,34,0.12)',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: 14,
+    fontSize: 16,
     color: color.text,
     minHeight: 90,
     textAlignVertical: 'top',
   },
   compactInput: {
+    minHeight: 48,
+    fontFamily: theme.fonts.regular,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: 'rgba(15,22,34,0.12)',
     paddingHorizontal: 14,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
     color: color.text,
   },
   assignToggle: {
     borderRadius: radius.full,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    backgroundColor: 'rgba(15,22,34,0.08)',
-    alignSelf: 'flex-start',
+    backgroundColor: color.card,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    minHeight: 46,
+    justifyContent: 'center',
   },
   assignToggleActive: {
-    backgroundColor: systemPalette.primary,
+    backgroundColor: theme.colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: color.text,
   },
   assignToggleLabel: {
+    fontFamily: theme.fonts.regular,
+    lineHeight: 20,
     fontSize: 13,
     color: color.text,
   },
   assignToggleLabelActive: {
-    color: systemPalette.textInverse,
+    fontFamily: theme.fonts.medium,
+    color: color.text,
     fontWeight: '600',
   },
   actionRow: {
@@ -463,6 +509,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   secondaryButton: {
+    minHeight: 48,
     flex: 1,
     borderRadius: radius.full,
     borderWidth: 1,
@@ -472,21 +519,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   secondaryButtonLabel: {
-    fontSize: 14,
+    fontFamily: theme.fonts.medium,
+    fontSize: 16,
     color: color.text,
     fontWeight: '500',
   },
   primaryButton: {
+    minHeight: 48,
     flex: 1,
     borderRadius: radius.full,
-    backgroundColor: systemPalette.primary,
+    backgroundColor: color.card,
+    borderWidth: 1,
+    borderColor: color.text,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   primaryButtonLabel: {
-    fontSize: 14,
-    color: systemPalette.textInverse,
+    fontFamily: theme.fonts.medium,
+    fontSize: 16,
+    color: color.text,
     fontWeight: '600',
   },
   deleteButton: {
@@ -494,6 +546,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   deleteButtonLabel: {
+    fontFamily: theme.fonts.medium,
     fontSize: 14,
     color: systemPalette.error,
     fontWeight: '600',

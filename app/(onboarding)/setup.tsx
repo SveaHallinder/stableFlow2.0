@@ -1,318 +1,134 @@
 import React from 'react';
-import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { OnboardingShell } from '@/components/OnboardingShell';
 import { Card } from '@/components/Primitives';
 import { theme } from '@/components/theme';
 import { radius } from '@/design/tokens';
 import { resolveStableSettings, useAppData } from '@/context/AppDataContext';
+import { useOnboarding } from '@/context/OnboardingContext';
+import { getOwnerOnboardingStep, ONBOARDING_FINISH_ROUTE, OWNER_ONBOARDING_STEPS } from '@/lib/onboarding-flow';
 
 const palette = theme.colors;
 
-type TaskRowProps = {
-  title: string;
-  description: string;
-  done?: boolean;
-};
-
-function TaskRow({ title, description, done }: TaskRowProps) {
-  return (
-    <View style={styles.taskRow}>
-      <View style={styles.taskLeft}>
-        <View style={[styles.taskIcon, done && styles.taskIconDone]}>
-          <Feather
-            name={done ? 'check' : 'circle'}
-            size={14}
-            color={done ? palette.inverseText : palette.secondaryText}
-          />
-        </View>
-        <View style={styles.taskText}>
-          <Text style={styles.taskTitle}>{title}</Text>
-          <Text style={styles.taskDescription}>{description}</Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
 export default function OnboardingSetup() {
   const router = useRouter();
-  const { state, actions, derived, hydrating } = useAppData();
-  const { farms, stables, currentStableId, horses, users, assignments } = state;
+  const { state, actions, hydrating } = useAppData();
+  const { mode, hasFarm } = useOnboarding();
+  const { stables, currentStableId, horses, assignments } = state;
   const returnTo = '/(onboarding)/setup';
-
-  const fallbackStableId = currentStableId || stables[0]?.id || '';
-  const [activeStableId, setActiveStableId] = React.useState(fallbackStableId);
-  const activeStable = React.useMemo(
-    () => stables.find((stable) => stable.id === activeStableId),
-    [activeStableId, stables],
-  );
-  const stableSettings = React.useMemo(
-    () => resolveStableSettings(activeStable),
-    [activeStable],
-  );
-
-  React.useEffect(() => {
-    if (hydrating) return;
-    if (!stables.length) {
-      if (activeStableId) {
-        setActiveStableId('');
-      }
-      return;
-    }
-    if (!activeStableId && fallbackStableId) {
-      setActiveStableId(fallbackStableId);
-    }
-    if (activeStableId && !stables.some((stable) => stable.id === activeStableId)) {
-      setActiveStableId(fallbackStableId);
-    }
-  }, [activeStableId, fallbackStableId, stables, hydrating]);
-
-  const handleSelectStable = React.useCallback(
-    (stableId: string) => {
-      setActiveStableId(stableId);
-      actions.setCurrentStable(stableId);
-    },
-    [actions],
-  );
-
-  const stableHorses = React.useMemo(
-    () => horses.filter((horse) => horse.stableId === activeStableId),
-    [activeStableId, horses],
-  );
-  const stableAssignments = React.useMemo(
-    () => assignments.filter((assignment) => assignment.stableId === activeStableId),
-    [activeStableId, assignments],
-  );
-  const hasFarm = farms.length > 0;
-  const hasStable = stables.length > 0;
-  const hasHorse = stableHorses.length > 0;
-  const hasAssignment = stableAssignments.length > 0;
+  const activeStable = stables.find(stable => stable.id === currentStableId) ?? stables[0];
+  const stableSettings = resolveStableSettings(activeStable);
+  const stableHorses = horses.filter(horse => horse.stableId === activeStable?.id);
+  const stableAssignments = assignments.filter(assignment => assignment.stableId === activeStable?.id);
   const resourcesComplete = Boolean(stableSettings.onboarding?.resourcesComplete);
-  const layoutComplete = hasFarm || hasStable;
-  const resourcesLabel = hasFarm ? 'Ridhus och volt på gården' : 'Ridhus och volt';
-
-  const memberCount = React.useMemo(() => {
-    const memberIds = new Set<string>();
-    Object.values(users).forEach((user) => {
-      if (user.membership.some((entry) => entry.stableId === activeStableId)) {
-        memberIds.add(user.id);
-      }
-    });
-    return memberIds.size;
-  }, [activeStableId, users]);
-
-  const exitRoute =
-    derived.canManageOnboardingAny && Platform.OS === 'web' ? '/admin' : '/(tabs)';
-
-  const handleFinish = React.useCallback(() => {
-    actions.setOnboardingDismissed(true);
-    router.replace(exitRoute);
-  }, [actions, exitRoute, router]);
-
-  const nextSectionTitle = derived.onboardingComplete ? 'Klar att börja' : 'Nästa steg';
-
-  const primaryAction = React.useMemo(() => {
-    if (!hasStable) {
-      if (hasFarm) {
-        return {
-          label: 'Lägg till stall',
-          onPress: () => router.push({ pathname: '/(onboarding)/farm', params: { returnTo } }),
-        };
-      }
-      return {
-        label: 'Välj upplägg',
-        onPress: () => router.push({ pathname: '/(onboarding)/layout', params: { returnTo } }),
-      };
-    }
-    if (!resourcesComplete) {
-      return {
-        label: 'Fyll i resurser',
-        onPress: () => router.push({ pathname: '/(onboarding)/arena', params: { returnTo } }),
-      };
-    }
-    if (!hasHorse) {
-      return {
-        label: 'Lägg till häst',
-        onPress: () =>
-          router.push({ pathname: '/(onboarding)/horses', params: { returnTo } }),
-      };
-    }
-    if (!hasAssignment) {
-      return {
-        label: 'Skapa första pass',
-        onPress: () =>
-          router.push({
-            pathname: '/calendar',
-            params: { fromOnboarding: '1', returnTo },
-          }),
-      };
-    }
-    return { label: 'Gå till appen', onPress: handleFinish };
-  }, [
-    handleFinish,
-    hasAssignment,
-    hasFarm,
-    hasHorse,
-    hasStable,
+  const layoutConfirmed = resourcesComplete || Boolean(activeStable?.farmId) || (mode === 'guided' && !hasFarm);
+  const currentStep = getOwnerOnboardingStep({
+    layoutConfirmed,
+    hasStable: Boolean(activeStable),
     resourcesComplete,
-    returnTo,
-    router,
-  ]);
+    hasHorse: stableHorses.length > 0,
+    hasAssignment: stableAssignments.length > 0,
+  });
+  const [finishError, setFinishError] = React.useState<string | null>(null);
+  const routes: Href[] = [
+    { pathname: '/(onboarding)/layout', params: { returnTo } },
+    { pathname: activeStable ? '/(onboarding)/arena' : '/(onboarding)/create-stable', params: { returnTo } },
+    { pathname: '/(onboarding)/horses', params: { returnTo } },
+    { pathname: '/calendar', params: { fromOnboarding: '1', returnTo } },
+  ];
+  const descriptions = [
+    activeStable?.farmId ? 'Gård med flera stall' : layoutConfirmed ? 'Ett stall' : 'Ett stall eller en gård med flera stall?',
+    resourcesComplete ? `${activeStable?.name} · resurser sparade` : activeStable ? `${activeStable.name} · bekräfta ridhus och volt` : 'Namn, plats och stallets resurser',
+    stableHorses.length ? `${stableHorses.length} ${stableHorses.length === 1 ? 'häst tillagd' : 'hästar tillagda'}` : 'Lägg till din första häst',
+    stableAssignments.length ? `${stableAssignments.length} ${stableAssignments.length === 1 ? 'pass skapat' : 'pass skapade'}` : 'Skapa ett pass och välj vem som tar det',
+  ];
+  const done = [layoutConfirmed, Boolean(activeStable) && resourcesComplete, stableHorses.length > 0, stableAssignments.length > 0];
+  const nextLabels = ['Välj upplägg', activeStable ? 'Fyll i ditt stall' : 'Skapa ditt stall', 'Lägg till häst', 'Skapa första passet'];
+  const nextDescriptions = [
+    'Vi börjar med hur din verksamhet ser ut. Ditt redan skapade stall finns kvar.',
+    'Bekräfta stallets plats och vilka resurser som finns. Även ett nej räknas som ett svar.',
+    'Namn är det enda du måste fylla i. Födelseår och övriga uppgifter kan du lägga till när du vill.',
+    'Ett första pass räcker för att komma igång. Återkommande pass och fördelning finns sedan under Schema.',
+  ];
+  const handleFinish = () => {
+    const result = actions.setOnboardingDismissed(true);
+    if (!result.success) { setFinishError(result.reason); return; }
+    router.replace(ONBOARDING_FINISH_ROUTE);
+  };
 
   return (
     <OnboardingShell
-      title="Kom igång"
-      subtitle="Onboarding är klar när du har stall, resurser, en häst och ett pass."
-      step={1}
-      total={1}
-      allowExit={false}
-      showProgress={false}
+      title={currentStep === 4 ? 'Ditt stall är redo' : 'Välkommen till ditt stall'}
+      subtitle={currentStep === 4 ? 'Nu har ni en gemensam plats för hästar, pass och vardagen i stallet.' : 'Fyra enkla steg. Dina sparade uppgifter finns kvar om du pausar.'}
+      step={Math.min(currentStep + 1, 4)}
+      total={4}
+      allowExit
+      onNext={currentStep === 4 ? handleFinish : () => router.push(routes[currentStep])}
+      nextLabel={currentStep === 4 ? 'Öppna Idag' : nextLabels[currentStep]}
+      disableNext={hydrating}
     >
       {stables.length > 1 ? (
-        <Card tone="muted" style={styles.card}>
-          <Text style={styles.sectionTitle}>Välj stall</Text>
+        <View style={styles.stack}>
+          <Text style={styles.label}>Du gör klart</Text>
           <View style={styles.chipRow}>
-            {stables.map((stable) => {
-              const active = stable.id === activeStableId;
-              return (
-                <TouchableOpacity
-                  key={stable.id}
-                  style={[styles.chip, active && styles.chipActive]}
-                  onPress={() => handleSelectStable(stable.id)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{stable.name}</Text>
-                </TouchableOpacity>
-              );
-            })}
+            {stables.map(stable => (
+              <TouchableOpacity key={stable.id} accessibilityRole="button" accessibilityState={{ selected: stable.id === activeStable?.id }} onPress={() => actions.setCurrentStable(stable.id)} style={[styles.chip, stable.id === activeStable?.id && styles.chipActive]}>
+                <Text style={styles.chipText}>{stable.name}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
+        </View>
+      ) : null}
+      {currentStep < 4 ? (
+        <Card style={styles.nextCard}>
+          <Text style={styles.eyebrow}>Ditt nästa steg</Text>
+          <Text style={styles.nextTitle}>{OWNER_ONBOARDING_STEPS[currentStep]}</Text>
+          <Text style={styles.description}>{nextDescriptions[currentStep]}</Text>
         </Card>
       ) : null}
-
-      <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>Status</Text>
-        <TaskRow
-          title="Upplägg valt"
-          description={layoutComplete ? 'Klart' : 'Välj upplägg'}
-          done={layoutComplete}
-        />
-        <TaskRow
-          title="Stall skapat"
-          description={hasStable ? 'Klart' : 'Skapa stall'}
-          done={hasStable}
-        />
-        <TaskRow
-          title="Resurser"
-          description={resourcesComplete ? 'Klart' : resourcesLabel}
-          done={resourcesComplete}
-        />
-        <TaskRow
-          title="Minst en häst"
-          description={hasHorse ? `${stableHorses.length} hästar` : 'Lägg till häst'}
-          done={hasHorse}
-        />
-        <TaskRow
-          title="Första passet"
-          description={hasAssignment ? `${stableAssignments.length} pass` : 'Skapa första pass'}
-          done={hasAssignment}
-        />
-        <TaskRow
-          title="Klar"
-          description={derived.onboardingComplete ? 'Redo' : 'Ej klar'}
-          done={derived.onboardingComplete}
-        />
-      </Card>
-
-      <Card tone="muted" style={styles.card}>
-        <Text style={styles.sectionTitle}>{nextSectionTitle}</Text>
-        <TouchableOpacity style={styles.primaryButton} onPress={primaryAction.onPress} activeOpacity={0.9}>
-          <Text style={styles.primaryLabel}>{primaryAction.label}</Text>
-        </TouchableOpacity>
-      </Card>
-
-      {hasStable ? (
-        <Card tone="muted" style={styles.card}>
-          <Text style={styles.sectionTitle}>Valfritt</Text>
-          <Text style={styles.sectionHint}>
-            Bjud in fler när du vill. Detta påverkar inte onboarding.
-          </Text>
-          <TouchableOpacity
-            style={styles.secondaryButton}
-            onPress={() => router.push({ pathname: '/(onboarding)/invite-members', params: { returnTo } })}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.secondaryLabel}>Bjud in medlemmar</Text>
+      <View style={styles.steps}>
+        {OWNER_ONBOARDING_STEPS.map((label, index) => (
+          <TouchableOpacity key={label} accessibilityRole="button" accessibilityLabel={`${label}, ${done[index] ? 'klart' : 'återstår'}`} onPress={() => router.push(routes[index])} disabled={hydrating || (!activeStable && index > 1)} style={styles.taskRow}>
+            <View style={[styles.taskIcon, index === currentStep && styles.taskIconCurrent]}>
+              {done[index] ? <Feather name="check" size={17} color={palette.primaryText} /> : <Text style={styles.stepNumber}>{index + 1}</Text>}
+            </View>
+            <View style={styles.taskText}>
+              <Text style={styles.taskTitle}>{label}</Text>
+              <Text style={styles.description}>{descriptions[index]}</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={palette.secondaryText} />
           </TouchableOpacity>
-          <Text style={styles.sectionHint}>{memberCount} medlem(ar) kopplade till stallet.</Text>
-        </Card>
-      ) : null}
+        ))}
+      </View>
+      {finishError ? <Text accessibilityRole="alert" style={{ color: palette.error }}>{finishError}</Text> : null}
+      {activeStable ? <TouchableOpacity accessibilityRole="button" onPress={() => router.push({ pathname: '/(onboarding)/invite-members', params: { returnTo } })} style={styles.optionalAction}>
+        <Feather name="users" size={18} color={palette.primaryText} />
+        <View style={styles.taskText}><Text style={styles.taskTitle}>Bjud in när du är redo</Text><Text style={styles.description}>Valfritt. Du kan också göra det senare i Mitt stall.</Text></View>
+        <Feather name="chevron-right" size={18} color={palette.secondaryText} />
+      </TouchableOpacity> : null}
     </OnboardingShell>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { padding: 16, gap: 12, borderRadius: radius.lg },
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: palette.primaryText },
-  sectionHint: { fontSize: 12, color: palette.secondaryText },
-  primaryButton: {
-    backgroundColor: palette.primary,
-    paddingVertical: 12,
-    borderRadius: radius.full,
-    alignItems: 'center',
-  },
-  primaryButtonDisabled: {
-    opacity: 0.5,
-  },
-  primaryLabel: { color: palette.inverseText, fontWeight: '600' },
-  secondaryButton: {
-    paddingVertical: 10,
-    borderRadius: radius.full,
-    alignItems: 'center',
-    backgroundColor: palette.surfaceTint,
-  },
-  secondaryLabel: { color: palette.primaryText, fontWeight: '600' },
-  taskList: { gap: 12 },
-  taskRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: radius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-  },
-  taskLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  taskIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-  },
-  taskIconDone: {
-    borderColor: palette.primary,
-    backgroundColor: palette.primary,
-  },
-  taskText: { flex: 1 },
-  taskTitle: { fontSize: 14, fontWeight: '600', color: palette.primaryText },
-  taskDescription: { fontSize: 12, color: palette.secondaryText, marginTop: 2 },
+  stack: { gap: 10 },
+  label: { fontSize: 13, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
+  nextCard: { padding: 24, gap: 10, borderRadius: radius.lg },
+  eyebrow: { fontSize: 12, fontFamily: 'Inter-Medium', color: palette.secondaryText },
+  nextTitle: { fontSize: 24, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
+  description: { fontSize: 14, color: palette.secondaryText, lineHeight: 21 },
+  steps: { gap: 2 },
+  taskRow: { minHeight: 86, flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: palette.border },
+  taskIcon: { width: 36, height: 36, borderRadius: radius.full, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.surfaceMuted },
+  taskIconCurrent: { borderWidth: 1, borderColor: palette.primaryText, backgroundColor: palette.surface },
+  stepNumber: { fontSize: 14, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
+  taskText: { flex: 1, gap: 3 },
+  taskTitle: { fontSize: 15, fontFamily: 'Inter-SemiBold', color: palette.primaryText },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: radius.full,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-  },
-  chipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
-  chipText: { fontSize: 12, color: palette.primaryText },
-  chipTextActive: { color: palette.inverseText, fontWeight: '600' },
+  chip: { minHeight: 44, paddingVertical: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: palette.border, borderRadius: radius.full, justifyContent: 'center' },
+  chipActive: { borderColor: palette.primaryText, backgroundColor: palette.surfaceMuted },
+  chipText: { fontSize: 14, color: palette.primaryText },
+  optionalAction: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 18 },
 });

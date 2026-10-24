@@ -24,15 +24,13 @@ import { DesktopNav } from '@/components/DesktopNav';
 import { useAppData } from '@/context/AppDataContext';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import type { MessagePreview } from '@/context/AppDataContext';
-import UserGroupsIcon from '@/assets/images/figma/group.svg';
-import ChatBackIcon from '@/assets/images/figma/chat-back.svg';
+import { Ionicons } from '@expo/vector-icons';
 import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
 import { chatUnreadIds, scrollReadViewport, visibleMessageIds } from '@/lib/chatReadReceipts';
 import { useAuth } from '@/context/AuthContext';
 
 const palette = theme.colors;
-const chatAccent = '#2196F3';
 
 export default function ChatScreen() {
   const router = useRouter();
@@ -274,8 +272,8 @@ export default function ChatScreen() {
             <Text style={{ fontSize: 16, fontWeight: '600', color: palette.primaryText, marginBottom: 8 }}>
               Konversationen kunde inte hittas
             </Text>
-            <TouchableOpacity onPress={() => router.back()} style={{ paddingVertical: 10, paddingHorizontal: 20, backgroundColor: palette.primary, borderRadius: 999 }}>
-              <Text style={{ color: palette.inverseText, fontWeight: '600', fontSize: 14 }}>Tillbaka</Text>
+            <TouchableOpacity onPress={() => router.back()} style={{ paddingVertical: 10, paddingHorizontal: 20, backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.border, borderRadius: 999 }}>
+              <Text style={{ color: palette.primaryText, fontWeight: '600', fontSize: 14 }}>Tillbaka</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -302,7 +300,7 @@ export default function ChatScreen() {
                   onPress={() => router.back()}
                   style={styles.backButton}
                 >
-                  <ChatBackIcon />
+                  <Ionicons name="arrow-back" size={22} color={palette.primaryText} />
                 </HeaderIconButton>
               }
               showLogo={false}
@@ -311,7 +309,7 @@ export default function ChatScreen() {
               <View style={styles.headerProfile}>
                 {isGroup ? (
                   <View style={styles.headerGroupAvatar}>
-                    <UserGroupsIcon />
+                    <Ionicons name="people-outline" size={23} color={palette.primaryText} />
                   </View>
                 ) : (
                   <Avatar
@@ -438,7 +436,7 @@ export default function ChatScreen() {
                   activeOpacity={0.85}
                 >
                   <View style={styles.sendButtonCircle}>
-                    <Text style={styles.sendButtonIcon}>↑</Text>
+                    <Ionicons name="arrow-up" size={20} color={palette.primaryText} />
                   </View>
                 </TouchableOpacity>
               </View>
@@ -575,7 +573,7 @@ const styles = StyleSheet.create({
     borderWidth: 0,
     paddingHorizontal: 15,
     paddingVertical: 10,
-    backgroundColor: chatAccent,
+    backgroundColor: palette.surfaceMuted,
   },
   messageBubbleDesktop: {
     maxWidth: '60%',
@@ -583,13 +581,13 @@ const styles = StyleSheet.create({
   messageBubbleMe: {
     backgroundColor: palette.surface,
     borderWidth: 1,
-    borderColor: palette.surfaceMuted,
+    borderColor: palette.border,
   },
   messageText: {
     fontSize: 15,
     fontFamily: theme.fonts.regular,
-    lineHeight: 18,
-    color: palette.inverseText,
+    lineHeight: 23,
+    color: palette.primaryText,
   },
   messageTextMe: {
     color: palette.primaryText,
@@ -614,7 +612,7 @@ const styles = StyleSheet.create({
   composerContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 6,
+    paddingHorizontal: 20,
     paddingBottom: space.md,
   },
   composerContainerDesktop: {
@@ -632,7 +630,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     borderRadius: radius.full,
     borderWidth: 1.5,
-    borderColor: palette.surfaceMuted,
+    borderColor: palette.border,
     paddingLeft: 15,
     paddingRight: 4,
     paddingVertical: 4,
@@ -644,7 +642,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     minHeight: 44,
-    fontSize: 15,
+    fontSize: 16,
     fontFamily: theme.fonts.regular,
     color: palette.primaryText,
   },
@@ -656,10 +654,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   sendButtonCircle: {
-    width: 35,
-    height: 35,
+    width: 42,
+    height: 42,
+    borderWidth: 1,
+    borderColor: palette.border,
     borderRadius: radius.full,
-    backgroundColor: chatAccent,
+    backgroundColor: palette.surfaceMuted,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -667,6 +667,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontFamily: theme.fonts.semibold,
     fontWeight: '600',
-    color: palette.inverseText,
+    color: palette.primaryText,
   },
 });

@@ -10,6 +10,7 @@ import { useToast } from '@/components/ToastProvider';
 import { generateId } from '@/lib/ids';
 import { isQaDemoMode } from '@/lib/qaDemo';
 import { supabase } from '@/lib/supabase';
+import { getReusableOnboardingStables } from '@/lib/onboarding-flow';
 
 const palette = theme.colors;
 
@@ -28,9 +29,12 @@ export default function OnboardingFarm() {
   const { actions, state } = useAppData();
 
   const [farmName, setFarmName] = React.useState('');
-  const [stablesDraft, setStablesDraft] = React.useState<StableDraft[]>([
-    { id: generateId(), name: '', adminType: 'self', adminEmail: '' },
-  ]);
+  const [stablesDraft, setStablesDraft] = React.useState<StableDraft[]>(() => {
+    const reusable = getReusableOnboardingStables(state.stables, state.users[state.currentUserId]?.membership ?? []);
+    return reusable.length
+      ? reusable.map(stable => ({ id: stable.id, name: stable.name, adminType: 'self', adminEmail: '' }))
+      : [{ id: generateId(), name: '', adminType: 'self', adminEmail: '' }];
+  });
   const [saving, setSaving] = React.useState(false);
   const savingRef = React.useRef(false);
   const farmIdRef = React.useRef<string | null>(null);
@@ -136,10 +140,13 @@ export default function OnboardingFarm() {
       const createdStableIds: { id: string; adminType: 'self' | 'invite'; adminEmail: string }[] = [];
       for (const item of trimmedStables) {
         const stableId = item.id;
-        const stableResult = await actions.upsertStable(
-          { requestId: stableId, name: item.name, farmId },
-          { skipPermission: true },
-        );
+        const existingStable = state.stables?.find(stable => stable.id === stableId);
+        const stableResult = existingStable
+          ? await actions.updateStable({ id: stableId, updates: { name: item.name, farmId } })
+          : await actions.upsertStable(
+              { requestId: stableId, name: item.name, farmId },
+              { skipPermission: true },
+            );
         if (!stableResult.success || !stableResult.data) {
           setSaveError(stableResult.success ? 'Servern bekräftade inte stallet. Försök igen.' : stableResult.reason);
           return;
@@ -185,7 +192,7 @@ export default function OnboardingFarm() {
       savingRef.current = false;
       setSaving(false);
     }
-  }, [actions, farmName, router, returnTo, stablesDraft, state.currentUserId, toast]);
+  }, [actions, farmName, router, returnTo, stablesDraft, state.currentUserId, state.stables, toast]);
 
   const handleBack = React.useCallback(() => {
     if (savingRef.current) return;
@@ -195,9 +202,9 @@ export default function OnboardingFarm() {
   return (
     <OnboardingShell
       title="Gård"
-      subtitle="Skapa gård och lägg till stall."
-      step={2}
-      total={6}
+      subtitle="Ditt befintliga stall följer med. Lägg till fler stall om du behöver."
+      step={1}
+      total={4}
       allowExit={false}
       onBack={handleBack}
       onNext={handleSave}
@@ -229,7 +236,7 @@ export default function OnboardingFarm() {
           {stablesDraft.map((item, index) => (
             <View key={item.id} style={styles.stableCard}>
               <View style={styles.stableHeader}>
-                <Text style={styles.stableTitle}>Stall {index + 1}</Text>
+                <Text style={styles.stableTitle}>{state.stables.some(stable => stable.id === item.id) ? 'Befintligt stall' : `Nytt stall ${index + 1}`}</Text>
                 {stablesDraft.length > 1 ? (
                   <TouchableOpacity disabled={saving} onPress={() => handleRemoveStable(item.id)} activeOpacity={0.85}>
                     <Text style={styles.removeText}>Ta bort</Text>
@@ -312,16 +319,17 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surface,
   },
-  toggleChipActive: { backgroundColor: palette.primary, borderColor: palette.primary },
+  toggleChipActive: { backgroundColor: palette.surface, borderColor: palette.primaryText },
   toggleText: { fontSize: 12, color: palette.primaryText },
-  toggleTextActive: { color: palette.inverseText, fontWeight: '600' },
+  toggleTextActive: { color: palette.primaryText, fontWeight: '600' },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: palette.border,
     borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 16,
+    minHeight: 48,
     color: palette.primaryText,
     backgroundColor: palette.surface,
   },

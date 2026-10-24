@@ -66,7 +66,7 @@ test('calendar passes no action handlers to guests without parent callbacks', as
   };
   const scope = {
     React, styles: {}, palette: {}, View: 'View', Text: 'Text', TouchableOpacity: 'TouchableOpacity',
-    ActivityIndicator: 'ActivityIndicator', Card: 'Card', Feather: () => null,
+    ActivityIndicator: 'ActivityIndicator', Card: 'Card', Feather: () => null, Ionicons: () => null,
     CalendarSun: 'CalendarSun', CalendarClock: 'CalendarClock', CalendarMoon: 'CalendarMoon',
   };
   const ScheduleIcon = await loadScreenCallback('app/(tabs)/calendar.tsx', 'ScheduleIcon', scope);
@@ -92,4 +92,29 @@ test('calendar passes no action handlers to guests without parent callbacks', as
   };
   visit(tree);
   assert.equal(buttons.length, 0);
+});
+
+test('Today opens the selected pass and refuses assignments from another stable', async () => {
+  const routes = [];
+  const open = await loadScreenCallback('app/(tabs)/index.tsx', 'handleOpenAssignment', {
+    activeAssignments: [{ id: 'own-pass', stableId: 'stable', assigneeId: 'user', date: '2026-10-24' }],
+    currentUserId: 'user', router: { push: route => routes.push(route) },
+  });
+  open('foreign-pass');
+  assert.equal(routes.length, 0);
+  open('own-pass');
+  assert.deepEqual(routes[0], { pathname: '/calendar', params: {
+    assignmentId: 'own-pass', date: '2026-10-24', section: 'pass', view: 'mine',
+  } });
+});
+
+test('Today agenda orders late-added morning passes before lunch without changing source order', async () => {
+  const lunch = { id: 'lunch', time: '12:00' };
+  const morning = { id: 'morning', time: '07:00' };
+  const todayDayGroup = { assignments: [lunch, morning] };
+  const select = await loadScreenCallback('app/(tabs)/index.tsx', 'todayAgendaAssignments', { todayDayGroup });
+  assert.deepEqual(select(), [morning, lunch]);
+  assert.deepEqual(todayDayGroup.assignments, [lunch, morning]);
+  const empty = await loadScreenCallback('app/(tabs)/index.tsx', 'todayAgendaAssignments', { todayDayGroup: undefined });
+  assert.deepEqual(empty(), []);
 });
