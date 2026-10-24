@@ -1,4 +1,4 @@
-import { Stack, useGlobalSearchParams, useRouter, useSegments } from 'expo-router';
+import { Stack, useGlobalSearchParams, useRootNavigationState, useRouter, useSegments } from 'expo-router';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import React from 'react';
 import { ActivityIndicator, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -120,7 +120,8 @@ const errorStyles = StyleSheet.create({
 
 function NotificationBootstrap() {
   const { user } = useAuth();
-  usePushNotifications(user?.id);
+  const navigationState = useRootNavigationState();
+  usePushNotifications(user?.id, Boolean(navigationState?.key));
   return null;
 }
 

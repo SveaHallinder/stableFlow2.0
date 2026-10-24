@@ -21,6 +21,7 @@ import { useAuth } from '@/context/AuthContext';
 import { formatShortDate } from '@/lib/time';
 import { useIsDesktopWeb } from '@/hooks/useIsDesktopWeb';
 import { requestPermission, getPermissionStatus, registerPushToken } from '@/lib/notifications';
+import { hasPushRegistrationFailure, subscribePushRegistrationFailure, clearPushRegistrationFailure } from '@/hooks/usePushNotifications';
 import { supabase } from '@/lib/supabase';
 
 const palette = theme.colors;
@@ -74,6 +75,10 @@ export default function NotificationSettingsScreen() {
     scope: PreferenceScope;
     message: string;
   } | null>(null);
+  const [registrationFailure, setRegistrationFailure] = React.useState<{
+    scope: PreferenceScope;
+    failed: boolean;
+  } | null>(null);
   const currentPreferenceView = preferenceView?.scope === preferenceScope ? preferenceView : null;
   const prefs = currentPreferenceView?.prefs ?? defaultPrefs;
   const loadingPrefs = !currentPreferenceView || currentPreferenceView.status !== 'ready';
@@ -81,6 +86,16 @@ export default function NotificationSettingsScreen() {
     preferenceViewRef.current = view;
     setPreferenceView(view);
   }, []);
+
+  React.useEffect(() => {
+    const update = () => {
+      if (currentScopeRef.current === preferenceScope) {
+        setRegistrationFailure({ scope: preferenceScope, failed: hasPushRegistrationFailure(preferenceScope.userId) });
+      }
+    };
+    update();
+    return subscribePushRegistrationFailure(update);
+  }, [preferenceScope]);
 
   // Check permission status
   React.useEffect(() => {
@@ -179,6 +194,7 @@ export default function NotificationSettingsScreen() {
         if (!isCurrent()) return;
         if (!registered) setPermissionError({ scope: preferenceScope,
           message: 'Notisbehörigheten är aktiverad, men enheten kunde inte registreras. Försök igen.' });
+        else clearPushRegistrationFailure(preferenceScope.userId);
       }
     } catch {
       if (!isCurrent()) return;
@@ -244,6 +260,9 @@ export default function NotificationSettingsScreen() {
 
   const isWeb = Platform.OS === 'web';
   const needsPermission = !isWeb && permissionStatus !== 'granted';
+  const registrationError = permissionError?.scope === preferenceScope ? permissionError.message
+    : permissionStatus === 'granted' && registrationFailure?.scope === preferenceScope && registrationFailure.failed
+      ? 'Notisbehörigheten är aktiverad, men enheten kunde inte registreras. Försök igen.' : null;
 
   return (
     <LinearGradient colors={theme.gradients.background} style={styles.background}>
@@ -295,9 +314,9 @@ export default function NotificationSettingsScreen() {
               {userId && (!currentPreferenceView || currentPreferenceView.status === 'loading') && (
                 <Text style={styles.toggleDescription}>Läser notisinställningar…</Text>
               )}
-              {permissionError?.scope === preferenceScope && (
+              {registrationError && (
                 <View style={styles.permissionCard}>
-                  <Text style={styles.permissionBody} accessibilityRole="alert">{permissionError.message}</Text>
+                  <Text style={styles.permissionBody} accessibilityRole="alert">{registrationError}</Text>
                   <TouchableOpacity style={styles.permissionButton} onPress={handleRequestPermission}
                     accessibilityRole="button" accessibilityLabel="Försök registrera igen">
                     <Text style={styles.permissionButtonText}>Försök registrera igen</Text>

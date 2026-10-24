@@ -96,7 +96,7 @@ test('late create after stable A to B to A cannot open the old group', async () 
 test('a stall admin who is a normal participant gets leave but no owner management controls', () => {
   const f = fixture({ owner: false }); const tree = f.render('MemberGroupModal');
   assert.ok(find(tree, 'Lämna grupp'));
-  assert.ok(all(tree).some(node => node.type === 'Text' && node.props?.children?.includes('Pushnotiser för egna grupper är inte aktiverade ännu. Meddelandena finns i appen.')));
+  assert.ok(all(tree).some(node => node.type === 'Text' && node.props?.children?.includes('Bara gruppens deltagare får gruppens meddelanden och notiser.')));
   for (const label of ['Ändra gruppnamn', 'Lägg till deltagare', 'Överlåt ansvar', 'Ta bort Bo']) assert.equal(find(tree, label), undefined);
 });
 

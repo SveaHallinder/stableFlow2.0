@@ -31,9 +31,11 @@ const deferred = () => {
   const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 };
-function mount({ userId = actor, platform = 'ios', permission = 'granted', permissionResult = true, registrationResult = true } = {}) {
+function mount({ userId = actor, platform = 'ios', permission = 'granted', permissionResult = true, registrationResult = true,
+  failedRegistrationUserId = null } = {}) {
   const slots = [], pending = [], requests = [], registrations = [], permissionChecks = [], logs = [], lateSetters = [];
   let cursor = 0, tree, currentUserId = userId, mounted = true, permissionCalls = 0, saveThrow = null;
+  const registrationListeners = new Set();
   const same = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const React = {
     createElement(type, props, ...children) { return { type, props: { ...props, children } }; },
@@ -88,6 +90,11 @@ function mount({ userId = actor, platform = 'ios', permission = 'granted', permi
     },
     requestPermission: async () => { permissionCalls++; return typeof permissionResult === 'function' ? permissionResult() : permissionResult; },
     registerPushToken: async id => { registrations.push(id); return typeof registrationResult === 'function' ? registrationResult() : registrationResult; },
+    hasPushRegistrationFailure: id => Boolean(id && id === failedRegistrationUserId),
+    subscribePushRegistrationFailure: listener => { registrationListeners.add(listener); return () => registrationListeners.delete(listener); },
+    clearPushRegistrationFailure: id => {
+      if (id === failedRegistrationUserId) { failedRegistrationUserId = null; registrationListeners.forEach(listener => listener()); }
+    },
     supabase: { from(table) { const query = sdk.from(table); if (saveThrow) query.upsert = () => { throw saveThrow; }; return query; } },
     console: { warn: (...args) => logs.push(args) },
   };
@@ -117,6 +124,7 @@ function mount({ userId = actor, platform = 'ios', permission = 'granted', permi
       await setImmediate(); if (mounted) render();
     },
     setUser: id => { currentUserId = id; render(); },
+    failRegistration: id => { failedRegistrationUserId = id; registrationListeners.forEach(listener => listener()); render(); },
     switches: () => nodes().filter(node => node.type === 'Switch'),
     switch: label => nodes().find(node => node.type === 'Switch' && node.props.accessibilityLabel === label),
     button: label => nodes().find(node => node.type === 'TouchableOpacity'
@@ -285,6 +293,43 @@ test('new permission grant registers the captured current UID; failed registrati
   assert.match(f.text(), /enheten kunde inte registreras/); registered = true;
   await f.button('Försök registrera igen').props.onPress(); await f.tick(); assert.deepEqual(f.registrations, [actor, actor]);
   assert.doesNotMatch(f.text(), /enheten kunde inte registreras/);
+});
+
+test('a bootstrap registration failure is visible with OS permission already granted and retries the current device', async () => {
+  let registered = false;
+  const f = await ready({ failedRegistrationUserId: actor, registrationResult: () => registered });
+  assert.equal(f.permissionCalls(), 0);
+  assert.match(f.text(), /enheten kunde inte registreras/);
+  await f.button('Försök registrera igen').props.onPress(); await f.tick();
+  assert.deepEqual(f.registrations, [actor]);
+  assert.match(f.text(), /enheten kunde inte registreras/);
+  registered = true;
+  await f.button('Försök registrera igen').props.onPress(); await f.tick();
+  assert.deepEqual(f.registrations, [actor, actor]);
+  assert.doesNotMatch(f.text(), /enheten kunde inte registreras/);
+  f.render();
+  assert.equal(f.button('Försök registrera igen'), undefined);
+});
+
+test('a late bootstrap failure updates the mounted screen but never follows another account', async () => {
+  const f = await ready();
+  f.failRegistration(actor); await f.tick();
+  assert.match(f.text(), /enheten kunde inte registreras/);
+  f.setUser(other);
+  assert.doesNotMatch(f.text(), /enheten kunde inte registreras/);
+  await f.tick(); f.load(1, bPrefs); await f.tick();
+  assert.doesNotMatch(f.text(), /enheten kunde inte registreras/);
+  f.failRegistration(actor); await f.tick();
+  assert.equal(f.button('Försök registrera igen'), undefined);
+  f.unmount(); f.failRegistration(other);
+  assert.deepEqual(f.lateSetters, []);
+});
+
+test('a bootstrap failure never claims OS permission is enabled when permission is denied', async () => {
+  const f = await ready({ permission: 'denied', failedRegistrationUserId: actor });
+  assert.match(f.text(), /Du har nekat push-notiser/);
+  assert.doesNotMatch(f.text(), /Notisbehörigheten är aktiverad/);
+  assert.equal(f.button('Försök registrera igen'), undefined);
 });
 
 test('late permission grant after A/B/A or unmount does not register or write current UI', async () => {

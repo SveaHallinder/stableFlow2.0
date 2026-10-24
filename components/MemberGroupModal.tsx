@@ -209,7 +209,7 @@ export function MemberGroupModal({ conversationId, onClose, onLeft, onLeaveGroup
           <Text style={styles.hint}>Gruppansvarig: {ownerId ? state.users[ownerId]?.name ?? 'Medlem' : 'Kunde inte bekräftas'}</Text>
           {mode !== 'overview' ? <GroupButton label="Tillbaka till gruppinformation" onPress={() => changeMode('overview')} disabled={saving} /> : null}
           {mode === 'overview' ? <>
-            <Text style={styles.hint}>Pushnotiser för egna grupper är inte aktiverade ännu. Meddelandena finns i appen.</Text>
+            <Text style={styles.hint}>Bara gruppens deltagare får gruppens meddelanden och notiser.</Text>
             <Text style={styles.label}>{participantIds.length} deltagare</Text>
             {participantIds.map(id => <View key={id} style={styles.memberRow}>
               <Avatar source={state.users[id]?.avatar} style={styles.avatar} /><View style={styles.headingBody}><Text style={styles.memberName}>{state.users[id]?.name ?? 'Medlem'}{id === state.currentUserId ? ' (du)' : ''}</Text>{group.participantRoles?.[id] === 'owner' ? <Text style={styles.hint}>Gruppansvarig</Text> : null}</View>

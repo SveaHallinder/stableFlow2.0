@@ -4991,29 +4991,18 @@ revoke all on function private.chat_push_recipients(uuid,uuid),public.chat_push_
 grant usage on schema private to service_role;
 grant execute on function private.chat_push_recipients(uuid,uuid),public.chat_push_recipients(uuid,uuid) to service_role;
 
--- TEMPORARY CUSTOM-GROUP PUSH GUARD, 2026-10-24.
--- Hosted Edge cannot yet be updated. Custom messages stay in-app and MUST NOT
--- reach the old whole-stable push handler. The deployed legacy body, attributes
--- and existing on_new_message_push trigger binding are otherwise unchanged.
+-- Custom-group push enabled by 20261024193534 after deployed Edge source readback.
+-- The Edge sender intersects explicit participants with active stall membership.
 create or replace function public.trigger_push_new_message()
 returns trigger language plpgsql security definer set search_path=public as $function$
 begin
-  if exists(select 1 from public.conversations c where c.id=NEW.conversation_id and c.chat_kind='custom') then
-    return NEW;
-  end if;
   perform public.notify_push('message', to_jsonb(NEW));
   return NEW;
 end;
 $function$;
 
--- SAFE REVERSAL: after deploying and separately verifying custom-recipient
--- authorization in send-push-notification, use a new reviewed migration to
--- remove ONLY the IF/RETURN guard above. Restore this exact captured body:
---   begin
---     perform public.notify_push('message', to_jsonb(NEW));
---     return NEW;
---   end;
--- Keep this function's existing trigger binding and all chat RLS/RPC checks.
+-- Before rolling back to an older Edge sender, restore the custom-group guard
+-- from 20261024122050. Preserve this trigger binding and all chat RLS/RPC checks.
 
 -- Existing exact-ID and blocked-sender read receipt checks remain intact.
 create or replace function public.own_chat_read_state(
