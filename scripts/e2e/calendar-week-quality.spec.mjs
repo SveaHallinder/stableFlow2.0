@@ -117,6 +117,9 @@ test('Sunday afternoon opens the current week and shows today assignments', asyn
 test('narrow mobile mine view keeps the assignment name readable above both actions', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto('/calendar?qaDemo=1&view=mine');
+  const heading = page.getByRole('heading', { name: 'Schema', exact: true });
+  await expect(heading).toBeVisible();
+  expect(await heading.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   const name = visibleText(page, 'Morgonfodring');
   await expect(name).toBeVisible();
   const title = await name.boundingBox();

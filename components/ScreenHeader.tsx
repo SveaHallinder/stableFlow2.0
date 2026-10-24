@@ -92,7 +92,7 @@ export default ScreenHeader;
 
 const styles = StyleSheet.create({
   header: { minHeight: 76, paddingVertical: 14, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  leading: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 11 },
+  leading: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
   logo: { width: 28, height: 31, alignItems: 'center', justifyContent: 'center' },
   titleStack: { flex: 1, minWidth: 0, gap: 4 },
   title: { fontFamily: systemFonts.semibold, fontSize: 24, lineHeight: 31, letterSpacing: -0.7, color: systemPalette.textPrimary },
