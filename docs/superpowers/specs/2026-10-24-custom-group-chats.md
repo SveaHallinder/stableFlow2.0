@@ -1,6 +1,6 @@
 # StableFlow: egna gruppchattar med valda medlemmar
 
-**Status: uttryckligen godkänt av användaren den 24 oktober 2026. Implementation och verifiering pågår; fjärrinstallation är ännu inte bekräftad.**
+**Status: uttryckligen godkänt av användaren den 24 oktober 2026. Implementerat och verifierat lokalt. Godkänd databasmigrering är installerad och 24 behörighetskontroller är godkända i Hosted Supabase. Egna gruppers push är uttryckligen spärrad tills Edge-uppdateringen kan installeras.**
 
 Detta dokument avser egna, namngivna gruppchattar. Den befintliga stallchatten och privata en-till-en-chattar ska fortsätta fungera. Inga nya dependencies, tabeller, köp eller extern webbpublicering ingår. Användaren har godkänt schema- och behörighetsändringarna i repo och befintligt Supabase med svaret ”Ja, inför säkra gruppchattar”. Aktuella fjärrkolumner, index, policies och berörda funktioner har lästs i rätt projekt före installation.
 
